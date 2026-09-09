@@ -1,17 +1,24 @@
 # Extraction status
 
-This repository contains the current ten-module runtime transformation generated
-from frozen source revision `471a281badda342ccab26606e0c46cbca6867cbb`, plus the
-accepted planner/admission and support candidates and the context checkpoint,
-search, and read store prototype.
+This repository contains the integrated runtime source reviewed at frozen
+revision `ced4da6354a11187498dea0fa58d920a8e90e3c1`, plus accepted
+planner/admission and support candidates and the context checkpoint, search,
+read store, execution state, execution coordination, retry, and local AST
+modules. Historical donor provenance remains preserved per file.
 
 Planner/support candidates retain their own historical provenance. Their API
 parity with the frozen runtime source remains an integration gate. Core,
 Learning, Open SWE, and repository intelligence remain external owners.
 
-The public package also exports ContextHub and task-context assembly contracts.
+The public package also exports ContextHub, task-context assembly,
+`ExecutionStateStore`, and `ExecutionCoordinator` contracts.
 Memory retrieval provides an explicit local JSONL backend plus optional injected
 Findings and Repository read ports through the composition helper.
+
+The integrated source is pending final combined acceptance. Remaining evidence
+gates cover the ContextHub donor differential, execution-state caller wiring,
+execution-coordination parity and host wiring, and clean combined installation;
+no provider selection or deployment is implied.
 
 ## Current ownership map
 

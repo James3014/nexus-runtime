@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "9749c5ba8ddaef06f64f35ec6edbf2d843d1a19a",
+  "source_head": "ced4da6354a11187498dea0fa58d920a8e90e3c1",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -299,14 +299,14 @@
     },
     {
       "path": "nexus_runtime/context_hub/context_hub.py",
-      "sha256": "2a7e861cf56356336627630d2ab47708bdcb20e326f1de26460d6030a1359f65",
+      "sha256": "77e2b44c799e482152605c4a73fd9a3834aa36803f5cf3dc91c26f679f071e15",
       "canonical_owner": "runtime context",
       "donor": "accepted context-hub/task-context candidate",
       "lineage_status": "known"
     },
     {
       "path": "nexus_runtime/context_hub/ports.py",
-      "sha256": "1b0b75112439c98c240bea105b6174b0a41e0027ce208664549d592f76477680",
+      "sha256": "7f55ba580726a3bf77a08cceff17597ea88c68b58ac3b7b3ceb5004132f5d54e",
       "canonical_owner": "runtime context",
       "donor": "accepted context-hub/task-context candidate",
       "lineage_status": "known"
@@ -621,7 +621,7 @@
     },
     {
       "path": "nexus_runtime_support_candidate/composition.py",
-      "sha256": "702f2abbcc3bb92791740c24c14a5fc8d62b7b1a255c14c17ee73abf1d29daec",
+      "sha256": "52d9f046ff2067abdf796f1dcd6c170d2ac39a5c108867873ec5298d05993377",
       "canonical_owner": "runtime support",
       "donor": "accepted support candidate",
       "lineage_status": "known"
@@ -751,6 +751,48 @@
       "canonical_owner": "runtime retry",
       "donor": "accepted task-retry candidate",
       "lineage_status": "known"
+    },
+    {
+      "path": "src/nexus_runtime/execution_coordination/__init__.py",
+      "sha256": "231ae6f64d3b6a54ebb73d83dc4f705b2101502086a43af515518e2af00cd954",
+      "canonical_owner": "runtime execution coordination",
+      "donor": "docs/execution-coordination-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
+    },
+    {
+      "path": "src/nexus_runtime/execution_coordination/coordinator.py",
+      "sha256": "01f838ba8d9b8ecab70cc2dda1c674266830ea60c7f6b2f286a8ec6aca89cb81",
+      "canonical_owner": "runtime execution coordination",
+      "donor": "docs/execution-coordination-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
+    },
+    {
+      "path": "src/nexus_runtime/execution_coordination/ports.py",
+      "sha256": "b6bc26a1c4cce7117b5f172e93084988a53fdfee91f8c1997286d773c4db9d89",
+      "canonical_owner": "runtime execution coordination",
+      "donor": "docs/execution-coordination-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
+    },
+    {
+      "path": "src/nexus_runtime/execution_state/__init__.py",
+      "sha256": "0e7f937ea8e32c97b495402342b182c582b8a8717dda879d3788fbd43c96e0a8",
+      "canonical_owner": "runtime execution state",
+      "donor": "docs/execution-state-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
+    },
+    {
+      "path": "src/nexus_runtime/execution_state/store.py",
+      "sha256": "130db03a36c8630b953c4e8581e79136703c72afef5758d1ab53b813983c84c7",
+      "canonical_owner": "runtime execution state",
+      "donor": "docs/execution-state-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
+    },
+    {
+      "path": "src/nexus_runtime_support_candidate/local_ast.py",
+      "sha256": "b9fd60f874d4d3a75b891b9f0ca0260a8d5344dcc5ef6a2e0c5ed812a556b421",
+      "canonical_owner": "runtime local AST support",
+      "donor": "docs/local-ast-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
     }
   ],
   "unknown_lineage": []

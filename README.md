@@ -7,27 +7,33 @@ The runtime is assembled from explicit typed bindings. Core contracts, learning,
 Open SWE execution, and repository intelligence remain external package owners.
 No provider or native service is selected implicitly.
 
-The ten-module runtime spine is generated from frozen source revision
-`471a281badda342ccab26606e0c46cbca6867cbb`. Planner/admission, support, and
-context packages retain their donor provenance and are not relabeled as that
-revision. See `docs/runtime-source-manifest.json` and
-`docs/EXTRACTION_STATUS.md`.
+The reviewed source is frozen at `ced4da6354a11187498dea0fa58d920a8e90e3c1`.
+Historical donor lineage remains recorded per file; the integrated execution
+state, execution coordination, retry, and local AST modules are pending final
+combined acceptance. See `docs/current-source-ownership.json`,
+`docs/runtime-source-manifest.json`, and `docs/EXTRACTION_STATUS.md`.
 
 ## Local usage
 
-Build and install the wheel with the pinned `nexus-learning` dependency, then assemble
-the runtime through explicit public contracts:
+Build and install the wheel with an explicit local `nexus-learning` wheel, then
+assemble the runtime through explicit public contracts:
 
 ```console
-python -m venv .venv
-python -m pip install /path/to/nexus_learning-0.1.0-py3-none-any.whl
-python -m pip wheel --no-deps --wheel-dir dist .
-python -m pip install dist/nexus_runtime-0.1.0.dev0-py3-none-any.whl
-python examples/local_run.py
+python3 -m venv .venv
+.venv/bin/python -m pip install /path/to/nexus_learning-0.1.0-py3-none-any.whl
+.venv/bin/python -m pip wheel --no-deps --wheel-dir dist .
+.venv/bin/python -m pip install dist/nexus_runtime-0.1.0.dev0-py3-none-any.whl
+.venv/bin/python examples/local_run.py
 ```
 
 ```python
 from nexus_runtime import ContextHub, ContextHubDependencies, build_runtime_exports
+from nexus_runtime.execution_state import ExecutionStateStore
+from nexus_runtime.execution_coordination import ExecutionCoordinator
+from nexus_runtime.execution_coordination.ports import (
+    ExecutionStatePort, ExecutionContractPort, WorkerAdapterPort,
+    TargetExecutionPort, ProcessOwnershipPort, ExecutionFinalizationPort,
+)
 from nexus_runtime_support_candidate import build_memory_retrieval_adapter
 
 exports = build_runtime_exports()
@@ -39,7 +45,11 @@ invoker = exports.build_local_memory_capability_invoker(
 
 `ContextHub` and `ContextHubDependencies` are public assembly contracts. Core,
 Learning, Open SWE, and repository backends remain explicitly injected owners;
-the runtime does not discover providers or create those stores implicitly.
+the runtime does not discover providers, deploy services, or create those stores
+implicitly. `ExecutionStateStore` owns durable JSON state reads, atomic writes,
+and archive selection. `ExecutionCoordinator` accepts explicit state, contract,
+worker, target, process-ownership, and finalization effect ports; host code owns
+provider calls, worktrees, and candidate finalization.
 
 For a deterministic end-to-end run/retry/readback example, execute
 `tests/test_runtime_operations.py::test_real_planner_run_and_replan_successful_receipts`.
@@ -53,14 +63,14 @@ implementation. No source imports the compatibility namespace internally.
 
 ## Owner workflow integration
 
-`tests/integration/test_owner_workflow.py` runs the full linked workflow: a
+`tests/integration/test_owner_workflow.py` is the full owner deterministic fixture: a
 deterministic OpenSWE graph writes an artifact, Repository Intelligence analyzes
 the changed file, Runtime emits and reads a receipt, Core certifies hashes from
 that artifact, and Learning projects the receipt. Run it with the owner wheels
 installed:
 
 ```console
-/private/tmp/nexus-six-repo-integration-20260909/venv/bin/python -I -m pytest -q tests/integration/test_owner_workflow.py
+.venv/bin/python -I -m pytest -q tests/integration/test_owner_workflow.py
 ```
 
 The test is skipped when optional owner packages are absent; acceptance requires
