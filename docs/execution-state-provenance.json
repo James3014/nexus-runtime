@@ -1,0 +1,1 @@
+{"donor":"SelfHostedTaskService._load_state_path,_latest_archived_state,_write_state_locked,_write_state,_read_state,_read_state_snapshot,_mutate_state","source_head":"fe97e21fe7a007232b2fd7c09f1724aec5d1fb0a","scope":"durable JSON read/archive/atomic lock mutation; authority and receipt policy injected"}
