@@ -1,0 +1,31 @@
+{
+  "binding_contract": {
+    "acl": "Findings search kind=episodes scope=both; repository table=findings_cards",
+    "claim_boundary": "retrieval receipts explain selection/scoring only and do not authorize delivery or promotion",
+    "paths": "explicit Path/project_root only; no default discovery",
+    "reads": "read-only JSONL, injected Findings/LanceDB/learning ports",
+    "unknown_backend": "MissingMemoryBindingError"
+  },
+  "dependencies": [
+    "nexus-learning==0.1.0 (episode_projection.project_learning_entries, semantic_projection_key; canonical episode reader ports injected by caller)"
+  ],
+  "donor": {
+    "files_sha256": {
+      "memory_retrieval_adapter.py": "3ccba10dd5e1fef80f3da4961c6d367282d77a11db1e7cf1d67371139ae669bc",
+      "ports.py": "91e70b6eb2d1bf7ba9c3af7b004bad137e1fd4bb9b305116a0a87c0e6b0cb37d",
+      "retrieval_receipt.py": "4fa313707e8e9fcbc968dc3c6eee9f7a5f26e0c3bb8885b7723e93d8d08e66fb",
+      "shadow_memory_ranking.py": "d7a767eaab37786b8f87fe75a3d0fcb485f991a29ede2c73f2b46bd4c1024ee3"
+    },
+    "root": "/Users/jameschen/.codex/visualizations/2026/09/07/01a07a25-4ffe-70c3-a098-9ac3818b9562/astra-memory-qualified/source/nexus_memory_candidate",
+    "source_commit": "4887d8f6a3faf50d6b600f2c170526e08d4bf408"
+  },
+  "exports": [
+    "LocalJsonlLessonStore",
+    "FindingsMemoryLessonStore",
+    "MemoryRepositoryLessonStore",
+    "NexusCompositeLessonStore",
+    "MemoryRetrievalAdapter",
+    "RetrievedLesson"
+  ],
+  "schema": "nexus.runtime.memory.provenance.v1"
+}

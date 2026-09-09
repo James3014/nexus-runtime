@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any, Protocol
+
+
+class MissingMemoryBindingError(RuntimeError):
+    """Required memory owner port was not explicitly supplied."""
+
+
+class FindingsReadPort(Protocol):
+    def search(self, query: str, *, kind: str, scope: str) -> Sequence[Any]: ...
+
+
+class RepositorySearchPort(Protocol):
+    def search_fts(self, table_name: str, query: str, *, limit: int, fallback_columns: list[str]) -> Any: ...
+
+
+class LearningReadPort(Protocol):
+    def canonical_learning_episode_path(self, project_root: Path) -> Path: ...
+    def load_canonical_learning_episodes(self, project_root: Path) -> list[dict[str, Any]]: ...
+    def reduce_learning_episode_validity(self, entries: Any) -> Mapping[str, Any]: ...
+    def validate_nexus_learning_episode(self, entry: dict[str, Any]) -> None: ...
+    def project_learning_entries(self, entries: Any) -> list[dict[str, Any]]: ...
+    def semantic_projection_key(self, entry: Mapping[str, Any]) -> str: ...
