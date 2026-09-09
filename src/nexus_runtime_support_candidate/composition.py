@@ -61,7 +61,7 @@ from nexus_runtime_p6c_candidate.services.online_payload_contract import (
 from .contracts.canonical_execution import CanonicalPlanningBundle, CanonicalTaskContext
 from .contracts.root_receipt import build_root_receipt
 from .contracts.unified_runtime_receipt import attach_failure_diagnostics
-from .engine.canonical_execution import replan_canonical_task_bundle
+from .engine.canonical_execution import plan_canonical_task_bundle, replan_canonical_task_bundle
 from .services.capability_registry import LOCAL_STAGE_CAPABILITIES, coverage_counts_from_receipt
 from .services.local_substitution import build_online_safe_local_forward
 from .services.online_execution_policy import (
@@ -185,6 +185,7 @@ def build_runtime_exports(*, policy_path: str | Path | None = None):
         "normalize_online_invoker_payload": normalize_online_invoker_payload,
         "online_payload_indicates_non_delivery": online_payload_indicates_non_delivery,
         "operation_digest": operation_digest,
+        "plan_canonical_task_bundle": plan_canonical_task_bundle,
         "physical_online_authorized": physical_online_authorized,
         "read_generation": read_generation,
         "read_manifest": read_manifest,

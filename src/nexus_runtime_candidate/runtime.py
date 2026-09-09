@@ -13,6 +13,7 @@ class RuntimeExports:
 
 def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
     _nexus_generated_bindings = require_complete_bindings(bindings, RuntimeBindings)
+    plan_canonical_task_bundle = _nexus_generated_bindings.plan_canonical_task_bundle
     """Canonical task-scoped runtime seam for Online and Local execution.
 
     The seam is deliberately provider-neutral.  Adapters supply callables for

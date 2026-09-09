@@ -109,6 +109,19 @@ def test_runtime_memory_adapter_is_explicitly_bound() -> None:
     assert result["gate_passed"] is True
 
 
+def test_runtime_exports_canonical_planning_bundle_constructor() -> None:
+    exports = build_runtime_exports()
+    context = exports.CanonicalTaskContext(
+        task_id="bundle-task",
+        task_type="repair",
+        task_desc="bounded repair",
+        execution_channels=("local",),
+    )
+    bundle = exports.plan_canonical_task_bundle(context)
+    assert bundle.context is context
+    assert bundle.projection.execution_topology == bundle.decision.execution_topology
+
+
 def test_actual_failed_verifier_run_and_replan_preserve_parent_lineage() -> None:
     exports = build_runtime_exports()
     request = exports.UnifiedRuntimeRequest(
