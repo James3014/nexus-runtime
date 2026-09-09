@@ -3576,6 +3576,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 list(plan.selected_capabilities),
                 capability_invokers,
                 codeintel=dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {},
+                prompt_compression_invoker=build_prompt_compression_capability_invoker(),
             )
             # P2: preflight BEFORE Local/Online so both stages share one evidence baseline.
             # Local-owned capabilities are not preflight-invoked here.

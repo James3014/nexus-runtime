@@ -2479,6 +2479,7 @@ def build_default_mainchain_invokers(
     *,
     codeintel: Mapping[str, Any] | None = None,
     include_postflight_gates: bool = True,
+    prompt_compression_invoker: CapabilityInvoker | None = None,
 ) -> dict[str, CapabilityInvoker]:
     """Full-name handler map for mainchain (real, stub, or explicit skip).
 
@@ -2525,7 +2526,7 @@ def build_default_mainchain_invokers(
             # Runtime owns the measured compression edge.  The registry
             # adapter must not replace it with an import/module-reference
             # receipt that can pass without reducing context.
-            invokers[name] = build_prompt_compression_capability_invoker()
+            invokers[name] = prompt_compression_invoker or build_prompt_compression_capability_invoker()
             continue
         if name in LOCAL_STAGE_CAPABILITIES:
             # Production LocalModelExecutor path (not explicit_skip theater).

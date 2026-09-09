@@ -105,10 +105,10 @@ class MissingCapabilityBindingError(RuntimeError):
     """Raised before Runtime effects when selected capability bindings are incomplete."""
 
 
-def _ensure_selected_coverage_invokers(selected, existing, *, codeintel=None):
+def _ensure_selected_coverage_invokers(selected, existing, *, codeintel=None, prompt_compression_invoker=None):
     """Require caller-owned callable coverage for every Planner-selected capability."""
     if existing is None:
-        return build_default_mainchain_invokers(codeintel=codeintel)
+        return build_default_mainchain_invokers(codeintel=codeintel, prompt_compression_invoker=prompt_compression_invoker)
     mapping = dict(existing)
     missing = sorted(str(name) for name in (selected or ()) if str(name) not in mapping)
     noncallable = sorted(str(name) for name in (selected or ()) if str(name) in mapping and not callable(mapping[str(name)]))
