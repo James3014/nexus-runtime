@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "f7ebb0589db0508ce5c9c7af45c3ec4fca00a923",
+  "source_head": "9749c5ba8ddaef06f64f35ec6edbf2d843d1a19a",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -729,6 +729,27 @@
       "sha256": "e31f10c03b610eb70235553e6ff88b93adf4e6cb3622ae8df4f622b1b415b433",
       "canonical_owner": "runtime support",
       "donor": "accepted support candidate",
+      "lineage_status": "known"
+    },
+    {
+      "path": "src/nexus_runtime/task_retry/__init__.py",
+      "sha256": "c9689ef366b41a63569d55d27f23add12c5385d8c2f9e447d8e639d66c730d2f",
+      "canonical_owner": "runtime retry",
+      "donor": "accepted task-retry candidate",
+      "lineage_status": "known"
+    },
+    {
+      "path": "src/nexus_runtime/task_retry/ports.py",
+      "sha256": "1f1dd1fcd710748380c4217a7371d48872a3ba3c3f9eaada820f47fccf93b0e2",
+      "canonical_owner": "runtime retry",
+      "donor": "accepted task-retry candidate",
+      "lineage_status": "known"
+    },
+    {
+      "path": "src/nexus_runtime/task_retry/retry_service.py",
+      "sha256": "e1c2eb60e385868a29b1b501dec1c68e6ea04c8f746c3d871e462bd4a0b692af",
+      "canonical_owner": "runtime retry",
+      "donor": "accepted task-retry candidate",
       "lineage_status": "known"
     }
   ],

@@ -50,3 +50,10 @@ lineage without contacting a provider.
 `nexus_runtime_candidate` is retained as a compatibility namespace for older
 callers; the public composition binds the current `nexus_runtime_p6c_candidate`
 implementation. No source imports the compatibility namespace internally.
+
+## Owner workflow integration
+
+`tests/integration/test_owner_workflow.py` runs a deterministic local artifact
+through Planner/admission, runtime receipt write/readback, and Learning
+projection. Core, RI, and OpenSWE remain optional external owner surfaces;
+provider-backed execution is outside this fixture.
