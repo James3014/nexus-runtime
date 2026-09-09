@@ -152,24 +152,27 @@ class RetryService:
                     "blocker": "durable request is missing; cannot safely reconstruct the task",
                 },
             }
-        for envelope_source in (request, state):
-            if (
-                "canonical_dispatch_envelope" in envelope_source
-                and envelope_source.get("canonical_dispatch_envelope") is not None
-                and not isinstance(envelope_source.get("canonical_dispatch_envelope"), Mapping)
-            ):
-                return {
-                    **state,
-                    "retry": {
-                        **meta,
-                        "decision": "BLOCK",
-                        "blocker": "WORKFORCE_DISPATCH_ENVELOPE_INVALID",
-                    },
-                }
-        demands, admission = self.dispatch.workforce_inputs(request)
-        dispatch_needed = bool(
+        envelope_present = (
             request.get("canonical_dispatch_envelope") is not None
             or state.get("canonical_dispatch_envelope") is not None
+        )
+        if envelope_present:
+            for envelope_source in (request, state):
+                if (
+                    "canonical_dispatch_envelope" in envelope_source
+                    and not isinstance(envelope_source.get("canonical_dispatch_envelope"), Mapping)
+                ):
+                    return {
+                        **state,
+                        "retry": {
+                            **meta,
+                            "decision": "BLOCK",
+                            "blocker": "WORKFORCE_DISPATCH_ENVELOPE_INVALID",
+                        },
+                    }
+        demands, admission = self.dispatch.workforce_inputs(request)
+        dispatch_needed = bool(
+            envelope_present
             or demands is not None
             or admission is not None
         )
