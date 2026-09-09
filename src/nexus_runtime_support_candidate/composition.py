@@ -57,6 +57,7 @@ from nexus_runtime_p6c_candidate.services.online_payload_contract import (
     normalize_online_invoker_payload,
     online_payload_indicates_non_delivery,
 )
+from .local_ast import RuntimeASTExtractor
 from .services.capability_registry import build_default_mainchain_invokers
 
 from .contracts.canonical_execution import CanonicalPlanningBundle, CanonicalTaskContext
@@ -155,7 +156,7 @@ def build_runtime_exports(*, policy_path: str | Path | None = None):
         "MemoryRetrievalAdapter": MemoryRetrievalAdapter,
         "NexusCompositeLessonStore": NexusCompositeLessonStore,
         "MemoryProjectionPort": _LearningProjectionPort(),
-        "RuntimeASTExtractor": _unsupported("RuntimeASTExtractor"),
+        "RuntimeASTExtractor": RuntimeASTExtractor,
         "RuntimeWorkforceAdmissionRecord": RuntimeWorkforceAdmissionRecord,
         "WorkforcePolicyLoader": lambda: WorkforcePolicyLoader(policy_path=policy_path),
         "_aggregate_hash": _aggregate_hash,

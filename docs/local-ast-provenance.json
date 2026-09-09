@@ -1,0 +1,23 @@
+{
+  "schema": "nexus.runtime_support.local_ast.provenance.v1",
+  "status": "IMPLEMENTED_TEST_ONLY_CANDIDATE",
+  "source_revision": "0c4ba05af89cd8500c6a3c8dc23e5d066180596d",
+  "donor_revision": "471a281badda342ccab26606e0c46cbca6867cbb",
+  "donor_source": "nexus/services/local_heal/evidence_graph.py:93-240:RuntimeASTExtractor",
+  "candidate_source": "src/nexus_runtime_support_candidate/local_ast.py:RuntimeASTExtractor",
+  "binding_source": "src/nexus_runtime_support_candidate/composition.py:RuntimeASTExtractor",
+  "public_consumers": ["build_runtime_exports().build_local_ast_capability_invoker"],
+  "preserved_contract": {
+    "source_hash": "sha256 truncated to 16 hex characters",
+    "max_nodes": 50,
+    "max_edges": "100 enforced by existing runtime wrapper",
+    "missing_file": "file_not_found risk and fail-closed receipt",
+    "syntax_error": "ast_parse_error risk and fail-closed receipt",
+    "root_confinement": "unchanged in runtime wrapper",
+    "side_effects": "read-only source acquisition and AST parsing"
+  },
+  "verification": {
+    "tests": "tests/test_local_ast.py",
+    "claim_ceiling": "bounded local AST adapter behavior only; no repository-intelligence API or full graph-system claim"
+  }
+}
