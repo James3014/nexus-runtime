@@ -35,7 +35,10 @@ class ExecutionStateStore:
         root = self.state_dir.parent / "nexus-state-archive"
         return [
             p
-            for p in [root / f"{task_id}.json", *sorted(root.glob(f"{task_id}--attempt-*.json"))]
+            for p in [
+                root / f"{task_id}.json",
+                *sorted(root.glob(f"{task_id}--attempt-*.json")),
+            ]
             if p.exists()
         ]
 
@@ -65,7 +68,12 @@ class ExecutionStateStore:
             loaded = self.load_path(path, task_id)
             if loaded is not None:
                 values.append(
-                    (str(loaded.get("updated_at") or ""), path.stat().st_mtime_ns, path, loaded)
+                    (
+                        str(loaded.get("updated_at") or ""),
+                        path.stat().st_mtime_ns,
+                        path,
+                        loaded,
+                    )
                 )
         if not values:
             return None, None
