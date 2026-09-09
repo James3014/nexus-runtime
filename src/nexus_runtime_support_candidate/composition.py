@@ -194,3 +194,27 @@ def build_runtime_exports(*, policy_path: str | Path | None = None):
         "validate_receipt_base": validate_receipt_base,
     }
     return build_runtime(bind_runtime(bindings))
+
+
+def build_memory_retrieval_adapter(
+    project_root: str | Path,
+    *,
+    local_path: str | Path | None = None,
+    findings_store: Any = None,
+    repository: Any = None,
+    projection_port: Any = None,
+):
+    """Construct memory with explicitly selected local and optional real backends."""
+    from nexus_runtime.memory import (
+        FindingsMemoryLessonStore, LocalJsonlLessonStore, MemoryRepositoryLessonStore,
+        MemoryRetrievalAdapter, NexusCompositeLessonStore,
+    )
+    stores = [LocalJsonlLessonStore(Path(local_path or Path(project_root) / ".nexus/reports/learn/learning_closure.jsonl"))]
+    if findings_store is not None:
+        stores.append(FindingsMemoryLessonStore(project_root=Path(project_root), findings_store=findings_store))
+    if repository is not None:
+        stores.append(MemoryRepositoryLessonStore(project_root=Path(project_root), repository=repository))
+    return MemoryRetrievalAdapter(
+        store=NexusCompositeLessonStore(stores),
+        projection_port=projection_port or _LearningProjectionPort(),
+    )
