@@ -76,7 +76,7 @@ def test_standalone_memory_without_host_binding_does_not_claim_search_success():
     )
     assert result["invoked"] is False
     assert result["skipped"] is True
-    assert result["status"] == "SKIPPED"
+    assert result["skip_reason"] == "not_implemented_mainchain_v1"
     assert "search_performed" not in result
 
 
@@ -127,7 +127,7 @@ def test_export_instances_snapshot_and_isolate_host_defaults():
             task_statement="memory query",
             task_type="repair",
             route={"recommended_flow": "direct"},
-            online_enabled=False,
+            online_enabled=True,
             local_enabled=False,
         )
         exports.UnifiedRuntime(planner=MemoryPlanner()).run(
