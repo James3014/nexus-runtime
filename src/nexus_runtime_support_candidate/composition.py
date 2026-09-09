@@ -174,6 +174,7 @@ def build_runtime_exports(*, policy_path: str | Path | None = None):
         "build_execution_attempt_id": build_execution_attempt_id,
         "build_online_safe_local_forward": build_online_safe_local_forward,
         "build_root_receipt": build_root_receipt,
+        "build_memory_retrieval_adapter": build_memory_retrieval_adapter,
         "build_treatment_fingerprint": build_treatment_fingerprint,
         "build_vap_from_local_receipt": build_vap_from_local_receipt,
         "decision_from_context": decision_from_context,
