@@ -1,6 +1,4 @@
-from .runtime import build_runtime, RuntimeExports
-from .events.transport import build_transport, TransportExports
-from .ports import RuntimeBindings, TransportBindings
-
-def bind_runtime(values): return RuntimeBindings(values)
-def bind_transport(values): return TransportBindings(values)
+"""Compatibility forwarding module; implementation lives in p6c candidate."""
+from importlib import import_module as _import_module
+_impl = _import_module("nexus_runtime_p6c_candidate")
+globals().update(vars(_impl))
