@@ -36,7 +36,11 @@ class ExecutionStateStore:
             try: yield
             finally: fcntl.flock(h.fileno(), fcntl.LOCK_UN)
     def write(self, task_id: str, state: Mapping[str, Any]):
-        normalized=json.loads(json.dumps(dict(state), default=str)); self.state_dir.mkdir(parents=True, exist_ok=True)
+        normalized=json.loads(json.dumps(dict(state), default=str))
+        checked = self.validator(task_id, normalized, self.state_path(task_id))
+        if checked is None or checked.get("state_valid") is False:
+            raise ValueError("execution state validation failed")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(mode="w",encoding="utf-8",dir=self.state_dir,prefix=f".{task_id}.",suffix=".tmp",delete=False) as h:
             json.dump(normalized,h,sort_keys=True,indent=2); h.write("\n"); h.flush(); os.fsync(h.fileno()); tmp=Path(h.name)
         tmp.replace(self.state_path(task_id)); fd=os.open(self.state_dir,os.O_RDONLY)
@@ -45,7 +49,12 @@ class ExecutionStateStore:
         return normalized
     def mutate(self, task_id: str, update: Mapping[str, Any] | Callable[[dict[str, Any]], Mapping[str, Any]]):
         with self._lock():
-            current=self.read_snapshot(task_id) or {"task_id":task_id}
+            path = self.state_path(task_id)
+            if not path.exists():
+                return None
+            current = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(current, Mapping):
+                raise ValueError("execution state must be an object")
             value=update(dict(current)) if callable(update) else {**current,**dict(update)}
             return self.write(task_id,value)
     @staticmethod

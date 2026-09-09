@@ -10,3 +10,14 @@ def test_corrupt_state_denied(tmp_path):
  p=tmp_path/"state"; p.mkdir(); (p/"t.json").write_text("{"); assert ExecutionStateStore(p).read_snapshot("t")["state_valid"] is False
 def test_mutation_is_locked_and_atomic(tmp_path):
  s=ExecutionStateStore(tmp_path/"state"); s.write("t",{"task_id":"t","status":"RUNNING"}); assert s.mutate("t",{"status":"DONE"})["status"]=="DONE"; assert not list((tmp_path/"state").glob("*.tmp"))
+
+def test_mutation_missing_active_does_not_restore_archive(tmp_path):
+    root=tmp_path/"state"; archive=tmp_path/"nexus-state-archive"; archive.mkdir(); (archive/"t.json").write_text(json.dumps({"task_id":"t","status":"DONE"}))
+    assert ExecutionStateStore(root).mutate("t", {"status":"NEW"}) is None
+
+def test_corrupt_mutation_denies_without_replacing_file(tmp_path):
+    root=tmp_path/"state"; root.mkdir(); path=root/"t.json"; path.write_text("{")
+    try: ExecutionStateStore(root).mutate("t", {"status":"DONE"})
+    except json.JSONDecodeError: pass
+    else: raise AssertionError("corrupt state must deny")
+    assert path.read_text()=="{"
