@@ -1,0 +1,20 @@
+{
+  "evidence": "source hashes and exact revision/tree",
+  "files": {
+    "nexus/events/contracts.py": "acef2fd0935d92173f8ba3189f8e06805e5b258d4f2e7e908ee8907ea5893def",
+    "nexus/events/effect_journal.py": "fccc0d55de7b087071a5b0aab3c5f4d17bade8ce2a28b802a4a31f9fe677b505",
+    "nexus/events/log_store.py": "13894ff9a7b25e4a1ba3596ef0a3531c708ab7eaca520fe8dda0e6152b74aa23",
+    "nexus/events/state_owner_manifest.py": "09e14ab25bff6a416e446f61ff6561f31fc8cfc83d41d115d034a9422b6a433c",
+    "nexus/events/transport.py": "fbd3b32019f148653d04a311003c1c73c19b8568f2252697bb421387dbe99832",
+    "nexus/events/writer_generation.py": "46e0180583e20c95c5693ca3861e342be4a41c7df4bd72ae45ecfbf938760dff",
+    "nexus/feedback/contracts.py": "634dd9318775ea476e18ca6230a3c2e798818ca8dc85cb41946ace7ce5fb78ee",
+    "nexus/orchestrator/writer_quiescence.py": "299bc6c8e20768a1037b1f5047ad4077043c834ac3026cc41785868f980dfbda",
+    "nexus/services/online_payload_contract.py": "4aba8466bbf0fadf67fadbd2acd1e493897dc8f0ccea81c4d592c5226bed0c90",
+    "nexus/services/unified_runtime.py": "ea7fd8d4c1c0c8faded27d3020cd75cc27e7e6bdfe4b118b6c64d23d6dab2cfc"
+  },
+  "head": "471a281badda342ccab26606e0c46cbca6867cbb",
+  "source_root": "/private/tmp/astra-production-integrated-20260909",
+  "status": "ROOT_SOURCE_ACCEPTED",
+  "tree": "013e82ef6767bd3302685bb9930523ca6d7ec2bb",
+  "verification": "local frozen git object verification"
+}

@@ -1,0 +1,735 @@
+schema: nexus.model_workforce.v1
+status: current
+owner: James Chen
+last_verified: '2026-08-17'
+authority_document: docs/arch/MODEL_WORKFORCE_POLICY.md
+benchmark_matrix: nexus/config/model_three_arm_matrix.yaml
+benchmark_harness: scripts/bench/experimental/model_workforce_three_arm.py
+route_authority: CapabilityPlanner
+provider_policy:
+  mode: REGISTERED_PROVIDER_OPEN
+  registered_providers: [codex, gemini, agy, grok, openai, opencode, mimo, ollama, cline]
+  model_identity_source: workers
+  local_models_are_selectable: true
+  configured_model_families: [opencode, mimo, grok, ollama, cline]
+  explicit_model_identity_required: true
+  unknown_provider_behavior: FAIL_CLOSED
+  adapter_preflight_required: true
+  verifier_and_receipt_required: true
+
+states:
+  - PROVEN_MAINCHAIN
+  - LOCAL_CONDITIONAL
+  - REGISTERED_CONDITIONAL
+  - REGISTERED_BLOCKED
+  - EXPERIMENT_ONLY
+  - QUARANTINED
+  - DISABLED_PROTOCOL_FAILURE
+  - DISABLED_RESOURCE_RISK
+  - INSTALLED_NOT_CONNECTED
+  - NOT_A_MODEL_WORKER
+
+benchmark_snapshot:
+  suite: u3a-composite-v1
+  date: '2026-07-29'
+  confidence: initial_uniform_matrix
+  attempted_model_count: 25
+  semantically_scored_model_count: 21
+  provider_blocked_model_count: 4
+  all_three_arm_semantic_pass_count: 6
+  all_enrolled_models_attempted: true
+  second_repetition_complete: false
+  role_specific_suite_complete: false
+  physical_patch_suite_complete: false
+  full_receipt_closure_proven: false
+  public_claim_allowed: false
+  interpretation:
+    - bare measures model baseline only
+    - nexus_bounded measures compact diagnosis assertions and schema assistance
+    - nexus_full measures semantic fit inside Planner evidence verifier learning and receipt wrapping
+    - semantic pass is not receipt closure
+    - provider or client failure is not a model reasoning failure
+  models:
+    codex_luna:
+      cohort: required
+      model: gpt-5.6-luna
+      semantic_status: PROVIDER_BLOCKED
+      scores: {bare: null, nexus_bounded: null, nexus_full: null}
+      errors:
+        bare: provider_client_upgrade_required
+        nexus_bounded: provider_client_upgrade_required
+        nexus_full: provider_client_upgrade_required
+      wall_sec: {bare: 3.522, nexus_bounded: 2.149, nexus_full: 3.600}
+    agy_flash:
+      cohort: required
+      model: gemini-3.6-flash-high
+      semantic_status: SCORED
+      scores: {bare: 0.9091, nexus_bounded: 1.0, nexus_full: 0.9091}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 13.993, nexus_bounded: 14.381, nexus_full: 14.089}
+    grok_45:
+      cohort: required
+      model: grok-4.5
+      semantic_status: SCORED
+      scores: {bare: 1.0, nexus_bounded: 1.0, nexus_full: 1.0}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 21.241, nexus_bounded: 14.118, nexus_full: 19.539}
+    gemini_36_flash:
+      cohort: required
+      model: gemini-3.6-flash
+      semantic_status: PROVIDER_BLOCKED
+      scores: {bare: null, nexus_bounded: null, nexus_full: null}
+      errors:
+        bare: provider_client_unsupported
+        nexus_bounded: provider_client_unsupported
+        nexus_full: provider_client_unsupported
+      wall_sec: {bare: 3.013, nexus_bounded: 2.635, nexus_full: 2.492}
+    opencode_mimo_free:
+      cohort: required
+      model: opencode/mimo-v2.5-free
+      semantic_status: SCORED
+      scores: {bare: 1.0, nexus_bounded: 1.0, nexus_full: 1.0}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 12.128, nexus_bounded: 29.057, nexus_full: 12.196}
+      fixed_input_overhead: high
+    opencode_ling_free:
+      cohort: required
+      model: opencode/ling-3.0-flash-free
+      semantic_status: SCORED
+      scores: {bare: 1.0, nexus_bounded: 1.0, nexus_full: 1.0}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 10.607, nexus_bounded: 14.546, nexus_full: 10.368}
+      fixed_input_overhead: high
+    local_advisor_3b:
+      cohort: required
+      model: qwen2.5-s2t-advisor:3b
+      semantic_status: SCORED
+      scores: {bare: 0.8182, nexus_bounded: 1.0, nexus_full: 0.9091}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 9.777, nexus_bounded: 7.283, nexus_full: 15.527}
+      observed_uplift: bounded_only
+    local_qwen7b:
+      cohort: required
+      model: qwen2.5-coder:7b-instruct
+      semantic_status: SCORED
+      scores: {bare: 0.9091, nexus_bounded: 0.9091, nexus_full: 0.9091}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 19.890, nexus_bounded: 14.709, nexus_full: 35.002}
+    local_deepseek67b:
+      cohort: required
+      model: deepseek-coder:6.7b-instruct
+      semantic_status: SCORED
+      scores: {bare: 0.7273, nexus_bounded: 0.8182, nexus_full: 0.0}
+      errors: {bare: '', nexus_bounded: '', nexus_full: benchmark_envelope_not_found}
+      wall_sec: {bare: 19.361, nexus_bounded: 13.602, nexus_full: 51.024}
+    local_ornith9b:
+      cohort: required
+      model: ornith:9b
+      semantic_status: PROVIDER_BLOCKED
+      scores: {bare: null, nexus_bounded: null, nexus_full: null}
+      errors:
+        bare: ollama_http_error_500
+        nexus_bounded: ollama_http_error_500
+        nexus_full: ollama_http_error_500
+      wall_sec: {bare: 5.527, nexus_bounded: 0.304, nexus_full: 0.544}
+    local_qwythos9b:
+      cohort: required
+      model: qwythos:9b
+      semantic_status: SCORED
+      scores: {bare: 0.9091, nexus_bounded: 0.9091, nexus_full: 0.9091}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 30.966, nexus_bounded: 23.451, nexus_full: 95.380}
+    local_qwen35_9b:
+      cohort: required
+      model: nexus-qwen35-9b-q4km:latest
+      semantic_status: PROTOCOL_FAILURE
+      scores: {bare: 0.9091, nexus_bounded: 0.0, nexus_full: 0.0}
+      errors: {bare: '', nexus_bounded: benchmark_envelope_not_found, nexus_full: benchmark_envelope_not_found}
+      wall_sec: {bare: 29.309, nexus_bounded: 1.400, nexus_full: 22.104}
+      failure: unstable_thinking_control_in_custom_prompt_only_template
+    local_qwen14b:
+      cohort: required
+      model: qwen2.5-coder:14b-instruct-q3_K_M
+      semantic_status: SCORED
+      scores: {bare: 0.9091, nexus_bounded: 0.9091, nexus_full: 0.9091}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 48.725, nexus_bounded: 37.106, nexus_full: 80.448}
+    mimo_cli:
+      cohort: required
+      model: xiaomi/mimo-v2.5
+      semantic_status: PROVIDER_BLOCKED
+      scores: {bare: null, nexus_bounded: null, nexus_full: null}
+      errors: {bare: provider_balance_blocked, nexus_bounded: provider_balance_blocked, nexus_full: provider_balance_blocked}
+      wall_sec: {bare: 3.065, nexus_bounded: 2.114, nexus_full: 2.303}
+    opencode_big_pickle:
+      cohort: discovery
+      model: opencode/big-pickle
+      semantic_status: SCORED
+      scores: {bare: 1.0, nexus_bounded: 1.0, nexus_full: 0.0}
+      errors: {bare: '', nexus_bounded: '', nexus_full: benchmark_envelope_not_found}
+      wall_sec: {bare: 11.201, nexus_bounded: 12.059, nexus_full: 14.793}
+    opencode_deepseek_v4_flash:
+      cohort: discovery
+      model: opencode/deepseek-v4-flash-free
+      semantic_status: SCORED
+      scores: {bare: 1.0, nexus_bounded: 1.0, nexus_full: 1.0}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 10.654, nexus_bounded: 9.039, nexus_full: 11.129}
+      fixed_input_overhead: high
+    opencode_laguna:
+      cohort: discovery
+      model: opencode/laguna-s-2.1-free
+      semantic_status: SCORED_WITH_TOOL_VIOLATION
+      scores: {bare: 1.0, nexus_bounded: 1.0, nexus_full: 1.0}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 27.718, nexus_bounded: 49.826, nexus_full: 20.106}
+      isolated_directory_mutation_observed: true
+    opencode_nemotron:
+      cohort: discovery
+      model: opencode/nemotron-3-ultra-free
+      semantic_status: PARTIAL_PROVIDER_FAILURE
+      scores: {bare: 1.0, nexus_bounded: 1.0, nexus_full: null}
+      errors: {bare: '', nexus_bounded: '', nexus_full: provider_subprocess_failed}
+      wall_sec: {bare: 14.955, nexus_bounded: 12.281, nexus_full: 4.568}
+    opencode_north_mini_code:
+      cohort: discovery
+      model: opencode/north-mini-code-free
+      semantic_status: SCORED
+      scores: {bare: 0.9091, nexus_bounded: 1.0, nexus_full: 0.0}
+      errors: {bare: '', nexus_bounded: '', nexus_full: benchmark_envelope_not_found}
+      wall_sec: {bare: 29.078, nexus_bounded: 27.328, nexus_full: 23.220}
+    local_qwen15b:
+      cohort: discovery
+      model: qwen2.5:1.5b
+      semantic_status: SCORED
+      scores: {bare: 0.8182, nexus_bounded: 0.8182, nexus_full: 0.8182}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 5.622, nexus_bounded: 3.798, nexus_full: 8.139}
+    local_qwen3_8b:
+      cohort: discovery
+      model: qwen3:8b
+      semantic_status: SCORED
+      scores: {bare: 1.0, nexus_bounded: 1.0, nexus_full: 0.9091}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 55.357, nexus_bounded: 42.717, nexus_full: 106.291}
+      observed_regression: full_context_schema_drift
+    local_qwythos_v2_9b:
+      cohort: discovery
+      model: nexus-qwythos-v2-9b-q4km:latest
+      semantic_status: PROTOCOL_FAILURE
+      scores: {bare: 0.9091, nexus_bounded: 0.0, nexus_full: 0.9091}
+      errors: {bare: '', nexus_bounded: benchmark_envelope_not_found, nexus_full: ''}
+      wall_sec: {bare: 28.939, nexus_bounded: 1.327, nexus_full: 45.440}
+      failure: unstable_thinking_control_in_custom_prompt_only_template
+    local_deepseek_coder_v2_lite:
+      cohort: discovery
+      model: deepseek-coder-v2:lite
+      semantic_status: SCORED
+      scores: {bare: 0.8182, nexus_bounded: 0.9091, nexus_full: 0.9091}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 18.628, nexus_bounded: 6.892, nexus_full: 19.548}
+    local_deepseek14b:
+      cohort: discovery
+      model: deepseek-r1-14b-q4km:latest
+      semantic_status: SCORED
+      scores: {bare: 1.0, nexus_bounded: 1.0, nexus_full: 1.0}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 92.474, nexus_bounded: 86.472, nexus_full: 128.455}
+      resource_observation: three_arm_group_exceeds_300_seconds
+    local_gemma12b:
+      cohort: discovery
+      model: gemma4-coder-12b-q4km:latest
+      semantic_status: SCORED
+      scores: {bare: 0.9091, nexus_bounded: 0.9091, nexus_full: 0.9091}
+      errors: {bare: '', nexus_bounded: '', nexus_full: ''}
+      wall_sec: {bare: 70.931, nexus_bounded: 54.685, nexus_full: 87.016}
+
+workers:
+  codex_luna:
+    provider: codex
+    model: gpt-5.6-luna
+    state: PROVEN_MAINCHAIN
+    availability: AVAILABLE
+    autonomy: L3_HISTORICAL
+    capability_grade: L3_HISTORICAL
+    current_assignment: available_for_governed_mainchain_assignment
+    roles: [main_engineering, milestone_closure, integration]
+    benchmark_ref: codex_luna
+    requires: [governed_adapter, independent_verification, receipt]
+    forbidden_claims: [product_authority, protected_main_merge, remote_push]
+    runtime_verification:
+      date: '2026-07-29'
+      cli_version: '0.146.0'
+      model: gpt-5.6-luna
+      mode: read_only_smoke
+      stdout: OK
+  agy_flash:
+    provider: agy
+    model: gemini-3.6-flash-high
+    state: PROVEN_MAINCHAIN
+    availability: AVAILABLE
+    autonomy: L2
+    roles: [fast_bounded_implementation, focused_verification]
+    preferred_context: nexus_bounded
+    default_route: false
+    benchmark_ref: agy_flash
+    account_pool: enabled
+    max_failover_retries: 1
+    requires: [task_card, allowed_files, mandatory_commands, independent_verification]
+    forbidden_claims: [architecture_authority, production_ready]
+  agy_flash_medium:
+    provider: agy
+    model: gemini-3.6-flash-medium
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    roles: [bounded_candidate_generation, fast_bounded_implementation, focused_verification]
+    preferred_context: nexus_bounded
+    default_route: false
+    requires: [task_card, allowed_files, mandatory_commands, parser, verifier, independent_verification]
+    forbidden_actions: [route_authority, approval, integration, push, release, production_claim, public_claim]
+    calibration_evidence:
+      status: CONDITIONAL
+      provider_model_revision: UNRESOLVED
+      inherits_high_evidence: false
+  agy_flash_37_medium:
+    provider: agy
+    model: gemini-3.7-flash-medium
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L3
+    roles: [bounded_candidate_generation, fast_bounded_implementation, focused_verification]
+    preferred_context: nexus_bounded
+    default_route: true
+    requires: [task_card, allowed_files, mandatory_commands, parser, verifier, independent_verification]
+    forbidden_actions: [route_authority, approval, integration, push, release, production_claim, public_claim]
+    calibration_evidence:
+      status: OWNER_APPROVED_CEILING
+      lineage: gemini-3.7-flash-medium
+      stable_floor: L3
+      current_frontier: L4
+      conditional_ceiling: L3
+      experimental_ceiling: L4
+      experimental_l4_admitted: false
+  grok_review:
+    provider: grok
+    model: grok-4.5
+    state: PROVEN_MAINCHAIN
+    availability: AVAILABLE
+    autonomy: L2+
+    roles: [independent_review, hidden_defect_hunting, evidence_audit, bounded_engineering_candidate]
+    benchmark_ref: grok_45
+    account_pool: enabled
+    max_failover_retries: 1
+    requires: [bounded_scope, schema_validation, independent_verification]
+    forbidden_claims: [sole_production_ready_adjudication, unverified_implementation]
+  direct_gemini:
+    provider: gemini
+    model: gemini-3.6-flash
+    state: REGISTERED_BLOCKED
+    availability: BLOCKED_UNSUPPORTED_CLIENT
+    autonomy: L0
+    roles: []
+    benchmark_ref: gemini_36_flash
+    current_assignment: none_use_agy_instead
+  opencode_mimo_free:
+    provider: opencode
+    model: opencode/mimo-v2.5-free
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    roles: [bounded_candidate_generation, compact_code_candidate]
+    benchmark_ref: opencode_mimo_free
+    cost_characteristic: subscription_free_but_high_fixed_input_tokens
+    requires: [isolated_directory, bounded_context, json_event_receipt, parser, focused_tests, verifier]
+    forbidden_actions: [route_authority, direct_workspace_mutation, production_ready_judgment]
+    requalification_evidence:
+      date: '2026-08-17'
+      provider: opencode
+      model: opencode/mimo-v2.5-free
+      evidence_kind: cumulative_calibration
+      semantic_stable_floor: L1.5
+      semantic_frontier: L3
+      trial_count: 53
+      semantic_score: '51/53'
+      frontier_stress: '15/15'
+      verifier_guided_repair: '4/5'
+      strict_schema_discipline: CONDITIONAL
+      tool_scope_discipline: HARD_FAIL
+      trusted_execution_ceiling: L1
+      autonomy_ceiling: L1
+      promotion_status: NOT_PROMOTED
+      public_claim: false
+      evidence_status: OWNER_APPROVED_CUMULATIVE_SUMMARY
+      raw_trial_receipt_status: NOT_REPOSITORY_BOUND
+      claim_ceiling: OWNER_APPROVED_CUMULATIVE_SUMMARY_ONLY
+      source_artifacts:
+        - name: MODEL_WORKFORCE_POLICY_20260817.md
+          sha256: 6cefe1aabb58a43b2fea39c1e6365e03efd1191034310634352ee997604edfc3
+          digest_status: FULL_SHA256_VERIFIED
+        - name: NEXUS_MULTI_MODEL_V2.9.md
+          sha256: 67bd054cfd2b5eb636524c552837f6cb692f2c5a88436f3de67be8f38e38185a
+          digest_status: FULL_SHA256_VERIFIED
+        - name: opencode-1.18.18
+          sha256: 4f5979c2dadb06fbff1335335afaaea274e58f92e79aa43cf2ed98618d555422
+          digest_status: FULL_SHA256_VERIFIED
+      baseline_main: 9296d68fe19d933cb78b9a0470a054ea5efd4c2f
+      raw_trial_evidence: NOT_IN_REPOSITORY_AUTHORITY
+    transport_policy:
+      strategy: FREE_FIRST
+      free_identity:
+        provider: opencode
+        model: opencode/mimo-v2.5-free
+        order: 1
+      paid_go_identity:
+        provider: opencode-go
+        model: opencode-go/mimo-v2.5
+        order: 2
+        workforce_admission: NOT_ADMITTED
+      allowed_pre_mutation_blocker_classes:
+        - PROVIDER
+        - TRANSPORT
+        - CAPACITY
+        - QUOTA
+        - EXACT_MODEL_AVAILABILITY
+      require_clean_no_mutation: true
+      fresh_go_preflight_required: true
+      forbidden_fallback_classes:
+        - UNKNOWN
+        - POST_MUTATION
+        - SEMANTIC
+        - VERIFIER
+      lineage_equivalence: UNRESOLVED
+      enforcement:
+        authority: DevSpace
+        not_capability_planner: true
+        issue: 400
+        candidate_commit: 65103307a014d5e51534828ab5e3c8469b60b732
+        durable_receipt_url: https://github.com/James3014/Nexus-new/issues/400#issuecomment-5320083668
+  opencode_ling_free:
+    provider: opencode
+    model: opencode/ling-3.0-flash-free
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    roles: [bounded_candidate_generation, compact_code_candidate]
+    benchmark_ref: opencode_ling_free
+    cost_characteristic: subscription_free_but_high_fixed_input_tokens
+    requires: [isolated_directory, bounded_context, json_event_receipt, parser, focused_tests, verifier]
+    forbidden_actions: [route_authority, direct_workspace_mutation, production_ready_judgment]
+  cline_glm_52:
+    provider: cline
+    model: glm-5.2
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    roles: [bounded_candidate_generation, compact_code_candidate]
+    preferred_context: nexus_bounded
+    current_assignment: explicit_provider_request
+    requires: [external_runtime_authorization, isolated_directory, bounded_context, parser, focused_tests, verifier, receipt]
+    forbidden_actions: [route_authority, direct_workspace_mutation, production_ready_judgment, approval, integration, push]
+  local_advisor_3b:
+    provider: ollama
+    model: qwen2.5-s2t-advisor:3b
+    state: LOCAL_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L0.5
+    roles: [classification, extraction, compression, compact_diagnosis, candidate_ranking]
+    preferred_context: nexus_bounded
+    benchmark_ref: local_advisor_3b
+    requires: [fixed_schema, compact_context, deterministic_consumer]
+    forbidden_actions: [code_mutation, full_context_assignment, route_authority, claim_authority]
+  local_coder_7b:
+    provider: ollama
+    model: qwen2.5-coder:7b-instruct
+    state: LOCAL_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    roles: [bounded_code_candidate]
+    benchmark_ref: local_qwen7b
+    requires: [small_scope, parser, compile, focused_tests, reversible_application]
+    forbidden_actions: [architecture_choice, cross_module_closure, self_verification]
+  local_deepseek67b:
+    provider: ollama
+    model: deepseek-coder:6.7b-instruct
+    state: LOCAL_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L0.5
+    default_route: false
+    roles: [committee_secondary_proposer_only]
+    preferred_context: tightly_bounded
+    benchmark_ref: local_deepseek67b
+    requires: [committee_isolation, external_verifier, no_full_context]
+    forbidden_actions: [default_worker_assignment, claim_authority, direct_apply]
+  local_qwythos9b:
+    provider: ollama
+    model: qwythos:9b
+    state: LOCAL_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L0.5
+    default_route: false
+    roles: [bounded_second_opinion, committee_candidate]
+    benchmark_ref: local_qwythos9b
+    requires: [bounded_context, external_verifier]
+    forbidden_actions: [default_implementation, claim_authority, direct_apply]
+  local_qwen35_9b:
+    provider: ollama
+    model: qwen3.5:9b
+    state: LOCAL_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    default_route: false
+    roles: [bounded_reasoning_candidate, counterexample_search]
+    preferred_context: nexus_bounded
+    benchmark_ref: local_qwen35_9b
+    requires: [bounded_context, parser, external_verifier, counterexample_suite, role_specific_suite]
+    forbidden_actions: [full_context_default, claim_authority, direct_apply]
+    requalification_evidence:
+      date: '2026-08-06'
+      repetitions: 2
+      mutation_free_real_provider: true
+      provider: ollama
+      model: qwen3.5:9b
+      arm_results: {bare: '10/11', nexus_bounded: '10/11', nexus_full: '10/11'}
+      result_json_sha256:
+        - a014c9dedb189ac83a668d6a09dcaed6109f959cf1ed4edfcc4acc8ece97e377
+        - f107f8d4e70f76154eb62a4ed88798889c7766b6d12e4cc6a8a5f2b36d81a4d3
+      stable_stdout_sha256:
+        bare: 6271b2935db71075316a6ceb08a2cd12fdea0cc14fa5eef7f0fa32fe5258019b
+        nexus_bounded: 49465db02e4d353949d95af36cc95113634be53c7c91ed5a6e1d46e8fa6bc809
+        nexus_full: 2c9b424b992bb2c22cd5a940a1072c11c16f36d4b0a3b85559a083a00507fa48
+      role_recommendation: BOUNDED_REVIEW_AND_AUDIT
+      autonomy_ceiling: L1
+      implementation_edge_failure: normalize_status_success_label
+      public_claim: false
+  local_qwen14b:
+    provider: ollama
+    model: qwen2.5-coder:14b-instruct-q3_K_M
+    state: DISABLED_RESOURCE_RISK
+    availability: AVAILABLE_EXPERIMENT_ONLY
+    autonomy: L0
+    roles: [explicit_experiment_only]
+    benchmark_ref: local_qwen14b
+    reason: no_semantic_uplift_over_7b_and_higher_latency_on_16gb_host
+  mimo_cli:
+    provider: mimo
+    model: xiaomi/mimo-v2.5
+    state: REGISTERED_BLOCKED
+    availability: BLOCKED_ACCOUNT_BALANCE
+    autonomy: L0
+    roles: []
+    benchmark_ref: mimo_cli
+    current_blockers: [insufficient_account_balance]
+  opencode_big_pickle:
+    provider: opencode
+    model: opencode/big-pickle
+    state: EXPERIMENT_ONLY
+    availability: AVAILABLE
+    autonomy: L0
+    roles: [bounded_experiment]
+    benchmark_ref: opencode_big_pickle
+    blocker: full_context_envelope_failure
+  opencode_deepseek_v4_flash:
+    provider: opencode
+    model: opencode/deepseek-v4-flash-free
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L2
+    default_route: false
+    roles: [bounded_candidate_generation, compact_code_candidate]
+    benchmark_ref: opencode_deepseek_v4_flash
+    cost_characteristic: subscription_free_but_high_fixed_input_tokens
+    requires: [isolated_directory, bounded_context, json_event_receipt, parser, focused_tests, verifier]
+    forbidden_actions: [route_authority, direct_workspace_mutation, production_ready_judgment, approval, integration, push]
+    requalification_evidence:
+      date: '2026-08-15'
+      repetitions: 2
+      provider: opencode
+      model: opencode/deepseek-v4-flash-free
+      opencode_version: '1.17.20'
+      opencode_binary_sha256: 14a4583c9a3685875f011d6dd4dfbd00498893942be0bb1d2c27e30e70144c89
+      provider_model_revision: UNRESOLVED
+      lineage: deepseek-v4-flash
+      arm_results:
+        R2: {bare: '11/11', nexus_bounded: '11/11', nexus_full: '11/11'}
+        R3: {bare: '11/11', nexus_bounded: '11/11', nexus_full: '11/11'}
+      result_json_sha256:
+        R2: 2493c49e2e9caa1b5a39f3839807d655cd78f8f12c8854058032b3e0d602471a
+        R3: b52e4ee5cc6e15a4cf452d8373bbe16fa6ce8837386dca8a9c70bf94c05065e8
+      physical_patch_evidence:
+        PR_84_merge_sha: c304e7d98f62f615f7ca44c2ab4451dff9e780e3
+        PR_85_merge_sha: 8f7c75ca08a6c88fad9b791f254d38d79ad8bf29
+      role_recommendation: bounded_code_candidate
+      autonomy_ceiling: L2
+      experimental_l4_admitted: false
+      public_claim: false
+  opencode_laguna:
+    provider: opencode
+    model: opencode/laguna-s-2.1-free
+    state: QUARANTINED
+    availability: AVAILABLE
+    autonomy: L0
+    roles: [tool_discipline_experiment]
+    benchmark_ref: opencode_laguna
+    blocker: wrote_output_file_despite_text_only_isolated_task
+    reenable_requires: [tool_denial_verification, clean_three_arm_retest]
+  opencode_nemotron:
+    provider: opencode
+    model: opencode/nemotron-3-ultra-free
+    state: EXPERIMENT_ONLY
+    availability: UNSTABLE
+    autonomy: L0
+    roles: [bounded_experiment]
+    benchmark_ref: opencode_nemotron
+    blocker: full_arm_streaming_failure
+  opencode_north_mini_code:
+    provider: opencode
+    model: opencode/north-mini-code-free
+    state: EXPERIMENT_ONLY
+    availability: AVAILABLE
+    autonomy: L0
+    roles: [bounded_experiment]
+    benchmark_ref: opencode_north_mini_code
+    blocker: full_context_envelope_failure
+  local_qwen15b:
+    provider: ollama
+    model: qwen2.5:1.5b
+    state: LOCAL_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L0.25
+    default_route: false
+    roles: [simple_extraction, read_only_schema_candidate]
+    benchmark_ref: local_qwen15b
+    requires: [fixed_schema, deterministic_consumer]
+    forbidden_actions: [code_mutation, diagnosis_authority, claim_authority]
+  local_qwen3_8b:
+    provider: ollama
+    model: qwen3:8b
+    state: LOCAL_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    default_route: false
+    roles: [bounded_reasoning_candidate, bounded_code_candidate, counterexample_search]
+    preferred_context: nexus_bounded
+    benchmark_ref: local_qwen3_8b
+    requires: [bounded_context, parser, focused_tests, external_verifier]
+    forbidden_actions: [full_context_default, claim_authority, direct_apply]
+  local_deepseek_coder_v2_lite:
+    provider: ollama
+    model: deepseek-coder-v2:lite
+    state: LOCAL_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L0.5
+    default_route: false
+    roles: [bounded_secondary_code_candidate]
+    benchmark_ref: local_deepseek_coder_v2_lite
+    requires: [bounded_context, parser, focused_tests, external_verifier]
+  local_deepseek14b:
+    provider: ollama
+    model: deepseek-r1-14b-q4km:latest
+    state: DISABLED_RESOURCE_RISK
+    availability: AVAILABLE_EXPERIMENT_ONLY
+    autonomy: L0
+    roles: [high_latency_second_opinion_experiment]
+    benchmark_ref: local_deepseek14b
+    reason: semantic_pass_but_three_arm_runtime_exceeds_300_seconds_on_16gb_host
+non_workers:
+  claude_cli:
+    state: INSTALLED_NOT_CONNECTED
+    reason: no_governed_adapter_and_no_pinned_model_identity
+  openai_cli:
+    state: NOT_A_MODEL_WORKER
+    reason: sdk_tooling_only
+  nomic_embed_text:
+    state: NOT_A_MODEL_WORKER
+    reason: embedding_model_not_generation_worker
+  full_vendor_catalogs:
+    state: NOT_A_MODEL_WORKER
+    reason: catalog_presence_without_explicit_enrollment_or_cost_authority
+
+routing:
+  deterministic_first: true
+  no_default_full_context_local_worker: true
+  local_first:
+    classification: local_advisor_3b
+    extraction: local_advisor_3b
+    compression: local_advisor_3b
+    compact_diagnosis: local_advisor_3b
+    bounded_code_candidate: local_coder_7b
+    bounded_reasoning_shadow: local_qwen3_8b
+  online:
+    fast_bounded_implementation: agy_flash_37_medium
+    fast_bounded_implementation_fallback: agy_flash
+    route_defaults:
+      fast_bounded_implementation:
+        current_default: agy_flash_37_medium
+        fallback: agy_flash
+    campaign_routing:
+      CAMPAIGN-NEXUS-LEARNING-CANONICAL-WIRING-01:
+        fast_bounded_implementation: agy_flash_37_medium
+    main_engineering: codex_luna
+    independent_review: grok_review
+    complex_milestone: codex_luna_when_available
+    free_remote_candidate_pool: [opencode_mimo_free, opencode_ling_free]
+    free_remote_shadow_candidate: opencode_deepseek_v4_flash
+    cline_candidate: cline_glm_52
+  mandatory_escalation_conditions:
+    - architecture_or_authority_choice
+    - ambiguous_product_behavior
+    - security_or_irreversible_risk
+    - production_or_claim_adjudication
+    - multi_file_unbounded_implementation
+    - local_disagreement_or_verifier_failure
+    - integration_or_runtime_closure
+    - unsafe_local_context_or_resource_pressure
+  blocked_or_disabled_models_must_not_be_selected: true
+  experiment_only_models_require_explicit_authorization: true
+
+context_policy:
+  prefer_nexus_bounded_for_small_and_medium_models: true
+  nexus_full_is_not_assumed_better: true
+  observed_full_context_regressions:
+    - local_advisor_3b
+    - local_deepseek67b
+    - local_qwen35_9b
+    - local_qwen3_8b
+    - local_qwythos_v2_9b
+    - opencode_big_pickle
+    - opencode_nemotron
+    - opencode_north_mini_code
+  structured_output_requires_thinking_suppression_when_supported: true
+
+evidence_layers:
+  semantic_layers:
+    distinction: semantic_capability_lineage != exact_execution_identity != admitted_authority
+    exact_identity_matching: strict_fail_closed
+    route_authority: CapabilityPlanner_sole_authority
+  bare_model:
+    sufficient_for_final_worker_grade: false
+  nexus_bounded:
+    required_for_role_grade: true
+  nexus_full:
+    required_for_autonomy_promotion: true
+    semantic_pass_is_not_receipt_closure: true
+  three_arm_benchmark:
+    role: historical_baseline_and_comparative_diagnostic
+    historical_scores_immutable: true
+  requalification_protocol:
+    methodology: cumulative_evidence_plus_stable_floor_regression_plus_frontier_plus_failure_family_probes
+    distinct_phases:
+      - FIRST_PASS
+      - HIDDEN_DEFECT_PROBES
+      - VERIFIER_GUIDED_REPAIR
+    experimental_l4_not_admitted: true
+  stable_promotion:
+    requires_second_repetition: true
+    requires_role_specific_suite: true
+    requires_physical_patch_verifier_for_mutating_roles: true
+
+claim_rules:
+  local_output_is_candidate_only: true
+  plain_text_is_not_receipt: true
+  focused_tests_do_not_prove_production_ready: true
+  provider_failure_separate_from_model_failure: true
+  semantic_pass_does_not_prove_receipt_complete: true
+  no_model_self_assesses_production_ready: true
