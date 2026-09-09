@@ -21,3 +21,21 @@ def test_corrupt_mutation_denies_without_replacing_file(tmp_path):
     except json.JSONDecodeError: pass
     else: raise AssertionError("corrupt state must deny")
     assert path.read_text()=="{"
+
+def test_mutate_uses_in_place_callback(tmp_path):
+    s=ExecutionStateStore(tmp_path/"state"); s.write("t",{"task_id":"t","status":"A"})
+    s.mutate("t", lambda value: value.update(status="B")); assert s.read_snapshot("t")["status"]=="B"
+
+def test_mutator_return_value_is_rejected(tmp_path):
+    s=ExecutionStateStore(tmp_path/"state"); s.write("t",{"task_id":"t","status":"A"})
+    try: s.mutate("t", lambda value: {"status":"B"})
+    except TypeError: pass
+    else: raise AssertionError("returning replacement must be rejected")
+
+def test_before_write_rejection_has_no_effect(tmp_path):
+    def reject(task_id, value): raise RuntimeError("owner denied")
+    root=tmp_path/"state"; s=ExecutionStateStore(root, before_write=reject)
+    try: s.write("t",{"task_id":"t","status":"A"})
+    except RuntimeError: pass
+    else: raise AssertionError("callback rejection must propagate")
+    assert not (root/"t.json").exists()
