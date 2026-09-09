@@ -156,6 +156,63 @@ def test_program_rules_use_explicit_temporary_text_reader(tmp_path):
     assert ContextHub(deps=deps).load_program_rules() == "L0: preserve evidence\n"
 
 
+def test_assemble_context_uses_policy_and_budgeted_history_ports(tmp_path):
+    state = State()
+    state.metadata["chat_history"] = [f"history-{i}-" + ("x" * 80) for i in range(12)]
+    render_aggressions = []
+    compacted_states = []
+    pruned = []
+
+    def compact(value, *, confidence=0.5):
+        compacted_states.append(value)
+        return {"task_id": value["task_id"], "confidence": confidence}
+
+    deps = ContextHubDependencies(
+        state_reader=lambda: state,
+        text_reader=lambda name="program.md": "rules",
+        memory_reader=lambda phase: {},
+        wiki_reader=lambda query, max_results=3: {},
+        renderer=lambda value, aggression=0.0: (
+            render_aggressions.append(aggression) or "summary"
+        ),
+        dialogue_pruner=lambda history: (pruned.append(history) or "COMPACTED"),
+        compactor=compact,
+        policy_reader=lambda: {"global_nas_aggression": 0.9},
+    )
+    candidate = ContextHub(deps=deps)
+
+    generous = candidate.assemble_context("task-1", [0, 1], budget=1000)
+    constrained = candidate.assemble_context("task-1", [0, 1], budget=10)
+
+    assert "--- COMPACT HISTORY ---" not in generous
+    assert "COMPACTED" in constrained
+    assert render_aggressions == [0.9, 0.9]
+    assert compacted_states == [vars(state), vars(state)]
+    assert pruned == [state.metadata["chat_history"]]
+
+
+def test_assemble_context_explicit_aggression_overrides_policy(tmp_path):
+    state = State()
+    seen = []
+    candidate = ContextHub(
+        deps=ContextHubDependencies(
+            state_reader=lambda: state,
+            text_reader=lambda name="program.md": "rules",
+            memory_reader=lambda phase: {},
+            wiki_reader=lambda query, max_results=3: {},
+            renderer=lambda value, aggression=0.0: seen.append(aggression) or "summary",
+            dialogue_pruner=lambda history: "compact",
+            compactor=lambda value, confidence=0.5: {},
+            policy_reader=lambda: {"global_nas_aggression": 0.9},
+        )
+    )
+
+    candidate.assemble_context(
+        "task-1", [0, 1], bayesian_params={"nas_aggression": 0.0}
+    )
+    assert seen == [0.0]
+
+
 def test_extracted_packs_match_frozen_donor_for_identical_ports(tmp_path):
     """Differentially compare complete pack dictionaries against donor 471."""
     import json

@@ -283,22 +283,38 @@ class ContextHub:
     ) -> str:
         state = self._state()
         params = bayesian_params or {}
-        aggression = float(params.get("nas_aggression", 0.0))
+        # A caller supplied value is an explicit override.  Otherwise the
+        # policy port is the source of the global NAS setting; a missing
+        # optional policy port deliberately retains the conservative default.
+        aggression_value = params.get("nas_aggression")
+        if aggression_value is None and self.deps.policy_reader is not None:
+            policy = self.deps.policy_reader()
+            aggression_value = policy.get("global_nas_aggression", 0.0)
+        aggression = float(aggression_value if aggression_value is not None else 0.0)
         summary = self.deps.renderer(state, aggression=aggression)
+        state_dict = vars(state) if hasattr(state, "__dict__") else dict(state)
         compact = self.deps.compactor(
-            vars(state) if hasattr(state, "__dict__") else dict(state),
+            state_dict,
             confidence=float(params.get("confidence", 0.5)),
         )
+        l0 = "L0: [BOUNDARIES: core, metrics] [PROHIBITED: delete-history, skip-verify]"
+        l1 = f"L1: [TASK: {getattr(state, 'task_id', task_id)}]"
+        history = getattr(state, "metadata", {}).get("chat_history", [])
+        estimated_total = sum(
+            len(str(value)) for value in (l0, l1, history, summary, json.dumps(compact))
+        ) // 3.8
+        threshold = budget * (1.0 - (aggression * 0.2))
         parts = [
-            self.load_program_rules(),
-            f"L1: [TASK: {getattr(state, 'task_id', task_id)}]",
+            l0,
+            l1,
             "--- STRUCTURED CONTEXT (L5-Addressable) ---",
             json.dumps(compact, indent=2),
             "--- TOON-2.0 SUMMARY ---",
             summary,
         ]
-        history = getattr(state, "metadata", {}).get("chat_history", [])
-        if history:
+        if estimated_total > threshold:
+            parts.extend(["--- COMPACT HISTORY ---", self.deps.dialogue_pruner(history)])
+        elif history:
             parts.append(str(history[-5:]))
         return "\n".join(parts)
 
