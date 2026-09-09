@@ -81,6 +81,30 @@ class UnsupportedAdapterError(RuntimeError):
     """Raised when an intentionally omitted Local/AST adapter is requested."""
 
 
+class _EmptyFindingsReadPort:
+    def search(self, query: str, *, kind: str, scope: str):
+        del query, kind, scope
+        return []
+
+
+class _EmptyRepositoryReadPort:
+    def search_fts(self, table_name: str, query: str, *, limit: int, fallback_columns: list[str]):
+        del table_name, query, limit, fallback_columns
+        return None
+
+
+class _LearningProjectionPort:
+    @staticmethod
+    def project_learning_entries(entries):
+        from nexus_learning.episode_projection import project_learning_entries
+        return project_learning_entries(entries)
+
+    @staticmethod
+    def semantic_projection_key(entry):
+        from nexus_learning.episode_projection import semantic_projection_key
+        return semantic_projection_key(entry)
+
+
 def _unsupported(name: str):
     def raise_unsupported(*args: Any, **kwargs: Any) -> Any:
         raise UnsupportedAdapterError(f"omitted_runtime_adapter:{name}")
@@ -110,6 +134,13 @@ def _ensure_selected_coverage_invokers(selected, existing, *, codeintel=None):
 
 def build_runtime_exports(*, policy_path: str | Path | None = None):
     """Bind actual accepted Planner/admission/support implementations to Runtime."""
+    from nexus_runtime.memory import (
+        FindingsMemoryLessonStore,
+        LocalJsonlLessonStore,
+        MemoryRepositoryLessonStore,
+        MemoryRetrievalAdapter,
+        NexusCompositeLessonStore,
+    )
     if policy_path is None:
         policy_path = BUNDLED_POLICY_PATH
     policy_path = Path(policy_path).expanduser().resolve()
@@ -127,12 +158,15 @@ def build_runtime_exports(*, policy_path: str | Path | None = None):
         "EffectJournal": EffectJournal,
         "EffectReconcilePort": EffectReconcilePort,
         "RuntimeWriterFactory": RuntimeWriterFactory,
-        "FindingsMemoryLessonStore": _unsupported("FindingsMemoryLessonStore"),
+        "FindingsMemoryLessonStore": FindingsMemoryLessonStore,
         "LOCAL_STAGE_CAPABILITIES": LOCAL_STAGE_CAPABILITIES,
-        "LocalJsonlLessonStore": _unsupported("LocalJsonlLessonStore"),
-        "MemoryRepositoryLessonStore": _unsupported("MemoryRepositoryLessonStore"),
-        "MemoryRetrievalAdapter": _unsupported("MemoryRetrievalAdapter"),
-        "NexusCompositeLessonStore": _unsupported("NexusCompositeLessonStore"),
+        "LocalJsonlLessonStore": LocalJsonlLessonStore,
+        "MemoryRepositoryLessonStore": MemoryRepositoryLessonStore,
+        "MemoryRetrievalAdapter": MemoryRetrievalAdapter,
+        "NexusCompositeLessonStore": NexusCompositeLessonStore,
+        "MemoryProjectionPort": _LearningProjectionPort(),
+        "FindingsReadPort": _EmptyFindingsReadPort(),
+        "RepositoryReadPort": _EmptyRepositoryReadPort(),
         "RuntimeASTExtractor": _unsupported("RuntimeASTExtractor"),
         "RuntimeWorkforceAdmissionRecord": RuntimeWorkforceAdmissionRecord,
         "WorkforcePolicyLoader": lambda: WorkforcePolicyLoader(policy_path=policy_path),

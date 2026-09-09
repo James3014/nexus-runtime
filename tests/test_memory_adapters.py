@@ -19,6 +19,7 @@ from nexus_runtime.memory import (
     MissingMemoryBindingError,
     NexusCompositeLessonStore,
 )
+from nexus_runtime_support_candidate import build_runtime_exports
 
 
 class LearningProjectionPort:
@@ -150,3 +151,17 @@ def test_rerank_uses_public_algorithm_and_excludes_same_task(tmp_path: Path) -> 
 def test_invalid_or_unknown_backend_binding_is_denied(factory) -> None:
     with pytest.raises(MissingMemoryBindingError):
         factory()
+
+
+def test_default_runtime_memory_builder_reads_installed_learning_jsonl(tmp_path: Path) -> None:
+    ledger = tmp_path / ".nexus" / "reports" / "learn" / "learning_closure.jsonl"
+    ledger.parent.mkdir(parents=True)
+    write_jsonl(ledger, [row("default-1", "preserve parser evidence")])
+
+    exports = build_runtime_exports()
+    invoke = exports.build_local_memory_capability_invoker(tmp_path)
+    result = invoke({"task_id": "runtime-memory", "task_statement": "parser"})
+
+    assert result["task_id"] == "runtime-memory"
+    assert result["gate_passed"] is True
+    assert result["response"]["lessons"][0]["finding_id"] == "default-1"

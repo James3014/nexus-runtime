@@ -7,7 +7,7 @@ name = "nexus-runtime"
 version = "0.1.0.dev0"
 description = "Task planning and execution coordination runtime"
 requires-python = ">=3.11"
-dependencies = ["PyYAML>=6"]
+dependencies = ["PyYAML>=6", "nexus-learning>=0.1.0"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

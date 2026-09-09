@@ -11,7 +11,6 @@ import pytest
 from nexus_planning_candidate.engine.capability_planner import CapabilityPlanner
 from nexus_runtime_support_candidate import (
     MissingCapabilityBindingError,
-    UnsupportedAdapterError,
     build_runtime_exports,
 )
 
@@ -102,10 +101,12 @@ def test_tampered_receipt_is_rejected_before_replan_effects() -> None:
         exports.UnifiedRuntime().run_replan(tampered, request)
 
 
-def test_omitted_memory_adapter_is_explicitly_unsupported() -> None:
+def test_runtime_memory_adapter_is_explicitly_bound() -> None:
     exports = build_runtime_exports()
-    with pytest.raises(UnsupportedAdapterError, match="omitted_runtime_adapter"):
-        exports.build_local_memory_capability_invoker("/private/tmp/never-read")
+    invoke = exports.build_local_memory_capability_invoker("/private/tmp/never-read")
+    result = invoke({"task_id": "memory-bound", "task_statement": "parser"})
+    assert result["invoked"] is True
+    assert result["gate_passed"] is True
 
 
 def test_actual_failed_verifier_run_and_replan_preserve_parent_lineage() -> None:
