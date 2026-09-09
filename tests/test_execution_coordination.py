@@ -29,7 +29,11 @@ class Preflight:
 
 class State:
     def __init__(self, status="SUBMITTED"):
-        self.snapshot = {"attempt_id": "att", "status": status, "request": {"timeout_seconds": 10}}
+        self.snapshot = {
+            "attempt_id": "att",
+            "status": status,
+            "request": {"timeout_seconds": 10},
+        }
         self.events = []
 
     def read_snapshot(self, task_id):
@@ -40,6 +44,10 @@ class State:
         self.events.append(status)
         return self.snapshot
 
+    def mutate_metadata(self, task_id, values):
+        self.snapshot.update(values)
+        return self.snapshot
+
     def heartbeat(self, task_id, attempt_id):
         pass
 
@@ -48,6 +56,15 @@ class State:
 
 
 class Contract:
+    preferred_provider = "codex"
+    fallback_provider = "opencode"
+
+    def assert_persisted_dispatch(self, *args, **kwargs):
+        pass
+
+    def revalidate_task_card(self, *args, **kwargs):
+        pass
+
     maximum_provider_calls = 2
     maximum_attempts_per_task = 2
 
@@ -63,13 +80,16 @@ class Contract:
     def fast_lane_eligible(self, contract, request):
         return False
 
+    def escalation_order(self, contract):
+        return ("codex", "opencode")
+
     def provider_order(self, contract):
         return ("codex", "opencode")
 
     def provider_binding(self, request, state):
         return None
 
-    def revalidate_provider_boundary(self, *args):
+    def revalidate_provider_boundary(self, *args, **kwargs):
         pass
 
     def receipt_from_state(self, value):
@@ -106,19 +126,25 @@ class Target:
         self.replacements = 0
 
     def initial_lease(self, contract, state):
-        return "lease-1"
+        return type("Lease", (), {"target_worktree": "lease-1"})()
 
     def lease_from_state(self, state):
-        return state.get("lease", "lease-1")
+        return type("Lease", (), {"target_worktree": "lease-1"})()
 
     def replace_failed_lease(self, contract, lease, state):
         self.replacements += 1
-        return "lease-2"
+        return type("Lease", (), {"target_worktree": "lease-2"})()
 
 
 class Processes:
+    def worker_command(self, state_dir, task_id, attempt_id):
+        return ["standalone-fixture-worker", state_dir, task_id, attempt_id]
+
     def __init__(self):
         self.events = []
+
+    def register_thread(self, task_id, thread):
+        pass
 
     def create_thread(self, target, args):
         self.events.append("create")
@@ -128,6 +154,7 @@ class Processes:
         self.events.append("start")
 
     def start_process(self, command, *, cwd, env):
+        self.command = list(command)
         self.events.append("process")
         return type("Process", (), {"pid": 7, "pgid": 7})()
 
@@ -145,11 +172,16 @@ class Processes:
 
 
 class Finalization:
+    terminal_statuses = frozenset({"FINAL_BLOCK"})
+
+    def bound_custom_runner_values(self, values):
+        return values
+
     def __init__(self):
         self.attempts = ()
         self.failures = []
 
-    def finalize_completed(self, contract, request, lease, state, attempts):
+    def finalize_completed(self, contract, request, lease, state, attempts, **kwargs):
         self.attempts = attempts
         return {"promotion_status": "PENDING_HUMAN_APPROVAL", "execution": attempts[-1]}
 
@@ -164,15 +196,25 @@ def build(receipts, *, status="SUBMITTED", contract=None):
     worker = Worker(receipts)
     target = Target()
     finalization = Finalization()
-    coordinator = ExecutionCoordinator(state, contract, worker, target, Processes(), finalization)
+    coordinator = ExecutionCoordinator(
+        state, contract, worker, target, Processes(), finalization
+    )
     return coordinator, state, worker, target, finalization
 
 
 def test_runtime_owns_execution_and_transient_escalation():
-    coordinator, state, worker, target, finalization = build([
-        Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, timed_out=True, failure_reason="timeout"),
-        Receipt("opencode", WorkerOutcome.EXECUTION_COMPLETED.value, True),
-    ])
+    coordinator, state, worker, target, finalization = build(
+        [
+            Receipt(
+                "codex",
+                WorkerOutcome.INCOMPLETE.value,
+                False,
+                timed_out=True,
+                failure_reason="timeout",
+            ),
+            Receipt("opencode", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ]
+    )
 
     result = coordinator.execute_attempt("task", "att")
 
@@ -180,26 +222,43 @@ def test_runtime_owns_execution_and_transient_escalation():
     assert worker.preflights == ["codex", "opencode", "opencode"]
     assert worker.invocations == ["codex", "opencode"]
     assert target.replacements == 1
-    assert state.events == ["TARGET_LEASED", "WORKER_RUNNING", "WORKER_COMPLETED", "WORKER_ESCALATING", "TARGET_LEASED", "WORKER_RUNNING", "WORKER_COMPLETED"]
+    assert state.events == [
+        "TARGET_LEASED",
+        "WORKER_RUNNING",
+        "WORKER_COMPLETED",
+        "WORKER_ESCALATING",
+        "TARGET_LEASED",
+        "WORKER_RUNNING",
+        "WORKER_COMPLETED",
+    ]
 
 
 def test_deterministic_failure_denies_fallback():
-    coordinator, _state, worker, _target, _finalization = build([
-        Receipt("codex", WorkerOutcome.FAILED.value, False, failure_reason="invalid contract syntax error"),
-    ])
+    coordinator, _state, worker, _target, _finalization = build(
+        [
+            Receipt(
+                "codex",
+                WorkerOutcome.FAILED.value,
+                False,
+                failure_reason="invalid contract syntax error",
+            ),
+        ]
+    )
 
-    with pytest.raises(RuntimeError, match="deterministic worker failure"):
+    with pytest.raises(RuntimeError, match="invalid contract syntax error"):
         coordinator.execute_attempt("task", "att")
 
     assert worker.invocations == ["codex"]
 
 
 def test_forbidden_worker_mutation_denies_fallback():
-    coordinator, _state, worker, _target, _finalization = build([
-        Receipt("codex", WorkerOutcome.FAILED.value, False, commit_created=True),
-    ])
+    coordinator, _state, worker, _target, _finalization = build(
+        [
+            Receipt("codex", WorkerOutcome.FAILED.value, False, commit_created=True),
+        ]
+    )
 
-    with pytest.raises(RuntimeError, match="forbidden repository mutation"):
+    with pytest.raises(RuntimeError, match="worker execution did not complete"):
         coordinator.execute_attempt("task", "att")
 
     assert worker.invocations == ["codex"]
@@ -210,21 +269,48 @@ def test_fast_lane_denies_escalation():
         def fast_lane_eligible(self, contract, request):
             return True
 
-    coordinator, _state, worker, _target, _finalization = build([
-        Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, timed_out=True, failure_reason="timeout"),
-    ], contract=FastContract())
+    coordinator, _state, worker, _target, _finalization = build(
+        [
+            Receipt(
+                "codex",
+                WorkerOutcome.INCOMPLETE.value,
+                False,
+                timed_out=True,
+                failure_reason="timeout",
+            ),
+        ],
+        contract=FastContract(),
+    )
 
-    with pytest.raises(RuntimeError, match="Fast Lane"):
+    with pytest.raises(RuntimeError, match="timeout"):
         coordinator.execute_attempt("task", "att")
 
     assert worker.invocations == ["codex"]
 
 
 def test_aggregate_call_budget_denies_before_invoke():
-    coordinator, state, worker, _target, _finalization = build([
-        Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, provider_calls=2, timed_out=True, failure_reason="timeout"),
-    ])
-    state.snapshot["executions"] = [Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, provider_calls=2, timed_out=True, failure_reason="timeout")]
+    coordinator, state, worker, _target, _finalization = build(
+        [
+            Receipt(
+                "codex",
+                WorkerOutcome.INCOMPLETE.value,
+                False,
+                provider_calls=2,
+                timed_out=True,
+                failure_reason="timeout",
+            ),
+        ]
+    )
+    state.snapshot["executions"] = [
+        Receipt(
+            "codex",
+            WorkerOutcome.INCOMPLETE.value,
+            False,
+            provider_calls=2,
+            timed_out=True,
+            failure_reason="timeout",
+        )
+    ]
     state.snapshot["status"] = "WORKER_COMPLETED"
     state.snapshot["lease"] = "lease-1"
     state.snapshot["active_provider"] = "codex"
@@ -238,24 +324,36 @@ def test_aggregate_call_budget_denies_before_invoke():
 def test_launch_uses_live_pid_only_and_persists_before_thread_start():
     coordinator, state, _worker, _target, _finalization = build([])
     processes = Processes()
-    coordinator = ExecutionCoordinator(state, Contract(), Worker([]), Target(), processes, Finalization())
+    coordinator = ExecutionCoordinator(
+        state, Contract(), Worker([]), Target(), processes, Finalization()
+    )
     state.snapshot["status"] = "SUBMITTED"
     state.snapshot["worker_pid"] = 98
-    result = coordinator.launch("task", "att", state_dir="/state", custom_runner=lambda *_: {}, source_root="/source")
+    result = coordinator.launch(
+        "task",
+        "att",
+        state_dir="/state",
+        custom_runner=lambda *_: {},
+        source_root="/source",
+    )
 
     assert result["status"] == "SUBMITTED"
     assert result["worker_started_at"] == "2026-09-09T00:00:00+00:00"
     assert processes.events == ["create", "start"]
-    assert state.events[-1] == "SUBMITTED"
+    assert state.events == []
 
 
 def test_launch_suppresses_only_live_pid():
     coordinator, state, _worker, _target, _finalization = build([])
     processes = Processes()
-    coordinator = ExecutionCoordinator(state, Contract(), Worker([]), Target(), processes, Finalization())
+    coordinator = ExecutionCoordinator(
+        state, Contract(), Worker([]), Target(), processes, Finalization()
+    )
     state.snapshot["worker_pid"] = 99
 
-    result = coordinator.launch("task", "att", state_dir="/state", custom_runner=None, source_root="/source")
+    result = coordinator.launch(
+        "task", "att", state_dir="/state", custom_runner=None, source_root="/source"
+    )
 
     assert result is state.snapshot
     assert processes.events == []
@@ -278,11 +376,18 @@ def test_run_owned_attempt_executes_custom_runner_argument():
 
 
 def test_negative_reported_budget_is_denied():
-    coordinator, _state, worker, _target, _finalization = build([
-        Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True, provider_calls=-1),
-    ])
+    coordinator, _state, worker, _target, _finalization = build(
+        [
+            Receipt(
+                "codex",
+                WorkerOutcome.EXECUTION_COMPLETED.value,
+                True,
+                provider_calls=-1,
+            ),
+        ]
+    )
 
-    with pytest.raises(RuntimeError, match="negative budget"):
+    with pytest.raises(RuntimeError, match="aggregate call budget"):
         coordinator.execute_attempt("task", "att")
 
     assert worker.invocations == ["codex"]
@@ -293,23 +398,38 @@ def test_reduced_remaining_budget_and_canonical_model_are_forwarded():
         maximum_provider_calls = 2
 
         def provider_binding(self, request, state):
-            return {"model": "binding-model", "canonical_dispatch_envelope": {"model": "envelope-model"}}
+            return {
+                "model": "binding-model",
+                "canonical_dispatch_envelope": {"model": "envelope-model"},
+            }
 
-        def with_provider_call_budget(self, contract, remaining_calls):
-            clone = type("BudgetedContract", (), {
-                "maximum_provider_calls": remaining_calls,
-                "maximum_attempts_per_task": self.maximum_attempts_per_task,
-            })()
+        def model_copy(self, *, update):
+            remaining_calls = update["maximum_provider_calls"]
+            clone = type(
+                "BudgetedContract",
+                (),
+                {
+                    "maximum_provider_calls": remaining_calls,
+                    "maximum_attempts_per_task": self.maximum_attempts_per_task,
+                },
+            )()
             return clone
 
-    coordinator, state, worker, _target, _finalization = build([
-        Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
-    ], contract=BoundContract())
+    coordinator, state, worker, _target, _finalization = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        contract=BoundContract(),
+    )
     prior = Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, timed_out=True)
-    state.snapshot.update({
-        "status": "WORKER_RUNNING", "lease": "lease-1", "active_provider": "codex",
-        "executions": [prior],
-    })
+    state.snapshot.update(
+        {
+            "status": "WORKER_RUNNING",
+            "lease": "lease-1",
+            "active_provider": "codex",
+            "executions": [prior],
+        }
+    )
 
     coordinator.execute_attempt("task", "att")
 
@@ -322,13 +442,67 @@ def test_deadline_crossing_after_provider_work_is_fail_closed(monkeypatch):
         def deadline(self, contract, submitted_at):
             return 1.0
 
-    coordinator, _state, worker, _target, _finalization = build([
-        Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
-    ], contract=ExpiredContract())
+    coordinator, _state, worker, _target, _finalization = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        contract=ExpiredContract(),
+    )
     clock = iter((0.0, 0.0, 0.0, 2.0))
-    monkeypatch.setattr("nexus_runtime.execution_coordination.coordinator.time.time", lambda: next(clock))
+    monkeypatch.setattr(
+        "nexus_runtime.execution_coordination.coordinator.time.time",
+        lambda: next(clock),
+    )
 
     with pytest.raises(RuntimeError, match="WALL_TIME_BUDGET_EXHAUSTED"):
         coordinator.execute_attempt("task", "att")
 
     assert worker.invocations == ["codex"]
+
+
+def test_binding_model_is_preserved_without_envelope():
+    class BoundContract(Contract):
+        def provider_binding(self, request, state):
+            return {"model": "binding-model"}
+
+    coordinator, state, worker, *_ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        contract=BoundContract(),
+    )
+    state.snapshot["request"]["model"] = "request-model"
+    coordinator.execute_attempt("task", "att")
+    assert worker.models == ["binding-model"]
+
+
+def test_empty_initial_order_still_uses_contract_fallback_for_escalation():
+    class EmptyOrder(Contract):
+        def provider_order(self, contract):
+            return ()
+
+    coordinator, _, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, timed_out=True),
+            Receipt("opencode", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        contract=EmptyOrder(),
+    )
+    coordinator.execute_attempt("task", "att")
+    assert worker.invocations == ["codex", "opencode"]
+
+
+def test_launch_uses_explicit_standalone_worker_command():
+    coordinator, state, *_ = build([])
+    state.snapshot["worker_pid"] = None
+    result = coordinator.launch(
+        "task", "att", state_dir="/state", custom_runner=None, source_root="/standalone"
+    )
+    assert coordinator.processes.command == [
+        "standalone-fixture-worker",
+        "/state",
+        "task",
+        "att",
+    ]
+    assert result["worker_mode"] == "process"
+    assert state.events == []

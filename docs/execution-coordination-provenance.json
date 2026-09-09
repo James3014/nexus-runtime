@@ -18,8 +18,42 @@
     "tests/test_execution_coordination.py"
   ],
   "ownership_boundary": {
-    "runtime_owns": ["sequencing", "budgets", "preflight_fences", "receipt_denials", "transient_escalation", "process_ownership"],
-    "ports_own": ["state_storage", "provider_effects", "target_worktree_effects", "candidate_finalization"],
-    "forbidden_runtime_imports": ["nexus.orchestrator.self_hosted_task_service", "nexus.executors.worker_registry"]
+    "runtime_owns": [
+      "sequencing",
+      "budgets",
+      "preflight_fences",
+      "receipt_denials",
+      "transient_escalation",
+      "process_ownership"
+    ],
+    "ports_own": [
+      "state_storage",
+      "provider_effects",
+      "target_worktree_effects",
+      "candidate_finalization"
+    ],
+    "forbidden_runtime_imports": [
+      "nexus.orchestrator.self_hosted_task_service",
+      "nexus.executors.worker_registry"
+    ]
+  },
+  "real_path_repair": {
+    "donor_revision": "471a281badda342ccab26606e0c46cbca6867cbb",
+    "runtime_owns": [
+      "resumable status sequence",
+      "ordered provider preflight and escalation",
+      "aggregate budgets and deadlines",
+      "owned attempt wrapper and heartbeat",
+      "thread/process launch metadata ordering"
+    ],
+    "host_effects": [
+      "dispatch/card/owner safeguards",
+      "worker registry invocation",
+      "target creation and replacement",
+      "unchanged candidate finalization callback",
+      "unchanged failure salvage and cleanup callback"
+    ],
+    "compatibility_witness": "tests/nexus/orchestrator/test_runtime_coordination_real_path.py",
+    "claim_ceiling": "source extraction candidate; no integration or deployment acceptance"
   }
 }

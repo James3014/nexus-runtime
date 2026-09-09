@@ -13,6 +13,10 @@ class ExecutionStatePort(Protocol):
         self, task_id: str, status: str, values: Mapping[str, Any], attempt_id: str
     ) -> Mapping[str, Any]: ...
 
+    def mutate_metadata(
+        self, task_id: str, values: Mapping[str, Any]
+    ) -> Mapping[str, Any]: ...
+
     def heartbeat(self, task_id: str, attempt_id: str) -> None: ...
 
     def set_child_process_group(
@@ -21,6 +25,12 @@ class ExecutionStatePort(Protocol):
 
 
 class ExecutionContractPort(Protocol):
+    def assert_persisted_dispatch(
+        self, state, request, binding, *, active_provider=None
+    ) -> None: ...
+
+    def revalidate_task_card(self, contract, request, state, binding) -> None: ...
+
     def build_contract(self, request: Mapping[str, Any]) -> Any: ...
 
     def prompt(self, contract: Any) -> str: ...
@@ -30,6 +40,8 @@ class ExecutionContractPort(Protocol):
     def fast_lane_eligible(self, contract: Any, request: Mapping[str, Any]) -> bool: ...
 
     def provider_order(self, contract: Any) -> Sequence[str]: ...
+
+    def escalation_order(self, contract: Any) -> Sequence[str]: ...
 
     def provider_binding(
         self, request: Mapping[str, Any], state: Mapping[str, Any]
@@ -78,7 +90,15 @@ class TargetExecutionPort(Protocol):
 
 
 class ProcessOwnershipPort(Protocol):
-    def create_thread(self, target: Callable[..., None], args: tuple[Any, ...]) -> Any: ...
+    def worker_command(
+        self, state_dir: str, task_id: str, attempt_id: str
+    ) -> Sequence[str]: ...
+
+    def register_thread(self, task_id: str, thread: Any) -> None: ...
+
+    def create_thread(
+        self, target: Callable[..., None], args: tuple[Any, ...]
+    ) -> Any: ...
 
     def start_thread(self, thread: Any) -> None: ...
 
@@ -92,7 +112,9 @@ class ProcessOwnershipPort(Protocol):
 
     def wait_for_owner(self, task_id: str, attempt_id: str, pid: int) -> bool: ...
 
-    def terminate_owned_processes(self, task_id: str, exclude_pid: int | None) -> None: ...
+    def terminate_owned_processes(
+        self, task_id: str, exclude_pid: int | None
+    ) -> None: ...
 
     def pid_alive(self, pid: int) -> bool: ...
 
@@ -100,6 +122,12 @@ class ProcessOwnershipPort(Protocol):
 
 
 class ExecutionFinalizationPort(Protocol):
+    terminal_statuses: frozenset[str]
+
+    def bound_custom_runner_values(
+        self, values: Mapping[str, Any]
+    ) -> Mapping[str, Any]: ...
+
     def finalize_completed(
         self,
         contract: Any,
@@ -107,6 +135,9 @@ class ExecutionFinalizationPort(Protocol):
         lease: Any,
         state: Mapping[str, Any],
         attempts: Sequence[Any],
+        *,
+        execution: Any,
+        status: str,
     ) -> Mapping[str, Any]: ...
 
     def finalize_failure(

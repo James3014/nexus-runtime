@@ -1,6 +1,11 @@
 """Explicit runtime execution coordination contracts."""
 
-from .coordinator import EscalationDecision, ExecutionCoordinator, WorkerEscalationPolicy, WorkerOutcome
+from .coordinator import (
+    EscalationDecision,
+    ExecutionCoordinator,
+    WorkerEscalationPolicy,
+    WorkerOutcome,
+)
 from .ports import MissingExecutionBindingError
 
 __all__ = [
