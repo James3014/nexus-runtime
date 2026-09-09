@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "ced4da6354a11187498dea0fa58d920a8e90e3c1",
+  "source_head": "a3fd8006d61d4eb14637050c7da5a95e5e28d157",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -621,7 +621,7 @@
     },
     {
       "path": "nexus_runtime_support_candidate/composition.py",
-      "sha256": "52d9f046ff2067abdf796f1dcd6c170d2ac39a5c108867873ec5298d05993377",
+      "sha256": "8508b9a82a82538e49dd6eecccf5490eb0778751b14865db614e7577f5534c29",
       "canonical_owner": "runtime support",
       "donor": "accepted support candidate",
       "lineage_status": "known"
@@ -677,7 +677,7 @@
     },
     {
       "path": "nexus_runtime_support_candidate/services/capability_registry.py",
-      "sha256": "289628963a75514ebac23882e148a31f08c85d1ca7bbda644e4606d216012a36",
+      "sha256": "d0480dbc78902f50db812fe96e6f6159b205c20dda5b0d449958820750d0bab1",
       "canonical_owner": "runtime support",
       "donor": "accepted support candidate",
       "lineage_status": "known"
@@ -719,7 +719,7 @@
     },
     {
       "path": "nexus_runtime_support_candidate/services/online_nexus_context.py",
-      "sha256": "3d1be932877b320650dce09a7cf4688980faf554ca17e39427c3a9e9b200b423",
+      "sha256": "0ebe33e6af03fbbd917d85d3844e7177c2711d50cad1bde4b282f6d1ae85cd74",
       "canonical_owner": "runtime support",
       "donor": "accepted support candidate",
       "lineage_status": "known"

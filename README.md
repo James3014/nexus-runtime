@@ -7,10 +7,10 @@ The runtime is assembled from explicit typed bindings. Core contracts, learning,
 Open SWE execution, and repository intelligence remain external package owners.
 No provider or native service is selected implicitly.
 
-The reviewed source is frozen at `ced4da6354a11187498dea0fa58d920a8e90e3c1`.
+The reviewed source is bound to Git revision `a3fd8006d61d4eb14637050c7da5a95e5e28d157`.
 Historical donor lineage remains recorded per file; the integrated execution
-state, execution coordination, retry, and local AST modules are pending final
-combined acceptance. See `docs/current-source-ownership.json`,
+state, execution coordination, retry, and local AST modules have bounded owner and
+caller evidence; final artifact readback remains pending. See `docs/current-source-ownership.json`,
 `docs/runtime-source-manifest.json`, and `docs/EXTRACTION_STATUS.md`.
 
 ## Local usage
@@ -19,7 +19,7 @@ Build and install the wheel with an explicit local `nexus-learning` wheel, then
 assemble the runtime through explicit public contracts:
 
 ```console
-python3 -m venv .venv
+/usr/bin/python3 -m venv .venv
 .venv/bin/python -m pip install /path/to/nexus_learning-0.1.0-py3-none-any.whl
 .venv/bin/python -m pip wheel --no-deps --wheel-dir dist .
 .venv/bin/python -m pip install dist/nexus_runtime-0.1.0.dev0-py3-none-any.whl
@@ -76,3 +76,9 @@ installed:
 The test is skipped when optional owner packages are absent; acceptance requires
 the command above to run unskipped. Provider-backed execution remains outside
 this deterministic fixture.
+
+## Delivery provenance
+
+The accepted caller delivery is the durable worktree `/Users/jameschen/Workspace/Nexus-new-repo-split`, branch `codex/repo-split-delivery`, revision `1ae08059513ded50a2caa23c9586cd3d46b386f1`; its git common directory is `/Users/jameschen/Workspace/Nexus-new/.git`. The canonical Nexus-new `main` checkout remains dirty and untouched. Host memory is supplied through an explicit adapter (`build_memory_retrieval_adapter`); no provider or deployment is selected implicitly.
+
+Final caller evidence is `/private/tmp/nexus-final-1ae-root.xml` (808 PASS and 2 reproduced donor-baseline failures). Runtime/caller split evidence is `/private/tmp/nexus-binding-7f6-root.xml` (88 PASS) and `/private/tmp/nexus-binding-b0f-root.xml` (150 PASS). These establish bounded engineering evidence; they do not declare the overall goal complete.

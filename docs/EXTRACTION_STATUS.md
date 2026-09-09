@@ -1,7 +1,7 @@
 # Extraction status
 
-This repository contains the integrated runtime source reviewed at frozen
-revision `ced4da6354a11187498dea0fa58d920a8e90e3c1`, plus accepted
+This repository contains the integrated runtime source reviewed and source-bound at
+revision `a3fd8006d61d4eb14637050c7da5a95e5e28d157`, plus accepted
 planner/admission and support candidates and the context checkpoint, search,
 read store, execution state, execution coordination, retry, and local AST
 modules. Historical donor provenance remains preserved per file.
@@ -15,10 +15,7 @@ The public package also exports ContextHub, task-context assembly,
 Memory retrieval provides an explicit local JSONL backend plus optional injected
 Findings and Repository read ports through the composition helper.
 
-The integrated source is pending final combined acceptance. Remaining evidence
-gates cover the ContextHub donor differential, execution-state caller wiring,
-execution-coordination parity and host wiring, and clean combined installation;
-no provider selection or deployment is implied.
+Bounded runtime and caller acceptance is recorded at runtime `a3fd8006d61d4eb14637050c7da5a95e5e28d157` and caller `1ae08059513ded50a2caa23c9586cd3d46b386f1`. The final representative caller artifact is `/private/tmp/nexus-final-1ae-root.xml` with 808 PASS and two reproduced donor-baseline failures; final artifact readback remains pending. Host memory uses an explicit adapter, and no provider selection or deployment is implied.
 
 ## Current ownership map
 
