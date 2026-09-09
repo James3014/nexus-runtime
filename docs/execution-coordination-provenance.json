@@ -1,0 +1,25 @@
+{
+  "schema": "nexus.runtime.execution-coordination.provenance.v1",
+  "status": "IMPLEMENTED_CANDIDATE",
+  "donor_revision": "471a281badda342ccab26606e0c46cbca6867cbb",
+  "implementation_base": "840ee0788e538d0201f8d2d349e8cfbcf4ecbec4",
+  "donor_sources": [
+    "nexus/orchestrator/self_hosted_task_service.py::_select_initial_provider",
+    "nexus/orchestrator/self_hosted_task_service.py::_next_ready_provider",
+    "nexus/orchestrator/self_hosted_task_service.py::_run_default_resumable coordination loop",
+    "nexus/orchestrator/self_hosted_task_service.py::_run_owned_task ownership wrapper",
+    "nexus/orchestrator/self_hosted_task_service.py::_launch_worker",
+    "nexus/orchestrator/worker_escalation.py::WorkerEscalationPolicy"
+  ],
+  "runtime_sources": [
+    "src/nexus_runtime/execution_coordination/ports.py",
+    "src/nexus_runtime/execution_coordination/coordinator.py",
+    "src/nexus_runtime/execution_coordination/__init__.py",
+    "tests/test_execution_coordination.py"
+  ],
+  "ownership_boundary": {
+    "runtime_owns": ["sequencing", "budgets", "preflight_fences", "receipt_denials", "transient_escalation", "process_ownership"],
+    "ports_own": ["state_storage", "provider_effects", "target_worktree_effects", "candidate_finalization"],
+    "forbidden_runtime_imports": ["nexus.orchestrator.self_hosted_task_service", "nexus.executors.worker_registry"]
+  }
+}
