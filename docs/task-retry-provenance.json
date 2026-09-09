@@ -1,0 +1,34 @@
+{
+  "claim_boundary": "retry orchestration evidence only; no lifecycle, governance, provider, or production claim",
+  "donor_files_sha256": {
+    "nexus/orchestrator/self_hosted_task_service.py": "c2de73920a0bb5d31d20b420a30c0bf4b8aff59459f28a572da215f1654482a4",
+    "nexus/orchestrator/task_contract.py": "4648f8f8d1faa04a1c1641ac20a0a13fffea073336d8328e60cfd04f0bff5b22",
+    "nexus/services/unified_runtime.py": "ea7fd8d4c1c0c8faded27d3020cd75cc27e7e6bdfe4b118b6c64d23d6dab2cfc",
+    "nexus/state/task_state_store.py": "3da0067b98475055d90a8a72d9ee44e21993416a0065a5d27a5c1785859a5bea"
+  },
+  "donor_revision": "471a281badda342ccab26606e0c46cbca6867cbb",
+  "donor_root": "/private/tmp/astra-production-integrated-20260909",
+  "entrypoint": "SelfHostedTaskService.retry_task:6257",
+  "package": "nexus_runtime.task_retry",
+  "ports": [
+    "RetryStatePort",
+    "RetryContractPort",
+    "RetryDispatchPort",
+    "RetrySubmissionPort",
+    "ContinuityReadPort"
+  ],
+  "preserved_gates": [
+    "unknown",
+    "invalid_state",
+    "attempt_budget",
+    "retained_review",
+    "integration_failure",
+    "absorbing_terminal",
+    "active_duplicate",
+    "target_disposition",
+    "missing_request",
+    "predecessor validation",
+    "fresh attempt rebind before submission"
+  ],
+  "schema": "nexus.runtime.task_retry.provenance.v1"
+}

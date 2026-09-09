@@ -1,0 +1,168 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+from .ports import (
+    MissingRetryBindingError,
+    RetryContractPort,
+    RetryDispatchPort,
+    RetryStatePort,
+    RetrySubmissionPort,
+)
+
+RETRYABLE_TASK_STATUSES = frozenset(
+    {"FAILED", "FINAL_BLOCK", "CANCELLED", "VERIFICATION_FAILED"}
+)
+TERMINAL_STATUSES = frozenset(
+    {
+        "SUCCEEDED",
+        "FAILED",
+        "FINAL_BLOCK",
+        "CANCELLED",
+        "VERIFICATION_FAILED",
+        "RETAINED_FOR_REVIEW",
+        "INTEGRATION_FAILED",
+    }
+)
+INTEGRATION_INTERMEDIATE_STATUSES = frozenset(
+    {"INTEGRATION_PENDING", "INTEGRATION_RUNNING", "INTEGRATION_BLOCKED"}
+)
+
+
+@dataclass(frozen=True)
+class RetryService:
+    state: RetryStatePort
+    contract: RetryContractPort
+    dispatch: RetryDispatchPort
+    submission: RetrySubmissionPort
+
+    def __post_init__(self) -> None:
+        for name in ("state", "contract", "dispatch", "submission"):
+            if getattr(self, name, None) is None:
+                raise MissingRetryBindingError(f"explicit {name} port is required")
+
+    def retry_task(self, task_id: str) -> dict[str, Any]:
+        snapshot = self.state.read_snapshot(task_id)
+        if snapshot is None:
+            raise KeyError(f"unknown task_id: {task_id}")
+        state = dict(snapshot)
+        if state.get("state_valid") is False:
+            return {
+                **state,
+                "retry": self._meta(
+                    task_id,
+                    state,
+                    "BLOCKED_INVALID_STATE",
+                    (state.get("blocker") or {}).get("code"),
+                ),
+            }
+        status = str(state.get("status") or "UNKNOWN")
+        meta = self._meta(task_id, state, None, None)
+        request = state.get("request")
+        try:
+            maximum = int(self.contract.maximum_attempts(request or {}))
+            if len(state.get("attempts") or ()) >= maximum:
+                return {
+                    **state,
+                    "retry": {
+                        **meta,
+                        "decision": "BLOCK",
+                        "blocker": "ATTEMPT_BUDGET_EXHAUSTED",
+                    },
+                }
+        except Exception:
+            pass
+        if status == "RETAINED_FOR_REVIEW":
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCKED_RETAINED_REVIEW",
+                    "blocker": "human disposition or retained-candidate recovery is required before retry; clean no-Candidate retention may retry only after formal cleanup",
+                },
+            }
+        if (
+            status in INTEGRATION_INTERMEDIATE_STATUSES
+            or status == "INTEGRATION_FAILED"
+        ):
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCKED_INTEGRATION_FAILURE",
+                    "blocker": "integration failure requires dedicated integration retry; generic task retry is forbidden",
+                },
+            }
+        if status in TERMINAL_STATUSES - RETRYABLE_TASK_STATUSES - {
+            "RETAINED_FOR_REVIEW",
+            "INTEGRATION_FAILED",
+        }:
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCKED_ABSORBING_STATUS",
+                    "blocker": f"task is in absorbing terminal status {status}; same-semantic task retry is forbidden",
+                },
+            }
+        if status not in RETRYABLE_TASK_STATUSES:
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "NO_DUPLICATE_ACTIVE_TASK",
+                    "blocker": f"task is {status}; wait for its existing attempt instead of resubmitting",
+                },
+            }
+        if str(state.get("cleanup_decision") or "") not in {
+            "REMOVED",
+            "ALREADY_REMOVED",
+            "TARGET_CLEANED",
+        }:
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCKED_TARGET_DISPOSITION",
+                    "blocker": "previous Target disposition is not removed/cleaned",
+                },
+            }
+        if not isinstance(request, Mapping):
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCKED_MISSING_REQUEST",
+                    "blocker": "durable request is missing; cannot safely reconstruct the task",
+                },
+            }
+        predecessor = self.dispatch.validate_predecessor(request, state)
+        retry_request = self.contract.build_retry_request(state)
+        retry_request = self.dispatch.rebind_fresh_attempt(retry_request, predecessor)
+        result = dict(self.submission.submit(retry_request))
+        result["retry"] = {
+            **meta,
+            "decision": "REUSED_TASK_ID",
+            "new_attempt_id": result.get("attempt_id"),
+            "new_action_id": result.get("action_id"),
+            "new_idempotency_key": result.get("idempotency_key"),
+            "attempts": len(result.get("attempts") or ()),
+        }
+        return result
+
+    @staticmethod
+    def _meta(
+        task_id: str,
+        state: Mapping[str, Any],
+        decision: str | None,
+        blocker: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "task_id": task_id,
+            "previous_status": state.get("status"),
+            "previous_attempt_id": state.get("attempt_id"),
+            "decision": decision,
+            "blocker": blocker,
+        }
