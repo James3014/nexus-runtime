@@ -2485,24 +2485,13 @@ def build_default_mainchain_invokers(
     Does not hand-pick a partial set as "full Nexus". Every planner node name
     gets a handler. UnifiedRuntime only *runs* handlers for selected names.
     """
-    try:
-        from nexus_runtime_support_candidate.services.online_nexus_context import (
-            build_codeintel_preflight_invoker,
-            build_plan_gated_postflight_invokers,
-        )
-    except ImportError:
-        build_codeintel_preflight_invoker = lambda *, codeintel=None: build_explicit_skip_invoker(
-            "codeintel", skip_reason=SKIP_NOT_IMPLEMENTED
-        )
-        build_plan_gated_postflight_invokers = lambda: {}
-    try:
-        from nexus_runtime_support_candidate.services.unified_runtime import (
-            build_prompt_compression_capability_invoker,
-        )
-    except ImportError:
-        build_prompt_compression_capability_invoker = lambda: build_explicit_skip_invoker(
-            "prompt_compression", skip_reason=SKIP_NOT_IMPLEMENTED
-        )
+    from nexus_runtime_support_candidate.services.online_nexus_context import (
+        build_codeintel_preflight_invoker,
+        build_plan_gated_postflight_invokers,
+    )
+    build_prompt_compression_capability_invoker = (
+        lambda: build_explicit_skip_invoker("prompt_compression", skip_reason=SKIP_NOT_IMPLEMENTED)
+    )
 
     invokers: dict[str, CapabilityInvoker] = {}
 
