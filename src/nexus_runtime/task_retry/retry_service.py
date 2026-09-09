@@ -152,25 +152,46 @@ class RetryService:
                     "blocker": "durable request is missing; cannot safely reconstruct the task",
                 },
             }
-        try:
-            predecessor = self.dispatch.validate_predecessor(request, state)
-        except RuntimeError as exc:
-            return {
-                **state,
-                "retry": {**meta, "decision": "BLOCK", "blocker": str(exc)},
-            }
+        dispatch_needed = bool(
+            request.get("canonical_dispatch_envelope") is not None
+            or state.get("canonical_dispatch_envelope") is not None
+            or request.get("workforce_dispatch") is not None
+            or request.get("demands") is not None
+            or request.get("admission") is not None
+            or str(state.get("acceptance_decision") or "") == "REPAIRABLE"
+        )
+        predecessor = None
+        if dispatch_needed:
+            try:
+                predecessor = self.dispatch.validate_predecessor(request, state)
+            except RuntimeError as exc:
+                return {
+                    **state,
+                    "retry": {**meta, "decision": "BLOCK", "blocker": str(exc)},
+                }
         retry_request = self.contract.build_retry_request(state)
-        rebound = self.dispatch.rebind_fresh_attempt(retry_request, predecessor)
-        if not isinstance(rebound, Mapping):
-            return {
-                **state,
-                "retry": {
-                    **meta,
-                    "decision": "BLOCK",
-                    "blocker": "WORKFORCE_REBIND_FAILED",
-                },
-            }
-        retry_request = dict(rebound)
+        if predecessor is not None:
+            try:
+                rebound = self.dispatch.rebind_fresh_attempt(retry_request, predecessor)
+            except (TypeError, ValueError) as exc:
+                return {
+                    **state,
+                    "retry": {
+                        **meta,
+                        "decision": "BLOCK",
+                        "blocker": f"WORKFORCE_REBIND_FAILED:{exc}",
+                    },
+                }
+            if not isinstance(rebound, Mapping):
+                return {
+                    **state,
+                    "retry": {
+                        **meta,
+                        "decision": "BLOCK",
+                        "blocker": "WORKFORCE_REBIND_FAILED",
+                    },
+                }
+            retry_request = dict(rebound)
         result = dict(self.submission.submit(retry_request))
         result["retry"] = {
             **meta,
