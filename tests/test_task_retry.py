@@ -490,3 +490,21 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
     assert leaf_result == donor_result
     assert leaf_result["retry"]["blocker"] == "WORKFORCE_REBIND_FAILED:envelope_rebuild_failed"
     assert donor.calls == leaf_ports[0].trace
+
+
+def test_envelope_none_request_with_state_mapping_is_invalid(tmp_path):
+    svc, ports = service(
+        tmp_path,
+        {
+            "task_id": "task-1",
+            "status": "FINAL_BLOCK",
+            "attempt_id": "attempt-1",
+            "cleanup_decision": "TARGET_CLEANED",
+            "attempts": [],
+            "canonical_dispatch_envelope": {},
+            "request": {"task_id": "task-1", "canonical_dispatch_envelope": None},
+        },
+    )
+    result = svc.retry_task("task-1")
+    assert result["retry"]["blocker"] == "WORKFORCE_DISPATCH_ENVELOPE_INVALID"
+    assert ports[3].calls == []
