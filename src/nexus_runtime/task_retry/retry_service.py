@@ -199,10 +199,20 @@ class RetryService:
                 return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": "WORKFORCE_REPAIR_WORKER_MISSING"}}
             request = dict(request)
             request["repair_worker_id"] = worker_id
+        if predecessor is not None and not isinstance(
+            predecessor.get("canonical_dispatch_envelope"), Mapping
+        ):
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCK",
+                    "blocker": "WORKFORCE_DISPATCH_ENVELOPE_MISSING",
+                },
+            }
         retry_request = self.contract.build_retry_request({**state, "request": request})
-        if repair_dispatch is not None and predecessor is None:
-            predecessor = repair_dispatch
-        if predecessor is not None:
+        rebind_dispatch = repair_dispatch or predecessor
+        if rebind_dispatch is not None:
             try:
                 rebound = self.dispatch.rebind_fresh_attempt(retry_request, predecessor)
             except (TypeError, ValueError) as exc:
@@ -236,11 +246,11 @@ class RetryService:
             retry_request = dict(rebound)
             retry_request.update(
                 {
-                    "worker": fresh.get("provider"),
-                    "provider": fresh.get("provider"),
-                    "model": fresh.get("model"),
-                    "worker_id": fresh.get("worker_id"),
-                    "worker_order": [fresh.get("provider")],
+                    "worker": fresh["provider"],
+                    "provider": fresh["provider"],
+                    "model": fresh["model"],
+                    "worker_id": fresh["worker_id"],
+                    "worker_order": [fresh["provider"]],
                     "workforce_dispatch": dict(fresh),
                     "canonical_dispatch_envelope": fresh.get("canonical_dispatch_envelope"),
                 }

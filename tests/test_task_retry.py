@@ -66,7 +66,7 @@ class Dispatch:
         self.calls.append("validate")
         if self.trace is not None:
             self.trace.append("validate")
-        return {"provider": "fixture", "model": "fixture-model", "worker_id": "worker-1", "envelope": "old"}
+        return {"provider": "fixture", "model": "fixture-model", "worker_id": "worker-1", "envelope": "old", "canonical_dispatch_envelope": {"attempt_id": request.get("attempt_id")}}
 
     def validate_fresh(self, request, state):
         self.calls.append("validate")
