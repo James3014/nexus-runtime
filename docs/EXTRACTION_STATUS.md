@@ -8,3 +8,7 @@ search, and read store prototype.
 Planner/support candidates retain their own historical provenance. Their API
 parity with the frozen runtime source remains an integration gate. Core,
 Learning, Open SWE, and repository intelligence remain external owners.
+
+The public package also exports ContextHub and task-context assembly contracts.
+Memory retrieval provides an explicit local JSONL backend plus optional injected
+Findings and Repository read ports through the composition helper.
