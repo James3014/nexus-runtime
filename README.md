@@ -15,12 +15,15 @@ revision. See `docs/runtime-source-manifest.json` and
 
 ## Local usage
 
-Install the wheel with the pinned `nexus-learning` dependency, then assemble
+Build and install the wheel with the pinned `nexus-learning` dependency, then assemble
 the runtime through explicit public contracts:
 
 ```console
+python -m venv .venv
+python -m pip install /path/to/nexus_learning-0.1.0-py3-none-any.whl
+python -m pip wheel --no-deps --wheel-dir dist .
 python -m pip install dist/nexus_runtime-0.1.0.dev0-py3-none-any.whl
-python -m pytest -q tests/test_runtime_operations.py tests/test_memory_adapters.py
+python examples/local_run.py
 ```
 
 ```python
