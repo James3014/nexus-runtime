@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.abc
+import json
 import sys
 from pathlib import Path
 
@@ -213,3 +215,106 @@ def test_context_reopens_persisted_checkpoint_and_denies_unknown_principal(tmp_p
     denied = ContextContinuityService(root, authenticated_principal="intruder", access_policy=Deny())
     with pytest.raises(PermissionError, match="SCOPE_DENIED"):
         denied.read_item(scope, item.item_id)
+
+
+def test_real_planner_run_and_replan_successful_receipts(tmp_path):
+    exports = build_runtime_exports()
+    request = exports.UnifiedRuntimeRequest(
+        task_id="positive-runtime",
+        workspace_revision="rev-1",
+        task_statement="execute a bounded runtime operation",
+        task_type="repair",
+        route={
+            "recommended_flow": "direct",
+            "online_policy": "allow",
+            "injected_transport": True,
+            "local_enabled": True,
+            "online_enabled": True,
+            "workforce_admission_enabled": True,
+            "workforce_bindings": {
+                "online": {
+                    "worker_id": "agy_flash",
+                    "provider": "agy",
+                    "model": "gemini-3.6-flash-high",
+                    "controls": ["task_card", "allowed_files", "mandatory_commands", "independent_verification"],
+                },
+                "local": {
+                    "worker_id": "local_coder_7b",
+                    "controls": ["small_scope", "parser", "compile", "focused_tests", "reversible_application"],
+                },
+            },
+        },
+        online_enabled=True,
+        local_enabled=True,
+        local_request={"task_id": "positive-runtime", "action": "candidate"},
+    )
+    route = dict(request.route)
+    plan = exports.CapabilityPlanner().plan(
+        task_desc=request.task_statement, task_type=request.task_type, route=route,
+        pillars={}, codeintel={}, phase_trace={}, budget={}, skills=[],
+    )
+    invokers = {
+        name: (lambda context, selected=name: {
+            "task_id": context["task_id"], "invoked": True, "gate_passed": True,
+            "evidence_refs": [f"positive:{selected}"],
+        }) for name in plan.selected_capabilities
+    }
+    candidate_path = tmp_path / "candidate.txt"
+    verifier_calls = {"count": 0}
+    def verifier(context):
+        verifier_calls["count"] += 1
+        observed = candidate_path.read_bytes()
+        passed = verifier_calls["count"] > 1 and observed == b"candidate-2"
+        return {"status": "SUCCEEDED" if passed else "FAILED", "task_id": context["task_id"], "invoked": True,
+                "gate_passed": passed, "verifier_status": "pass" if passed else "fail",
+                "verifier_artifact": "sha256:" + "ab" * 32,
+                "source_hash": str(context.get("source_hash") or ""),
+                "evidence": "deterministic verifier", "evidence_refs": ["positive:verifier"]}
+
+    def learning(context):
+        return {"status": "SUCCEEDED", "invoked": True, "gate_passed": True,
+                "evidence": "deterministic learning", "evidence_refs": ["positive:learning"]}
+
+    def online(context):
+        return {"task_id": context["task_id"], "invoked": True, "output_delivered": True,
+                "gate_passed": True, "provider_call_count": 1,
+                "provider": "agy", "response": "deterministic online result",
+                "evidence_refs": ["positive:online"]}
+
+    online.provider = "agy"
+    online.online_invoker_provider = "agy"
+
+    local_receipt = tmp_path / "local-receipt.json"
+    class LocalService:
+        calls = 0
+        def handle(self, context):
+            self.calls += 1
+            candidate_path.write_bytes(f"candidate-{self.calls}".encode())
+            candidate_hash = "sha256:" + hashlib.sha256(candidate_path.read_bytes()).hexdigest()
+            local_receipt.write_text(json.dumps({
+                "task_id": context["task_id"], "terminal_status": "SUCCEEDED",
+                "receipt_complete": True, "verifier_result": "pass",
+                "candidate_hashes": [candidate_hash],
+            }), encoding="utf-8")
+            return {"schema": "nexus.local_assist.response.v1",
+                    "task_id": context["task_id"], "action": "candidate",
+                    "invoked": True, "local_model_invoked": True, "output_delivered": True,
+                    "executor_invoked": True, "physical_callable": "LocalModelExecutor.run",
+                        "candidate_summary": {"isolation_status": "isolated",
+                            "selected_candidate_hash": candidate_hash,
+                        "selected_candidate_hash_matches_applied": True},
+                    "claim_boundary": {"local_model_executor_invoked": True},
+                    "receipt_path": str(local_receipt),
+                    "local_outputs": {"summary": "deterministic"},
+                    "evidence_refs": ["positive:local"]}
+
+    runtime = exports.UnifiedRuntime(local_service=LocalService())
+    first = runtime.run(request, capability_invokers=invokers, online_invoker=online,
+                        verifier=verifier, learning=learning)
+    assert first["terminal_status"] == "INCOMPLETE", first
+    assert first["execution_replan_request"]["replan_required"] is True
+    second = runtime.run_replan(first, request, capability_invokers=invokers, online_invoker=online,
+                                verifier=verifier, learning=learning)
+    assert second["terminal_status"] == "SUCCEEDED", second
+    assert second["claim_boundary"]["attempt_number"] == 2
+    assert second["execution_attempt"]["parent_receipt_hash"] == first["receipt_hash"]
