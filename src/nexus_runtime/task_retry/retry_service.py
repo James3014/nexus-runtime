@@ -152,6 +152,20 @@ class RetryService:
                     "blocker": "durable request is missing; cannot safely reconstruct the task",
                 },
             }
+        for envelope_source in (request, state):
+            if (
+                "canonical_dispatch_envelope" in envelope_source
+                and envelope_source.get("canonical_dispatch_envelope") is not None
+                and not isinstance(envelope_source.get("canonical_dispatch_envelope"), Mapping)
+            ):
+                return {
+                    **state,
+                    "retry": {
+                        **meta,
+                        "decision": "BLOCK",
+                        "blocker": "WORKFORCE_DISPATCH_ENVELOPE_INVALID",
+                    },
+                }
         demands, admission = self.dispatch.workforce_inputs(request)
         dispatch_needed = bool(
             request.get("canonical_dispatch_envelope") is not None
@@ -171,7 +185,23 @@ class RetryService:
                         **state,
                         "retry": {**meta, "decision": "BLOCK", "blocker": str(exc)},
                     }
-        retry_request = self.contract.build_retry_request(state)
+        repair_dispatch = None
+        if str(state.get("acceptance_decision") or "") == "REPAIRABLE":
+            planner = request.get("planner_output")
+            if not isinstance(planner, Mapping):
+                return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": "WORKFORCE_ADMISSION_BINDING_MISSING"}}
+            try:
+                repair_dispatch = self.dispatch.validate_predecessor(request, state)
+            except RuntimeError as exc:
+                return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": str(exc)}}
+            worker_id = str((repair_dispatch or {}).get("worker_id") or "")
+            if not worker_id:
+                return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": "WORKFORCE_REPAIR_WORKER_MISSING"}}
+            request = dict(request)
+            request["repair_worker_id"] = worker_id
+        retry_request = self.contract.build_retry_request({**state, "request": request})
+        if repair_dispatch is not None and predecessor is None:
+            predecessor = repair_dispatch
         if predecessor is not None:
             try:
                 rebound = self.dispatch.rebind_fresh_attempt(retry_request, predecessor)
@@ -204,6 +234,17 @@ class RetryService:
                     },
                 }
             retry_request = dict(rebound)
+            retry_request.update(
+                {
+                    "worker": fresh.get("provider"),
+                    "provider": fresh.get("provider"),
+                    "model": fresh.get("model"),
+                    "worker_id": fresh.get("worker_id"),
+                    "worker_order": [fresh.get("provider")],
+                    "workforce_dispatch": dict(fresh),
+                    "canonical_dispatch_envelope": fresh.get("canonical_dispatch_envelope"),
+                }
+            )
         result = dict(self.submission.submit(retry_request))
         result["retry"] = {
             **meta,

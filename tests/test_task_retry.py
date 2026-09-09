@@ -282,7 +282,7 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
 
     class DonorSelf:
         def __init__(self, state):
-            self.state, self.calls = state, []
+            self.state, self.calls, self.submitted = state, [], None
 
         def _read_state_snapshot(self, task_id):
             self.calls.append("read")
@@ -294,6 +294,7 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
 
         def submit_task(self, request):
             self.calls.append("submit")
+            self.submitted = dict(request)
             return {
                 "task_id": request["task_id"],
                 "attempt_id": request["attempt_id"],
@@ -368,6 +369,18 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
     assert leaf_result == donor_result
     assert leaf_ports[2].calls == ["validate", "rebind", "validate"]
     assert donor.calls == leaf_ports[0].trace
+    assert leaf_ports[3].request == donor.submitted
+
+    invalid_state = {**dispatch_state, "request": {**dispatch_state["request"], "canonical_dispatch_envelope": "tampered"}}
+    svc, invalid_ports = service(tmp_path, invalid_state)
+    invalid_result = svc.retry_task("task-1")
+    assert invalid_result["retry"]["blocker"] == "WORKFORCE_DISPATCH_ENVELOPE_INVALID"
+    assert invalid_ports[3].calls == []
+
+    repair_missing = {**dispatch_state, "acceptance_decision": "REPAIRABLE", "request": {"task_id": "task-1"}}
+    svc, repair_ports = service(tmp_path, repair_missing)
+    assert svc.retry_task("task-1")["retry"]["blocker"] == "WORKFORCE_ADMISSION_BINDING_MISSING"
+    assert repair_ports[3].calls == []
 
     class FailingDispatch(Dispatch):
         def __init__(self, *, predecessor_error=None, rebound_error=None):
