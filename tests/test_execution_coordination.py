@@ -75,12 +75,20 @@ class Contract:
     def receipt_from_state(self, value):
         return value if isinstance(value, Receipt) else None
 
+    def validate_static_contract(self, contract, target_worktree):
+        pass
+
+    def with_provider_call_budget(self, contract, remaining_calls):
+        return contract
+
 
 class Worker:
     def __init__(self, receipts):
         self.receipts = iter(receipts)
         self.preflights = []
         self.invocations = []
+        self.models = []
+        self.contracts = []
 
     def preflight(self, provider):
         self.preflights.append(provider)
@@ -88,6 +96,8 @@ class Worker:
 
     def invoke(self, provider, contract, lease, **kwargs):
         self.invocations.append(provider)
+        self.contracts.append(contract)
+        self.models.append(kwargs.get("model"))
         return next(self.receipts)
 
 
@@ -107,10 +117,18 @@ class Target:
 
 
 class Processes:
-    def launch_thread(self, target, args):
+    def __init__(self):
+        self.events = []
+
+    def create_thread(self, target, args):
+        self.events.append("create")
         return object()
 
-    def launch_process(self, command, *, cwd, env):
+    def start_thread(self, thread):
+        self.events.append("start")
+
+    def start_process(self, command, *, cwd, env):
+        self.events.append("process")
         return type("Process", (), {"pid": 7, "pgid": 7})()
 
     def wait_for_owner(self, task_id, attempt_id, pid):
@@ -118,6 +136,12 @@ class Processes:
 
     def terminate_owned_processes(self, task_id, exclude_pid):
         pass
+
+    def pid_alive(self, pid):
+        return pid == 99
+
+    def utc_now(self):
+        return "2026-09-09T00:00:00+00:00"
 
 
 class Finalization:
@@ -209,3 +233,102 @@ def test_aggregate_call_budget_denies_before_invoke():
         coordinator.execute_attempt("task", "att")
 
     assert worker.invocations == []
+
+
+def test_launch_uses_live_pid_only_and_persists_before_thread_start():
+    coordinator, state, _worker, _target, _finalization = build([])
+    processes = Processes()
+    coordinator = ExecutionCoordinator(state, Contract(), Worker([]), Target(), processes, Finalization())
+    state.snapshot["status"] = "SUBMITTED"
+    state.snapshot["worker_pid"] = 98
+    result = coordinator.launch("task", "att", state_dir="/state", custom_runner=lambda *_: {}, source_root="/source")
+
+    assert result["status"] == "SUBMITTED"
+    assert result["worker_started_at"] == "2026-09-09T00:00:00+00:00"
+    assert processes.events == ["create", "start"]
+    assert state.events[-1] == "SUBMITTED"
+
+
+def test_launch_suppresses_only_live_pid():
+    coordinator, state, _worker, _target, _finalization = build([])
+    processes = Processes()
+    coordinator = ExecutionCoordinator(state, Contract(), Worker([]), Target(), processes, Finalization())
+    state.snapshot["worker_pid"] = 99
+
+    result = coordinator.launch("task", "att", state_dir="/state", custom_runner=None, source_root="/source")
+
+    assert result is state.snapshot
+    assert processes.events == []
+
+
+def test_run_owned_attempt_executes_custom_runner_argument():
+    coordinator, state, _worker, _target, finalization = build([])
+    seen = []
+
+    def custom_runner(contract, request, update):
+        seen.append((contract, request))
+        update("CUSTOM_PROGRESS", {"marker": "ok"})
+        return {"promotion_status": "PENDING_HUMAN_APPROVAL"}
+
+    coordinator.run_owned_attempt("task", "att", custom_runner)
+
+    assert len(seen) == 1
+    assert state.events == ["CUSTOM_PROGRESS", "PENDING_HUMAN_APPROVAL"]
+    assert not finalization.failures
+
+
+def test_negative_reported_budget_is_denied():
+    coordinator, _state, worker, _target, _finalization = build([
+        Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True, provider_calls=-1),
+    ])
+
+    with pytest.raises(RuntimeError, match="negative budget"):
+        coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == ["codex"]
+
+
+def test_reduced_remaining_budget_and_canonical_model_are_forwarded():
+    class BoundContract(Contract):
+        maximum_provider_calls = 2
+
+        def provider_binding(self, request, state):
+            return {"model": "binding-model", "canonical_dispatch_envelope": {"model": "envelope-model"}}
+
+        def with_provider_call_budget(self, contract, remaining_calls):
+            clone = type("BudgetedContract", (), {
+                "maximum_provider_calls": remaining_calls,
+                "maximum_attempts_per_task": self.maximum_attempts_per_task,
+            })()
+            return clone
+
+    coordinator, state, worker, _target, _finalization = build([
+        Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+    ], contract=BoundContract())
+    prior = Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, timed_out=True)
+    state.snapshot.update({
+        "status": "WORKER_RUNNING", "lease": "lease-1", "active_provider": "codex",
+        "executions": [prior],
+    })
+
+    coordinator.execute_attempt("task", "att")
+
+    assert worker.contracts[0].maximum_provider_calls == 1
+    assert worker.models == ["envelope-model"]
+
+
+def test_deadline_crossing_after_provider_work_is_fail_closed(monkeypatch):
+    class ExpiredContract(Contract):
+        def deadline(self, contract, submitted_at):
+            return 1.0
+
+    coordinator, _state, worker, _target, _finalization = build([
+        Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+    ], contract=ExpiredContract())
+    clock = iter((0.0, 0.0, 0.0, 2.0))
+    monkeypatch.setattr("nexus_runtime.execution_coordination.coordinator.time.time", lambda: next(clock))
+
+    with pytest.raises(RuntimeError, match="WALL_TIME_BUDGET_EXHAUSTED"):
+        coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == ["codex"]

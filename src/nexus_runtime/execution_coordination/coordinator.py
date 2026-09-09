@@ -41,6 +41,8 @@ class EscalationDecision:
 
 
 def _failure_is_deterministic(receipt: Any) -> bool:
+    if bool(getattr(receipt, "timed_out", False)) or getattr(receipt, "outcome", None) in ("INCOMPLETE", WorkerOutcome.INCOMPLETE):
+        return False
     text = str(getattr(receipt, "failure_reason", None) or "").lower()
     markers = (
         "malformed", "invalid contract", "contract invalid", "syntaxerror",
@@ -58,7 +60,7 @@ class WorkerEscalationPolicy:
 
     def decide(self, attempts: Sequence[Any]) -> EscalationDecision:
         if not attempts:
-            return EscalationDecision("RUN", self.provider_order[0], "no worker attempt exists")
+            return EscalationDecision("RUN_CHEAP", self.provider_order[0], "no worker attempt exists")
         latest = attempts[-1]
         if any(bool(getattr(latest, field, False)) for field in (
             "commit_created", "merge_performed", "push_performed"
@@ -76,9 +78,9 @@ class WorkerEscalationPolicy:
         if next_provider is not None:
             return EscalationDecision(
                 "ESCALATE", next_provider,
-                f"worker did not prove success: {getattr(latest, 'outcome', '')}",
+                f"cheap worker did not prove success: {getattr(latest, 'outcome', '')}",
             )
-        return EscalationDecision("BLOCK", None, "no unattempted provider remains")
+        return EscalationDecision("BLOCK", None, "strong worker did not produce complete proof")
 
 
 def _receipt_count(receipt: Any, field: str) -> int:
@@ -113,6 +115,7 @@ class ExecutionCoordinator:
             raise RuntimeError("durable request is missing")
         contract = self.contract.build_contract(request)
         deadline = self.contract.deadline(contract, state.get("submitted_at"))
+        self._check_deadline(deadline)
         binding = self.contract.provider_binding(request, state)
         providers = tuple(self.contract.provider_order(contract))
         if not providers:
@@ -162,6 +165,8 @@ class ExecutionCoordinator:
         else:
             lease = self.target.lease_from_state(state)
 
+        self.contract.validate_static_contract(contract, str(getattr(lease, "target_worktree", lease)))
+
         while status in {"WORKER_RUNNING", "WORKER_COMPLETED"}:
             if status == "WORKER_RUNNING":
                 provider = str(state.get("active_provider") or providers[0])
@@ -180,19 +185,28 @@ class ExecutionCoordinator:
                     timeout = min(timeout, max(0.0, deadline - time.time()))
                 if timeout <= 0:
                     raise RuntimeError("WALL_TIME_BUDGET_EXHAUSTED")
+                invoke_contract = self.contract.with_provider_call_budget(contract, remaining_calls)
+                envelope = binding.get("canonical_dispatch_envelope") if binding else None
+                model = (str(envelope.get("model")) if isinstance(envelope, Mapping) and envelope.get("model") else str(request.get("model") or "") or None)
                 receipt = self.worker.invoke(
-                    provider, contract, lease, prompt=self.contract.prompt(contract),
-                    model=(str(binding.get("model")) if binding and binding.get("model") else str(request.get("model") or "") or None),
+                    provider, invoke_contract, lease, prompt=self.contract.prompt(contract),
+                    model=model,
                     timeout_seconds=timeout,
                     on_process_group=lambda pgid: self.state.set_child_process_group(task_id, attempt_id, pgid),
                 )
-                reported_calls = _receipt_count(receipt, "provider_calls")
-                reported_attempts = _receipt_count(receipt, "provider_attempt_count")
+                self._check_deadline(deadline)
+                reported_calls_raw = getattr(receipt, "provider_calls", 0)
+                reported_attempts_raw = getattr(receipt, "provider_attempt_count", 0)
+                if int(reported_calls_raw or 0) < 0 or int(reported_attempts_raw or 0) < 0:
+                    raise RuntimeError("provider execution receipt reported a negative budget")
+                reported_calls = int(reported_calls_raw or 0)
+                reported_attempts = int(reported_attempts_raw or 0)
                 if reported_calls > remaining_calls:
                     raise RuntimeError("provider execution receipt exceeded aggregate call budget")
                 if reported_attempts > remaining_attempts:
                     raise RuntimeError("provider execution receipt exceeded aggregate attempt budget")
                 attempts.append(receipt)
+                self._check_deadline(deadline)
                 self._update(task_id, attempt_id, "WORKER_COMPLETED", {
                     "execution": receipt, "executions": attempts, "active_provider": provider,
                 })
@@ -248,21 +262,32 @@ class ExecutionCoordinator:
             failures.append(f"{provider}: {getattr(preflight, 'reason', '')}")
         raise RuntimeError("worker preflight failed: " + "; ".join(failures))
 
-    def run_owned_attempt(self, task_id: str, attempt_id: str) -> None:
+    def run_owned_attempt(self, task_id: str, attempt_id: str, custom_runner: Callable[..., Mapping[str, Any]] | None = None) -> None:
         state = self.state.read_snapshot(task_id)
         if state is None or str(state.get("attempt_id") or "") != attempt_id:
+            return
+        owner_pid = os.getpid()
+        if state.get("worker_pid") not in (None, owner_pid):
             return
         stop = threading.Event()
         heartbeat = threading.Thread(target=self._heartbeat, args=(task_id, attempt_id, stop), daemon=True)
         heartbeat.start()
         try:
-            result = self.execute_attempt(task_id, attempt_id)
+            if custom_runner is None:
+                result = self.execute_attempt(task_id, attempt_id)
+            else:
+                contract = self.contract.build_contract(state["request"])
+                result = custom_runner(
+                    contract,
+                    state["request"],
+                    lambda status, values: self._update(task_id, attempt_id, status, values),
+                )
             current = self.state.read_snapshot(task_id) or {}
             if str(current.get("status") or "") not in _TERMINAL_STATUSES:
                 status = "PENDING_HUMAN_APPROVAL" if result.get("promotion_status") == "PENDING_HUMAN_APPROVAL" else "CANDIDATE_COMMITTED"
                 self._update(task_id, attempt_id, status, result)
         except Exception as exc:
-            self.processes.terminate_owned_processes(task_id, os.getpid())
+            self.processes.terminate_owned_processes(task_id, owner_pid)
             self.finalization.finalize_failure(task_id, attempt_id, exc)
         finally:
             stop.set()
@@ -272,24 +297,26 @@ class ExecutionCoordinator:
         while not stop.wait(10.0):
             self.state.heartbeat(task_id, attempt_id)
 
-    def launch(self, task_id: str, attempt_id: str, *, state_dir: str, custom_runner: bool, source_root: str) -> Mapping[str, Any] | None:
+    def launch(self, task_id: str, attempt_id: str, *, state_dir: str, custom_runner: Callable[..., Mapping[str, Any]] | None, source_root: str) -> Mapping[str, Any] | None:
         state = self.state.read_snapshot(task_id)
         if state is None or str(state.get("attempt_id") or "") != attempt_id:
             return state
         existing_pid = state.get("worker_pid")
-        if existing_pid:
+        if existing_pid and self.processes.pid_alive(int(existing_pid)):
             return state
-        if custom_runner:
-            thread = self.processes.launch_thread(self.run_owned_attempt, (task_id, attempt_id))
-            return self._update(task_id, attempt_id, "WORKER_RUNNING", {
+        if custom_runner is not None:
+            thread = self.processes.create_thread(self.run_owned_attempt, (task_id, attempt_id, custom_runner))
+            result = self._update(task_id, attempt_id, str(state.get("status") or "SUBMITTED"), {
                 "worker_pid": os.getpid(), "worker_pgid": os.getpgrp(), "worker_mode": "thread",
-                "worker_started_at": time.time(), "heartbeat_at": time.time(),
+                "worker_started_at": self.processes.utc_now(), "heartbeat_at": self.processes.utc_now(),
             })
+            self.processes.start_thread(thread)
+            return result
         command = [sys.executable, "-m", "nexus.orchestrator.self_hosted_task_worker", "--state-dir", state_dir, "--task-id", task_id, "--attempt-id", attempt_id]
-        process = self.processes.launch_process(command, cwd=source_root, env={**os.environ, "PYTHONPATH": source_root + os.pathsep + os.environ.get("PYTHONPATH", "")})
-        return self._update(task_id, attempt_id, "WORKER_RUNNING", {
+        process = self.processes.start_process(command, cwd=source_root, env={**os.environ, "PYTHONPATH": source_root + os.pathsep + os.environ.get("PYTHONPATH", "")})
+        return self._update(task_id, attempt_id, str(state.get("status") or "SUBMITTED"), {
             "worker_pid": process.pid, "worker_pgid": getattr(process, "pgid", None), "worker_mode": "process",
-            "worker_started_at": time.time(), "heartbeat_at": time.time(),
+            "worker_started_at": self.processes.utc_now(), "heartbeat_at": self.processes.utc_now(),
         })
 
 
