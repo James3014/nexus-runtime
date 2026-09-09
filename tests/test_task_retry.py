@@ -6,6 +6,11 @@ from pathlib import Path
 import pytest
 
 from nexus_runtime.task_retry import RetryService
+from nexus_runtime.task_retry.retry_service import (
+    INTEGRATION_INTERMEDIATE_STATUSES,
+    RETRYABLE_TASK_STATUSES,
+    TERMINAL_STATUSES,
+)
 
 
 class JsonState:
@@ -91,7 +96,7 @@ def test_clean_terminal_retry_roundtrips_physical_state_and_fresh_attempt(tmp_pa
         tmp_path,
         {
             "task_id": "task-1",
-            "status": "FAILED",
+            "status": "FINAL_BLOCK",
             "attempt_id": "attempt-1",
             "cleanup_decision": "TARGET_CLEANED",
             "attempts": [{"attempt_id": "attempt-1"}],
@@ -116,8 +121,8 @@ def test_clean_terminal_retry_roundtrips_physical_state_and_fresh_attempt(tmp_pa
     [
         ("WORKER_RUNNING", "TARGET_CLEANED", "NO_DUPLICATE_ACTIVE_TASK"),
         ("RETAINED_FOR_REVIEW", "TARGET_CLEANED", "BLOCKED_RETAINED_REVIEW"),
-        ("SUCCEEDED", "TARGET_CLEANED", "BLOCKED_ABSORBING_STATUS"),
-        ("FAILED", "PENDING", "BLOCKED_TARGET_DISPOSITION"),
+        ("INTEGRATED", "TARGET_CLEANED", "BLOCKED_ABSORBING_STATUS"),
+        ("FINAL_BLOCK", "PENDING", "BLOCKED_TARGET_DISPOSITION"),
     ],
 )
 def test_retry_negative_matrix_does_not_validate_or_submit(
@@ -159,3 +164,14 @@ def test_invalid_unknown_and_budget_gates_match_donor_contract(tmp_path):
     )
     assert svc.retry_task("task-1")["retry"]["blocker"] == "ATTEMPT_BUDGET_EXHAUSTED"
     assert ports[2].calls == [] and ports[3].calls == []
+
+
+def test_status_sets_are_bound_to_frozen_donor():
+    assert RETRYABLE_TASK_STATUSES == {"FINAL_BLOCK", "CANCELLED"}
+    assert INTEGRATION_INTERMEDIATE_STATUSES == {
+        "INTEGRATION_FAILED_PRE_APPLY",
+        "INTEGRATION_VERIFY_FAILED_AFTER_APPLY",
+        "INTEGRATED_TARGET_RETAINED",
+    }
+    assert "INTEGRATED" in TERMINAL_STATUSES
+    assert "FAILED" not in RETRYABLE_TASK_STATUSES

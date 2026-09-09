@@ -12,23 +12,37 @@ from .ports import (
     RetrySubmissionPort,
 )
 
-RETRYABLE_TASK_STATUSES = frozenset(
-    {"FAILED", "FINAL_BLOCK", "CANCELLED", "VERIFICATION_FAILED"}
-)
 TERMINAL_STATUSES = frozenset(
     {
-        "SUCCEEDED",
-        "FAILED",
         "FINAL_BLOCK",
-        "CANCELLED",
-        "VERIFICATION_FAILED",
         "RETAINED_FOR_REVIEW",
+        "REJECTED",
+        "SUPERSEDED",
+        "INTEGRATED",
         "INTEGRATION_FAILED",
+        "CANCELLED",
+        "REHEARSAL_VERIFIED",
+        "DIRECT_COMPLETED",
+        "DIRECT_RECONCILE_REQUIRED",
+        "INTEGRATED_AND_CLEANED",
+    }
+)
+PENDING_CANDIDATE_STATUSES = frozenset(
+    {
+        "PENDING_HUMAN_APPROVAL",
+        "APPROVED",
+        "APPROVAL_INVALIDATED",
+        "INTEGRATING",
     }
 )
 INTEGRATION_INTERMEDIATE_STATUSES = frozenset(
-    {"INTEGRATION_PENDING", "INTEGRATION_RUNNING", "INTEGRATION_BLOCKED"}
+    {
+        "INTEGRATION_FAILED_PRE_APPLY",
+        "INTEGRATION_VERIFY_FAILED_AFTER_APPLY",
+        "INTEGRATED_TARGET_RETAINED",
+    }
 )
+RETRYABLE_TASK_STATUSES = frozenset({"FINAL_BLOCK", "CANCELLED"})
 
 
 @dataclass(frozen=True)
