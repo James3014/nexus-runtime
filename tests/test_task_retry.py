@@ -403,6 +403,7 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
                 "model": "fixture-model",
                 "worker_id": "worker-1",
                 "envelope": "old",
+                "canonical_dispatch_envelope": {"attempt_id": request.get("attempt_id")},
             }
 
         def rebind_fresh_attempt(self, request, dispatch):
