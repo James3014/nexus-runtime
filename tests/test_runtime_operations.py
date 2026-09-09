@@ -268,7 +268,7 @@ def test_real_planner_run_and_replan_successful_receipts(tmp_path):
         passed = verifier_calls["count"] > 1 and observed == b"candidate-2"
         return {"status": "SUCCEEDED" if passed else "FAILED", "task_id": context["task_id"], "invoked": True,
                 "gate_passed": passed, "verifier_status": "pass" if passed else "fail",
-                "verifier_artifact": "sha256:" + "ab" * 32,
+                "verifier_artifact": "sha256:" + hashlib.sha256(observed).hexdigest(),
                 "source_hash": str(context.get("source_hash") or ""),
                 "evidence": "deterministic verifier", "evidence_refs": ["positive:verifier"]}
 
@@ -319,3 +319,7 @@ def test_real_planner_run_and_replan_successful_receipts(tmp_path):
     assert second["terminal_status"] == "SUCCEEDED", second
     assert second["claim_boundary"]["attempt_number"] == 2
     assert second["execution_attempt"]["parent_receipt_hash"] == first["receipt_hash"]
+    assert candidate_path.read_bytes() == b"candidate-2"
+    assert json.loads(local_receipt.read_text(encoding="utf-8"))["candidate_hashes"] == [
+        "sha256:" + hashlib.sha256(candidate_path.read_bytes()).hexdigest()
+    ]
