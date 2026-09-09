@@ -3155,7 +3155,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             merged_invokers: dict[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = dict(
                 capability_invokers or {}
             )
-            capability_invokers = merged_invokers or None
+            capability_invokers = merged_invokers if capability_invokers is not None else None
             planner_kwargs: dict[str, Any] = {
                 "task_desc": request.task_statement,
                 "task_type": request.task_type,

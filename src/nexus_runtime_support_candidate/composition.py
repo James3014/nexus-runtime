@@ -57,6 +57,7 @@ from nexus_runtime_p6c_candidate.services.online_payload_contract import (
     normalize_online_invoker_payload,
     online_payload_indicates_non_delivery,
 )
+from .services.capability_registry import build_default_mainchain_invokers
 
 from .contracts.canonical_execution import CanonicalPlanningBundle, CanonicalTaskContext
 from .contracts.root_receipt import build_root_receipt
@@ -106,8 +107,9 @@ class MissingCapabilityBindingError(RuntimeError):
 
 def _ensure_selected_coverage_invokers(selected, existing, *, codeintel=None):
     """Require caller-owned callable coverage for every Planner-selected capability."""
-    del codeintel
-    mapping = dict(existing or {})
+    if existing is None:
+        return build_default_mainchain_invokers(codeintel=codeintel)
+    mapping = dict(existing)
     missing = sorted(str(name) for name in (selected or ()) if str(name) not in mapping)
     noncallable = sorted(str(name) for name in (selected or ()) if str(name) in mapping and not callable(mapping[str(name)]))
     if missing or noncallable:
