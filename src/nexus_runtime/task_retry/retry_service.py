@@ -275,7 +275,7 @@ class RetryService:
     ) -> dict[str, Any]:
         return {
             "task_id": task_id,
-            "previous_status": status,
+            "previous_status": str(state.get("status") or "UNKNOWN"),
             "previous_attempt_id": state.get("attempt_id"),
             "decision": decision,
             "blocker": blocker,
