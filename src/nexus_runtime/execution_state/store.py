@@ -139,7 +139,7 @@ class ExecutionStateStore:
             return None
         current = self.read_raw(task_id)
         if not isinstance(current, Mapping):
-            raise ValueError("execution state must be an object")
+            raise ValueError("execution state must be an object")  # noqa: TRY004 - compatibility
         if callable(update):
             value = dict(current)
             result = update(value)
