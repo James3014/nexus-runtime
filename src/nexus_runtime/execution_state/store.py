@@ -39,6 +39,9 @@ class ExecutionStateStore:
             try: yield
             finally: fcntl.flock(h.fileno(), fcntl.LOCK_UN)
     def write(self, task_id: str, state: Mapping[str, Any]):
+        with self._lock():
+            return self._write_unlocked(task_id, state)
+    def _write_unlocked(self, task_id: str, state: Mapping[str, Any]):
         normalized=json.loads(json.dumps(dict(state), default=str))
         checked = self.validator(task_id, normalized, self.state_path(task_id))
         if checked is None or checked.get("state_valid") is False:
@@ -70,7 +73,7 @@ class ExecutionStateStore:
                     raise TypeError("state mutator must mutate in place and return None")
             else:
                 value = {**current,**dict(update)}
-            return self.write(task_id,value)
+            return self._write_unlocked(task_id,value)
     @staticmethod
     def _error_receipt(task_id, path, error):
         return {"task_id":task_id,"status":"BLOCKED_INVALID_STATE","state_valid":False,"source_path":str(path),"error":type(error).__name__}
