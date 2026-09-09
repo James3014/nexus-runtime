@@ -154,3 +154,97 @@ def test_program_rules_use_explicit_temporary_text_reader(tmp_path):
         clock=lambda: "fixed",
     )
     assert ContextHub(deps=deps).load_program_rules() == "L0: preserve evidence\n"
+
+
+def test_extracted_packs_match_frozen_donor_for_identical_ports(tmp_path):
+    """Differentially compare complete pack dictionaries against donor 471."""
+    import importlib.util
+    import sys
+    from types import SimpleNamespace
+
+    sys.path.insert(0, "/private/tmp/astra-production-integrated-20260909")
+    donor_path = Path(
+        "/private/tmp/astra-production-integrated-20260909/nexus/core/context_hub.py"
+    )
+    spec = importlib.util.spec_from_file_location("frozen_context_hub", donor_path)
+    donor_module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(donor_module)
+
+    state = State()
+    memory = {"reminders": ["phase"], "total_sources": 1}
+    wiki = {"context": "wiki:parser failure", "selected_sources": []}
+    knowledge = Knowledge()
+    extracted = ContextHubDependencies(
+        state_reader=lambda: state,
+        text_reader=lambda name="program.md": "rules:program.md",
+        memory_reader=lambda _phase: memory,
+        wiki_reader=lambda _query, max_results=3: wiki,
+        renderer=lambda _state, aggression=0.0: "toon-summary",
+        dialogue_pruner=lambda _history: "pruned-history",
+        compactor=lambda value, confidence=0.5: {"task_id": value.get("task_id")},
+        knowledge_reader=knowledge,
+        clock=lambda: "fixed",
+    )
+    candidate = ContextHub(deps=extracted)
+
+    class StateIO:
+        def load_global_state(self):
+            return state
+
+    class TextStore:
+        def load_program_rules(self, _name="program.md"):
+            return "rules:program.md"
+
+    donor = donor_module.ContextHub.__new__(donor_module.ContextHub)
+    donor.state_io = StateIO()
+    donor._text_store = TextStore()
+    donor.memory_service = SimpleNamespace(aggregate_memory=lambda: memory)
+    donor.knowledge_injector = knowledge
+    donor.belief_engine = None
+    donor.run_dir = None
+    donor._retrieve_wiki_context = lambda _query, max_results=3: wiki
+    donor._inject_memory_reminders = lambda _phase: memory
+    donor.load_program_rules = lambda md_path="program.md": "rules:program.md"
+    monkey = SimpleNamespace(render=lambda _state, aggression=0.0: "toon-summary")
+    donor_module.ToonRenderer = monkey
+    donor_module.prune_dialogue = lambda _history: "pruned-history"
+
+    def normalized(value):
+        value = dict(value)
+        value.pop("timestamp", None)
+        return value
+
+    assert normalized(
+        candidate.assemble_feature_pack({"steps": ["inspect"]})
+    ) == normalized(donor.assemble_feature_pack({"steps": ["inspect"]}))
+    assert candidate.assemble_diag_pack(
+        [{"file": "parser.py", "message": "bad"}], "parser failure"
+    ) == donor.assemble_diag_pack(
+        [{"file": "parser.py", "message": "bad"}], "parser failure"
+    )
+    assert normalized(candidate.assemble_conversation_pack()) == normalized(
+        donor.assemble_conversation_pack()
+    )
+    assert candidate.assemble_research_pack(
+        "parser", [{"fact": 1}]
+    ) == donor.assemble_research_pack("parser", [{"fact": 1}])
+    assert candidate.assemble_repair_pack(
+        Diagnosis(),
+        [{"reflection": 1}, {"reflection": 2}, {"reflection": 3}],
+        Research(),
+    ) == donor.assemble_repair_pack(
+        Diagnosis(),
+        [{"reflection": 1}, {"reflection": 2}, {"reflection": 3}],
+        Research(),
+    )
+
+
+def test_context_hub_denies_insufficient_budget_and_failed_adapter_receipt(tmp_path):
+    h = hub(tmp_path)
+    contract = h.build_context_assembly_contract(task_id="task-1", token_budget=1)
+    assert contract["status"] == "RETURN"
+    assert "receipt:estimated_tokens_exceed_budget" in contract["blockers"]
+    payload = h.assemble_context_with_runtime_contract("task-1", [0, 1], budget=1)
+    assert payload["status"] == "RETURN"
+    assert payload["context"] == ""
