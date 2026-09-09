@@ -72,7 +72,12 @@ class Dispatch:
         self.calls.append("validate")
         if self.trace is not None:
             self.trace.append("validate")
-        return request
+        return {
+            "provider": "fixture",
+            "model": "fixture-model",
+            "worker_id": "worker-1",
+            "canonical_dispatch_envelope": request["canonical_dispatch_envelope"],
+        }
 
     def rebind_fresh_attempt(self, request, dispatch):
         self.calls.append("rebind")
@@ -85,7 +90,6 @@ class Dispatch:
             worker_id=dispatch["worker_id"],
             canonical_dispatch_envelope={
                 "attempt_id": value["attempt_id"],
-                "previous": dispatch["envelope"],
             },
         )
         return value
