@@ -14,7 +14,11 @@
   },
   "head": "471a281badda342ccab26606e0c46cbca6867cbb",
   "source_root": "/private/tmp/astra-production-integrated-20260909",
-  "status": "ROOT_SOURCE_ACCEPTED",
+  "status": "SOURCE_DONOR_PROVENANCE",
   "tree": "013e82ef6767bd3302685bb9930523ca6d7ec2bb",
-  "verification": "local frozen git object verification"
+  "verification": "worker-generated hash inventory of frozen git objects; root acceptance remains external",
+  "acceptance_references": [
+    "/Users/jameschen/.codex/visualizations/2026/09/07/01a07a25-4ffe-70c3-a098-9ac3818b9562/astra-b492-source-acceptance-20260909/ROOT_SOURCE_RESULTS.json",
+    "/Users/jameschen/.codex/visualizations/2026/09/07/01a07a25-4ffe-70c3-a098-9ac3818b9562/astra-final-recipe-acceptance-20260909/accepted-r7/ROOT_ACCEPTANCE.json"
+  ]
 }
