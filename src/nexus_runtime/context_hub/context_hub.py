@@ -342,7 +342,19 @@ class ContextHub:
             else dict(getattr(state, "metadata", {}).get("conversation", {}) or {})
         )
         history = getattr(state, "metadata", {}).get("chat_history", [])
-        return {
+        steps = list(getattr(state, "steps_history", []) or [])
+        step_summary = (
+            [
+                {
+                    "phase": getattr(step, "phase", ""),
+                    "summary": getattr(step, "summary", ""),
+                }
+                for step in steps[-2:]
+            ]
+            if audit_mode
+            else [getattr(step, "summary", "") for step in steps[-5:]]
+        )
+        pack = {
             "conversation_id": meta.get("conversation_id"),
             "user_goal": meta.get("user_goal"),
             "current_question": meta.get("current_question"),
@@ -351,11 +363,24 @@ class ContextHub:
             "user_corrections": meta.get("user_corrections", []),
             "unresolved_points": meta.get("unresolved_points", []),
             "answer_draft_status": meta.get("answer_draft_status"),
-            "steps_history_summary": [],
+            "steps_history_summary": step_summary,
             "pruned_history": self.deps.dialogue_pruner(history),
             "memory_reminders": self._inject_memory_reminders("conversation"),
             "timestamp": self._timestamp(),
         }
+        if "last_audit_feedback" in getattr(state, "metadata", {}):
+            pack["prior_audit_feedback"] = state.metadata["last_audit_feedback"]
+        if not audit_mode and meta.get("needs_research"):
+            for step in reversed(steps):
+                if (
+                    getattr(step, "phase", "") == "X"
+                    and getattr(step, "status", "") == "completed"
+                ):
+                    pack["research_findings"] = getattr(step, "metadata", {}).get(
+                        "findings", []
+                    )
+                    break
+        return pack
 
     def assemble_repair_pack(
         self, diagnosis: Any, reflections: list[dict[str, Any]], research: Any = None
