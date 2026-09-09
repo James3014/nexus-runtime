@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from nexus_planning_candidate.composition import BUNDLED_POLICY_PATH
 from nexus_planning_candidate.engine.capability_contracts import (
@@ -58,7 +58,7 @@ from nexus_runtime_p6c_candidate.services.online_payload_contract import (
     online_payload_indicates_non_delivery,
 )
 from .local_ast import RuntimeASTExtractor
-from .services.capability_registry import build_default_mainchain_invokers
+from .services.capability_registry import ensure_selected_coverage_invokers
 
 from .contracts.canonical_execution import CanonicalPlanningBundle, CanonicalTaskContext
 from .contracts.root_receipt import build_root_receipt
@@ -106,25 +106,37 @@ class MissingCapabilityBindingError(RuntimeError):
     """Raised before Runtime effects when selected capability bindings are incomplete."""
 
 
-def _ensure_selected_coverage_invokers(selected, existing, *, codeintel=None, prompt_compression_invoker=None):
-    """Require caller-owned callable coverage for every Planner-selected capability."""
-    if existing is None:
-        return build_default_mainchain_invokers(codeintel=codeintel, prompt_compression_invoker=prompt_compression_invoker)
-    mapping = dict(existing)
-    missing = sorted(str(name) for name in (selected or ()) if str(name) not in mapping)
-    noncallable = sorted(str(name) for name in (selected or ()) if str(name) in mapping and not callable(mapping[str(name)]))
-    if missing or noncallable:
-        details = []
-        if missing:
-            details.append("missing=" + ",".join(missing))
-        if noncallable:
-            details.append("noncallable=" + ",".join(noncallable))
-        raise MissingCapabilityBindingError("capability_bindings_incomplete:" + ";".join(details))
-    return dict(mapping)
+def _ensure_selected_coverage_invokers(
+    selected, existing, *, codeintel=None, prompt_compression_invoker=None,
+    default_capability_invokers=None,
+):
+    """Preserve the donor's default/override/explicit-skip coverage contract."""
+    return ensure_selected_coverage_invokers(
+        selected, existing, codeintel=codeintel,
+        prompt_compression_invoker=prompt_compression_invoker,
+        default_capability_invokers=default_capability_invokers,
+    )
 
 
-def build_runtime_exports(*, policy_path: str | Path | None = None):
-    """Bind actual accepted Planner/admission/support implementations to Runtime."""
+def build_runtime_exports(
+    *, policy_path: str | Path | None = None,
+    default_capability_invokers: Mapping[str, Any] | None = None,
+):
+    """Bind runtime implementations and optional explicit host capability adapters.
+
+    Precedence is packaged defaults, then these host defaults, then per-run
+    capability_invokers. None and an empty per-run map both retain defaults;
+    unknown selected names receive an explicit skip. Input maps are copied.
+    Without a host memory binding, standalone memory remains an explicit
+    unavailable/skip result; it never fabricates a successful memory search.
+    Host adapters must perform their own real effects and report their evidence.
+    """
+    host_defaults = dict(default_capability_invokers or {})
+
+    def selected_coverage(selected, existing, **kwargs):
+        return _ensure_selected_coverage_invokers(
+            selected, existing, default_capability_invokers=host_defaults, **kwargs
+        )
     from nexus_runtime.memory import (
         FindingsMemoryLessonStore,
         LocalJsonlLessonStore,
@@ -181,7 +193,7 @@ def build_runtime_exports(*, policy_path: str | Path | None = None):
         "build_treatment_fingerprint": build_treatment_fingerprint,
         "build_vap_from_local_receipt": build_vap_from_local_receipt,
         "decision_from_context": decision_from_context,
-        "ensure_selected_coverage_invokers": _ensure_selected_coverage_invokers,
+        "ensure_selected_coverage_invokers": selected_coverage,
         "evaluate_runtime_workforce_admission": evaluate_runtime_workforce_admission,
         "next_execution_depth_after_failure": next_execution_depth_after_failure,
         "assert_owner_write": assert_owner_write,

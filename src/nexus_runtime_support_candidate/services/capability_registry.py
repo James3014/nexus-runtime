@@ -2572,12 +2572,19 @@ def ensure_selected_coverage_invokers(
     existing: Mapping[str, CapabilityInvoker] | None,
     *,
     codeintel: Mapping[str, Any] | None = None,
+    prompt_compression_invoker: CapabilityInvoker | None = None,
+    default_capability_invokers: Mapping[str, CapabilityInvoker] | None = None,
 ) -> dict[str, CapabilityInvoker]:
     """Merge caller invokers with full registry; fill missing selected with auto-skip.
 
-    Caller-provided invokers win for the same name.
+    Explicit host defaults override packaged defaults. Per-run caller invokers
+    win last. None and empty maps preserve defaults; no input map is mutated.
     """
-    base = build_default_mainchain_invokers(codeintel=codeintel)
+    base = build_default_mainchain_invokers(
+        codeintel=codeintel, prompt_compression_invoker=prompt_compression_invoker
+    )
+    if default_capability_invokers:
+        base.update(dict(default_capability_invokers))
     if existing:
         base.update(dict(existing))
     for name in selected or ():

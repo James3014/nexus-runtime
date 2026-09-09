@@ -10,7 +10,6 @@ import pytest
 
 from nexus_planning_candidate.engine.capability_planner import CapabilityPlanner
 from nexus_runtime_support_candidate import (
-    MissingCapabilityBindingError,
     build_runtime_exports,
 )
 
@@ -170,7 +169,7 @@ def test_actual_failed_verifier_run_and_replan_preserve_parent_lineage() -> None
     assert second["public_claim_allowed"] is False
 
 
-def test_missing_or_noncallable_coverage_fails_before_receipt_write(tmp_path: Path) -> None:
+def test_empty_coverage_uses_defaults_and_noncallable_records_failure(tmp_path: Path) -> None:
     exports = build_runtime_exports()
     request = exports.UnifiedRuntimeRequest(
         task_id="support-coverage-preflight",
@@ -193,18 +192,21 @@ def test_missing_or_noncallable_coverage_fails_before_receipt_write(tmp_path: Pa
         online_enabled=True,
         local_enabled=False,
     )
-    missing_path = tmp_path / "missing.json"
-    with pytest.raises(MissingCapabilityBindingError, match="missing="):
-        exports.UnifiedRuntime().run(request, capability_invokers={}, receipt_path=missing_path)
-    assert not missing_path.exists()
+    # Donor capability_registry.ensure_selected_coverage_invokers treats {}
+    # like None and records invalid selected invokers in the shared receipt.
+    empty_path = tmp_path / "empty.json"
+    empty_receipt = exports.UnifiedRuntime().run(request, capability_invokers={}, receipt_path=empty_path)
+    assert empty_path.exists()
+    assert empty_receipt["capability_coverage"]["missing_count"] == 0
 
     complete = _failure_invokers(exports, request)
     name = next(iter(complete))
     noncallable_path = tmp_path / "noncallable.json"
     complete[name] = None
-    with pytest.raises(MissingCapabilityBindingError, match="noncallable="):
-        exports.UnifiedRuntime().run(request, capability_invokers=complete, receipt_path=noncallable_path)
-    assert not noncallable_path.exists()
+    receipt = exports.UnifiedRuntime().run(request, capability_invokers=complete, receipt_path=noncallable_path)
+    assert noncallable_path.exists()
+    assert receipt["capability_results"][name]["invoked"] is False
+    assert any("not_callable" in str(ref) for ref in receipt["capability_results"][name]["evidence_refs"])
 
 
 def test_context_reopens_persisted_checkpoint_and_denies_unknown_principal(tmp_path):
