@@ -56,21 +56,38 @@ class Dispatch:
     def __init__(self, trace=None):
         self.calls, self.trace = [], trace
 
+    def workforce_inputs(self, request):
+        return request.get("workforce_demands"), request.get("workforce_admission")
+
+    def recover_predecessor(self, state, request, failure):
+        return None
+
     def validate_predecessor(self, request, state):
         self.calls.append("validate")
         if self.trace is not None:
             self.trace.append("validate")
-        return {"provider": "fixture", "envelope": "old"}
+        return {"provider": "fixture", "model": "fixture-model", "worker_id": "worker-1", "envelope": "old"}
+
+    def validate_fresh(self, request, state):
+        self.calls.append("validate")
+        if self.trace is not None:
+            self.trace.append("validate")
+        return request
 
     def rebind_fresh_attempt(self, request, dispatch):
         self.calls.append("rebind")
         if self.trace is not None:
             self.trace.append("rebind")
         value = dict(request)
-        value["canonical_dispatch_envelope"] = {
-            "attempt_id": value["attempt_id"],
-            "previous": dispatch["envelope"],
-        }
+        value.update(
+            provider=dispatch["provider"],
+            model=dispatch["model"],
+            worker_id=dispatch["worker_id"],
+            canonical_dispatch_envelope={
+                "attempt_id": value["attempt_id"],
+                "previous": dispatch["envelope"],
+            },
+        )
         return value
 
 
@@ -207,6 +224,19 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
     shared_calls = []
     active_calls = []
 
+    def donor_validate(request, require_binding=True):
+        active_calls.append("validate")
+        return {
+            "provider": "fixture",
+            "model": "fixture-model",
+            "worker_id": "worker-1",
+            "canonical_dispatch_envelope": {"attempt_id": request.get("attempt_id")},
+        }
+
+    def donor_build(*args, **kwargs):
+        active_calls.append("rebind")
+        return SimpleNamespace(to_dict=lambda: {"attempt_id": kwargs.get("attempt_id")})
+
     def donor_retry_request(state):
         active_calls.append("fresh")
         return {
@@ -241,12 +271,8 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
         },
         "_workforce_dispatch_inputs": lambda request: (None, None),
         "_retry_request": donor_retry_request,
-        "validate_workforce_dispatch_binding": lambda request, require_binding=True: {
-            "canonical_dispatch_envelope": {"attempt_id": request.get("attempt_id")}
-        },
-        "build_canonical_dispatch_envelope": lambda *args, **kwargs: SimpleNamespace(
-            to_dict=lambda: {"attempt_id": kwargs.get("attempt_id")}
-        ),
+        "validate_workforce_dispatch_binding": donor_validate,
+        "build_canonical_dispatch_envelope": donor_build,
         "_recover_pre_provider_cli_envelope_drift": lambda *args: None,
     }
     exec(
@@ -319,9 +345,29 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
     leaf_result = leaf.retry_task("task-1")
     assert leaf_result == donor_result
     assert leaf_result["retry"]["decision"] == "REUSED_TASK_ID"
-    assert (
-        donor.calls == leaf_ports[0].trace
-    )
+    assert donor.calls == leaf_ports[0].trace
+
+    dispatch_state = {
+        "task_id": "task-1",
+        "status": "FINAL_BLOCK",
+        "attempt_id": "attempt-1",
+        "cleanup_decision": "TARGET_CLEANED",
+        "attempts": [],
+        "request": {
+            "task_id": "task-1",
+            "planner_output": {},
+            "canonical_dispatch_envelope": {"attempt_id": "attempt-1"},
+        },
+    }
+    active_calls = []
+    donor = DonorSelf(dispatch_state)
+    active_calls = donor.calls
+    donor_result = namespace["donor_retry_task"](donor, "task-1")
+    leaf, leaf_ports = service(tmp_path, dispatch_state)
+    leaf_result = leaf.retry_task("task-1")
+    assert leaf_result == donor_result
+    assert leaf_ports[2].calls == ["validate", "rebind", "validate"]
+    assert donor.calls == leaf_ports[0].trace
 
     class FailingDispatch(Dispatch):
         def __init__(self, *, predecessor_error=None, rebound_error=None):

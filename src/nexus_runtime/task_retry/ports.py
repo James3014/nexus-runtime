@@ -15,12 +15,28 @@ class RetryContractPort(Protocol):
 
 
 class RetryDispatchPort(Protocol):
+    def workforce_inputs(
+        self, request: Mapping[str, Any]
+    ) -> tuple[Any, Any]:
+        """Return persisted planner demands and admission without selecting policy."""
+        ...
+
+    def recover_predecessor(
+        self, state: Mapping[str, Any], request: Mapping[str, Any], failure: RuntimeError
+    ) -> Mapping[str, Any] | None:
+        """Apply the donor's narrow pre-provider recovery rule, if eligible."""
+        ...
+
     def validate_predecessor(
         self, request: Mapping[str, Any], state: Mapping[str, Any]
     ) -> Mapping[str, Any] | None: ...
     def rebind_fresh_attempt(
         self, request: Mapping[str, Any], dispatch: Mapping[str, Any] | None
     ) -> dict[str, Any]: ...
+
+    def validate_fresh(
+        self, request: Mapping[str, Any], state: Mapping[str, Any]
+    ) -> Mapping[str, Any] | None: ...
 
 
 class RetrySubmissionPort(Protocol):

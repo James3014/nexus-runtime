@@ -152,12 +152,12 @@ class RetryService:
                     "blocker": "durable request is missing; cannot safely reconstruct the task",
                 },
             }
+        demands, admission = self.dispatch.workforce_inputs(request)
         dispatch_needed = bool(
             request.get("canonical_dispatch_envelope") is not None
             or state.get("canonical_dispatch_envelope") is not None
-            or request.get("workforce_dispatch") is not None
-            or request.get("demands") is not None
-            or request.get("admission") is not None
+            or demands is not None
+            or admission is not None
             or str(state.get("acceptance_decision") or "") == "REPAIRABLE"
         )
         predecessor = None
@@ -165,10 +165,12 @@ class RetryService:
             try:
                 predecessor = self.dispatch.validate_predecessor(request, state)
             except RuntimeError as exc:
-                return {
-                    **state,
-                    "retry": {**meta, "decision": "BLOCK", "blocker": str(exc)},
-                }
+                predecessor = self.dispatch.recover_predecessor(state, request, exc)
+                if predecessor is None:
+                    return {
+                        **state,
+                        "retry": {**meta, "decision": "BLOCK", "blocker": str(exc)},
+                    }
         retry_request = self.contract.build_retry_request(state)
         if predecessor is not None:
             try:
@@ -183,6 +185,16 @@ class RetryService:
                     },
                 }
             if not isinstance(rebound, Mapping):
+                return {
+                    **state,
+                    "retry": {
+                        **meta,
+                        "decision": "BLOCK",
+                        "blocker": "WORKFORCE_REBIND_FAILED",
+                    },
+                }
+            fresh = self.dispatch.validate_fresh(rebound, state)
+            if not isinstance(fresh, Mapping):
                 return {
                     **state,
                     "retry": {
