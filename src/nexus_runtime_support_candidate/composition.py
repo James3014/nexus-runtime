@@ -81,18 +81,6 @@ class UnsupportedAdapterError(RuntimeError):
     """Raised when an intentionally omitted Local/AST adapter is requested."""
 
 
-class _EmptyFindingsReadPort:
-    def search(self, query: str, *, kind: str, scope: str):
-        del query, kind, scope
-        return []
-
-
-class _EmptyRepositoryReadPort:
-    def search_fts(self, table_name: str, query: str, *, limit: int, fallback_columns: list[str]):
-        del table_name, query, limit, fallback_columns
-        return None
-
-
 class _LearningProjectionPort:
     @staticmethod
     def project_learning_entries(entries):
@@ -165,8 +153,6 @@ def build_runtime_exports(*, policy_path: str | Path | None = None):
         "MemoryRetrievalAdapter": MemoryRetrievalAdapter,
         "NexusCompositeLessonStore": NexusCompositeLessonStore,
         "MemoryProjectionPort": _LearningProjectionPort(),
-        "FindingsReadPort": _EmptyFindingsReadPort(),
-        "RepositoryReadPort": _EmptyRepositoryReadPort(),
         "RuntimeASTExtractor": _unsupported("RuntimeASTExtractor"),
         "RuntimeWorkforceAdmissionRecord": RuntimeWorkforceAdmissionRecord,
         "WorkforcePolicyLoader": lambda: WorkforcePolicyLoader(policy_path=policy_path),

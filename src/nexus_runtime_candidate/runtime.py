@@ -2438,8 +2438,6 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
         MemoryRetrievalAdapter = _nexus_generated_bindings.MemoryRetrievalAdapter
         NexusCompositeLessonStore = _nexus_generated_bindings.NexusCompositeLessonStore
         projection_port = _nexus_generated_bindings.MemoryProjectionPort
-        findings_read_port = _nexus_generated_bindings.FindingsReadPort
-        repository_read_port = _nexus_generated_bindings.RepositoryReadPort
 
         root = Path(project_root).expanduser().resolve()
         return MemoryRetrievalAdapter(
@@ -2448,8 +2446,6 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     LocalJsonlLessonStore(
                         path=root / ".nexus" / "reports" / "learn" / "learning_closure.jsonl"
                     ),
-                    FindingsMemoryLessonStore(project_root=root, findings_store=findings_read_port),
-                    MemoryRepositoryLessonStore(project_root=root, repository=repository_read_port),
                 ]
             ),
             projection_port=projection_port,
