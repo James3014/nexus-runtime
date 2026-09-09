@@ -1,0 +1,38 @@
+{
+  "api_shapes": [
+    "load_program_rules",
+    "make_pre_routing_decision",
+    "assemble_diag_pack",
+    "build_context_budget_receipt",
+    "build_context_assembly_contract",
+    "build_runtime_context_adapter_receipt",
+    "assemble_context_with_runtime_contract",
+    "assemble_context",
+    "assemble_research_pack",
+    "assemble_feature_pack",
+    "assemble_conversation_pack",
+    "assemble_repair_pack",
+    "record_crystal_lesson"
+  ],
+  "claim_boundary": "deterministic context projection and assembly only; learning writer is injected; no route dispatch, governance, provider, or production claim",
+  "dependencies": {
+    "excluded": "route/planner/admission/governance, implicit service discovery, local learning writeback",
+    "optional": "knowledge_reader,belief_reader,learning_writer,clock",
+    "required": "explicit ContextHubDependencies: state_reader,text_reader,memory_reader,wiki_reader,renderer,dialogue_pruner,compactor"
+  },
+  "donor_files_sha256": {
+    "nexus/contracts/context_assembly.py": "d54b4a298dc1b09f0b7d312cf2583e110b31e15faa535a264389dc44d9925d1a",
+    "nexus/contracts/context_budget.py": "536973c9c23b7f555a0c1be4458459b8160abdc6128f869ca72e3af087433758",
+    "nexus/core/brain_de_entropy.py": "dc3a1e79b750cdd4068f0aa91b075bc70bce6530019ce778a66288d3d46849cc",
+    "nexus/core/context_budget_sources.py": "3f9fe3b383de15089153a665f31ab958e5ebc8fc74498534c3a850fc1406d6f7",
+    "nexus/core/context_compression.py": "b714754ed0d00388ce2ef216cb507e66c74a905781db4188246ea5d7616f77b5",
+    "nexus/core/context_hub.py": "a9917103398a835e6146feec0549b48de15b3a0bb9bd8cc74d906de7acaea976",
+    "nexus/core/context_runtime_adapter.py": "d1bc5540521a45636c7c588a0d981d487e62fda1b99b3ba5135a80976e4c4678",
+    "nexus/core/context_text_store.py": "69264dca518af46d0b5c719d8f9c83cb87572a8b7af7ac9bab215edbaef08246",
+    "nexus/core/context_view.py": "196627dc96c7f575914d0bcbce17d10c2d43fbcce1dc3643035314b296d43118"
+  },
+  "donor_revision": "471a281badda342ccab26606e0c46cbca6867cbb",
+  "donor_root": "/private/tmp/astra-production-integrated-20260909",
+  "package": "nexus_runtime.context_hub",
+  "schema": "nexus.runtime.context_hub.provenance.v1"
+}
