@@ -225,7 +225,7 @@ def compact_capability_evidence_for_prompt(
     b = _mapping(bundle)
     if not b:
         return {}
-    from nexus.services.capability_evidence_bundle import (
+    from nexus_planning_candidate.services.capability_evidence_bundle import (
         consumer_payload_markers,
         hash_consumer_payloads,
     )
@@ -356,7 +356,7 @@ def build_online_nexus_context(
         or _mapping(plan_map.get("signal_snapshot")).get("planner_decision_id")
         or plan_hash
     )
-    from nexus.services.capability_registry import project_online_execution_mode
+    from nexus_runtime_support_candidate.services.capability_registry import project_online_execution_mode
 
     consumer_execution_modes = {
         name: project_online_execution_mode(name) for name in selected
@@ -484,7 +484,7 @@ def build_online_nexus_context(
             str(p.get("capability") or "") in prompt for p in final_payloads
         )
     assembled_prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-    from nexus.services.capability_evidence_bundle import hash_consumer_payloads
+    from nexus_planning_candidate.services.capability_evidence_bundle import hash_consumer_payloads
 
     consumer_payload_hash = hash_consumer_payloads(final_payloads) if final_payloads else ""
     provider_payload_hash = _hash_json(
@@ -603,7 +603,7 @@ def build_online_nexus_context_from_runtime(
     local_stage = ctx.get("local")
     if isinstance(local_stage, Mapping) and local_stage.get("invoked"):
         try:
-            from nexus.services.local_substitution import build_online_safe_local_forward
+            from nexus_runtime_support_candidate.services.local_substitution import build_online_safe_local_forward
 
             safe = build_online_safe_local_forward(local_stage)
             forward = safe.get("forward", {}) if isinstance(safe, Mapping) else {}
@@ -924,7 +924,7 @@ def build_plan_gated_postflight_invokers() -> dict[str, Callable[[Mapping[str, A
             task_id = str(context.get("task_id") or "")
             verdict = evaluate_postflight_gate(name, context)
             gate_passed = bool(verdict.get("gate_passed"))
-            from nexus.services.capability_evidence_bundle import extract_bounded_consumer_payload
+            from nexus_planning_candidate.services.capability_evidence_bundle import extract_bounded_consumer_payload
 
             response = {
                 "status": "PASS" if gate_passed else "BLOCK",
