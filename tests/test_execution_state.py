@@ -39,3 +39,10 @@ def test_before_write_rejection_has_no_effect(tmp_path):
     except RuntimeError: pass
     else: raise AssertionError("callback rejection must propagate")
     assert not (root/"t.json").exists()
+
+def test_concurrent_mutations_are_serialized(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    s=ExecutionStateStore(tmp_path/"state"); s.write("t",{"task_id":"t","status":"A","count":0})
+    def bump(_): s.mutate("t", lambda value: value.update(count=value["count"]+1))
+    with ThreadPoolExecutor(max_workers=8) as pool: list(pool.map(bump, range(20)))
+    assert s.read_snapshot("t")["count"]==20
