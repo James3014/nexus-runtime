@@ -53,7 +53,16 @@ implementation. No source imports the compatibility namespace internally.
 
 ## Owner workflow integration
 
-`tests/integration/test_owner_workflow.py` runs a deterministic local artifact
-through Planner/admission, runtime receipt write/readback, and Learning
-projection. Core, RI, and OpenSWE remain optional external owner surfaces;
-provider-backed execution is outside this fixture.
+`tests/integration/test_owner_workflow.py` runs the full linked workflow: a
+deterministic OpenSWE graph writes an artifact, Repository Intelligence analyzes
+the changed file, Runtime emits and reads a receipt, Core certifies hashes from
+that artifact, and Learning projects the receipt. Run it with the owner wheels
+installed:
+
+```console
+/private/tmp/nexus-six-repo-integration-20260909/venv/bin/python -I -m pytest -q tests/integration/test_owner_workflow.py
+```
+
+The test is skipped when optional owner packages are absent; acceptance requires
+the command above to run unskipped. Provider-backed execution remains outside
+this deterministic fixture.
