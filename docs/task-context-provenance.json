@@ -1,0 +1,38 @@
+{
+  "claim_boundary": "read-only projection and context selection under budget; does not route, dispatch, mutate runtime, or grant readiness",
+  "dependencies": {
+    "assembly": "local budget contract; explicit receipt_builder and assembler callables injected",
+    "continuity": "stdlib plus local MAX_CONTINUITY_COLLECTION_ITEMS=64 contract constant",
+    "external_runtime": "none; no ContextHub/discovery/task state machine"
+  },
+  "donor": {
+    "files_sha256": {
+      "nexus/contracts/context_assembly.py": "d54b4a298dc1b09f0b7d312cf2583e110b31e15faa535a264389dc44d9925d1a",
+      "nexus/contracts/context_budget.py": "536973c9c23b7f555a0c1be4458459b8160abdc6128f869ca72e3af087433758",
+      "nexus/core/context_runtime_adapter.py": "d1bc5540521a45636c7c588a0d981d487e62fda1b99b3ba5135a80976e4c4678",
+      "nexus/core/task_continuity.py": "105a0a26101f9a4ae0edec26059416ba34156f9d4f7f3de529f449848dee93c0"
+    },
+    "root": "/private/tmp/astra-production-integrated-20260909",
+    "source_revision": "471a281badda342ccab26606e0c46cbca6867cbb"
+  },
+  "exports": [
+    "ContinuityEvent",
+    "ContinuitySnapshot",
+    "ResumeContext",
+    "project",
+    "resume",
+    "events_from_attempt_records",
+    "build_rehydration_projection",
+    "ContextBudgetSource",
+    "ContextBudgetReceipt",
+    "build_context_budget_receipt",
+    "validate_context_budget_receipt",
+    "ContextAssemblyContract",
+    "build_context_assembly_contract",
+    "validate_context_assembly_contract",
+    "StatelessContextCoordinator",
+    "build_runtime_context_payload"
+  ],
+  "package": "nexus_runtime.task_context",
+  "schema": "nexus.runtime.task_context.provenance.v1"
+}
