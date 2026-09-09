@@ -67,7 +67,7 @@ class RetryService:
                 **state,
                 "retry": self._meta(
                     task_id,
-                    state,
+                    {**state, "attempt_id": None},
                     "BLOCKED_INVALID_STATE",
                     (state.get("blocker") or {}).get("code"),
                 ),
@@ -214,7 +214,7 @@ class RetryService:
         rebind_dispatch = repair_dispatch or predecessor
         if rebind_dispatch is not None:
             try:
-                rebound = self.dispatch.rebind_fresh_attempt(retry_request, predecessor)
+                rebound = self.dispatch.rebind_fresh_attempt(retry_request, rebind_dispatch)
             except (TypeError, ValueError) as exc:
                 return {
                     **state,
@@ -275,7 +275,7 @@ class RetryService:
     ) -> dict[str, Any]:
         return {
             "task_id": task_id,
-            "previous_status": state.get("status"),
+            "previous_status": status,
             "previous_attempt_id": state.get("attempt_id"),
             "decision": decision,
             "blocker": blocker,
