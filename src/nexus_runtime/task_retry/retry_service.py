@@ -185,6 +185,17 @@ class RetryService:
                         **state,
                         "retry": {**meta, "decision": "BLOCK", "blocker": str(exc)},
                     }
+        if predecessor is not None and not isinstance(
+            predecessor.get("canonical_dispatch_envelope"), Mapping
+        ):
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCK",
+                    "blocker": "WORKFORCE_DISPATCH_ENVELOPE_MISSING",
+                },
+            }
         repair_dispatch = None
         if str(state.get("acceptance_decision") or "") == "REPAIRABLE":
             planner = request.get("planner_output")
@@ -199,17 +210,6 @@ class RetryService:
                 return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": "WORKFORCE_REPAIR_WORKER_MISSING"}}
             request = dict(request)
             request["repair_worker_id"] = worker_id
-        if predecessor is not None and not isinstance(
-            predecessor.get("canonical_dispatch_envelope"), Mapping
-        ):
-            return {
-                **state,
-                "retry": {
-                    **meta,
-                    "decision": "BLOCK",
-                    "blocker": "WORKFORCE_DISPATCH_ENVELOPE_MISSING",
-                },
-            }
         retry_request = self.contract.build_retry_request({**state, "request": request})
         rebind_dispatch = repair_dispatch or predecessor
         if rebind_dispatch is not None:

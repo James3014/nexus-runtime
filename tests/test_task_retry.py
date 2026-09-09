@@ -386,6 +386,16 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
     assert svc.retry_task("task-1")["retry"]["blocker"] == "WORKFORCE_ADMISSION_BINDING_MISSING"
     assert repair_ports[3].calls == []
 
+    class MissingEnvelopeDispatch(Dispatch):
+        def validate_predecessor(self, request, state):
+            self.calls.append("validate")
+            return {"provider": "fixture", "model": "fixture-model", "worker_id": "worker-1"}
+
+    combined_missing = {**dispatch_state, "acceptance_decision": "REPAIRABLE", "request": {"task_id": "task-1", "canonical_dispatch_envelope": {}}}
+    svc, combined_ports = service(tmp_path, combined_missing, dispatch=MissingEnvelopeDispatch())
+    assert svc.retry_task("task-1")["retry"]["blocker"] == "WORKFORCE_DISPATCH_ENVELOPE_MISSING"
+    assert combined_ports[3].calls == []
+
     class FailingDispatch(Dispatch):
         def __init__(self, *, predecessor_error=None, rebound_error=None):
             super().__init__(trace=[])
