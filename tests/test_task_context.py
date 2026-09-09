@@ -1,6 +1,8 @@
 """Deterministic task continuity and context assembly contracts."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from nexus_runtime.task_context import (
@@ -28,7 +30,7 @@ def event(sequence: int, kind: str, previous: str = "", **kwargs) -> ContinuityE
     )
 
 
-def test_restart_resume_preserves_chain_bound_continuation_and_rehydration() -> None:
+def test_restart_resume_preserves_chain_bound_continuation_and_rehydration(tmp_path) -> None:
     first = event(1, "PLAN_FORMED", next_action="step-1", claim_ceiling="evidence only")
     second = event(
         2,
@@ -40,9 +42,35 @@ def test_restart_resume_preserves_chain_bound_continuation_and_rehydration() -> 
         next_action="step-2",
         claim_ceiling="evidence only",
     )
-    snapshot = project([first, second])
+    # Restart from the physical event/snapshot representation, not object identity.
+    event_path = tmp_path / "continuity-events.json"
+    event_path.write_text(json.dumps([first.to_dict(), second.to_dict()]), encoding="utf-8")
+    persisted_events = json.loads(event_path.read_text(encoding="utf-8"))
+    restored_events = [
+        event(
+            item["sequence"],
+            item["event_type"],
+            item["previous_hash"],
+            summary=item["summary"],
+            do_not_repeat=tuple(item["do_not_repeat"]),
+            evidence_refs=tuple(item["evidence_refs"]),
+            next_action=item["next_action"],
+            claim_ceiling=item["claim_ceiling"],
+        )
+        for item in persisted_events
+    ]
+    snapshot = project(restored_events)
+    snapshot_path = tmp_path / "continuity-snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot.to_dict()), encoding="utf-8")
+    snapshot_data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    restored_snapshot = type(
+        snapshot
+    )(**{
+        key: tuple(value) if key in {"verified_facts", "active_hypotheses", "rejected_hypotheses", "strategy_changes", "applied_changes", "failed_attempts", "rejected_strategies", "unresolved_risks", "unknowns", "evidence_refs"} else value
+        for key, value in snapshot_data.items()
+    })
     resumed = resume(
-        snapshot,
+        restored_snapshot,
         [],
         task_id="task-1",
         attempt_id="attempt-1",
@@ -50,7 +78,7 @@ def test_restart_resume_preserves_chain_bound_continuation_and_rehydration() -> 
         contract_revision="contract-a",
     )
     assert resumed.next_action == "step-2"
-    assert resumed.do_not_repeat == ("strategy A",)
+    assert tuple(resumed.do_not_repeat) == ("strategy A",)
 
     projection = build_rehydration_projection(
         task_state={
@@ -69,8 +97,10 @@ def test_restart_resume_preserves_chain_bound_continuation_and_rehydration() -> 
 def test_resume_rejects_altered_revision_and_chain_tail() -> None:
     first = event(1, "PLAN_FORMED", next_action="step-1")
     snapshot = project([first])
+    with pytest.raises(ValueError, match="tail does not extend snapshot"):
+        resume(snapshot, [event(2, "OBSERVATION_RECORDED", "wrong", source_revision="source-a")], task_id="task-1", attempt_id="attempt-1", source_revision="source-a", contract_revision="contract-a")
     with pytest.raises(ValueError, match="source or contract revision drift"):
-        resume(snapshot, [event(2, "OBSERVATION_RECORDED", "wrong", source_revision="source-b")], task_id="task-1", attempt_id="attempt-1", source_revision="source-a", contract_revision="contract-a")
+        resume(snapshot, [event(2, "OBSERVATION_RECORDED", snapshot.event_root, source_revision="source-b")], task_id="task-1", attempt_id="attempt-1", source_revision="source-a", contract_revision="contract-a")
     with pytest.raises(ValueError, match="snapshot source or contract is stale"):
         resume(snapshot, [], task_id="task-1", attempt_id="attempt-1", source_revision="source-b", contract_revision="contract-a")
 
