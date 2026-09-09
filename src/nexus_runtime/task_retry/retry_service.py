@@ -172,7 +172,6 @@ class RetryService:
             or state.get("canonical_dispatch_envelope") is not None
             or demands is not None
             or admission is not None
-            or str(state.get("acceptance_decision") or "") == "REPAIRABLE"
         )
         predecessor = None
         if dispatch_needed:
@@ -202,7 +201,7 @@ class RetryService:
             if not isinstance(planner, Mapping):
                 return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": "WORKFORCE_ADMISSION_BINDING_MISSING"}}
             try:
-                repair_dispatch = self.dispatch.validate_predecessor(request, state)
+                repair_dispatch = self.dispatch.validate_repair(request)
             except RuntimeError as exc:
                 return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": str(exc)}}
             worker_id = str((repair_dispatch or {}).get("worker_id") or "")

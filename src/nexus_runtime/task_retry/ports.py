@@ -30,6 +30,9 @@ class RetryDispatchPort(Protocol):
     def validate_predecessor(
         self, request: Mapping[str, Any], state: Mapping[str, Any]
     ) -> Mapping[str, Any] | None: ...
+    def validate_repair(
+        self, request: Mapping[str, Any]
+    ) -> Mapping[str, Any] | None: ...
     def rebind_fresh_attempt(
         self, request: Mapping[str, Any], dispatch: Mapping[str, Any] | None
     ) -> dict[str, Any]: ...

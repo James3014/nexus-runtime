@@ -62,6 +62,9 @@ class Dispatch:
     def recover_predecessor(self, state, request, failure):
         return None
 
+    def validate_repair(self, request):
+        return self.validate_predecessor(request, {})
+
     def validate_predecessor(self, request, state):
         self.calls.append("validate")
         if self.trace is not None:
