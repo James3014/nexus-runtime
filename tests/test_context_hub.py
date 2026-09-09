@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
@@ -178,6 +179,11 @@ def test_assemble_context_uses_policy_and_budgeted_history_ports(tmp_path):
         dialogue_pruner=lambda history: (pruned.append(history) or "COMPACTED"),
         compactor=compact,
         policy_reader=lambda: {"global_nas_aggression": 0.9},
+        handoff_reader=lambda: {
+            "task_id": "handoff-task",
+            "phase": "R",
+            "state_token": "TOKEN-7",
+        },
     )
     candidate = ContextHub(deps=deps)
 
@@ -186,6 +192,8 @@ def test_assemble_context_uses_policy_and_budgeted_history_ports(tmp_path):
 
     assert "--- COMPACT HISTORY ---" not in generous
     assert "COMPACTED" in constrained
+    assert "L1: [TASK: handoff-task] [PHASE: R] [TOKEN: TOKEN-7] [AOS: 131.5]" in generous
+    assert "L1: [TASK: task-1]" not in generous
     assert render_aggressions == [0.9, 0.9]
     assert compacted_states == [vars(state), vars(state)]
     assert pruned == [state.metadata["chat_history"]]
@@ -211,6 +219,35 @@ def test_assemble_context_explicit_aggression_overrides_policy(tmp_path):
         "task-1", [0, 1], bayesian_params={"nas_aggression": 0.0}
     )
     assert seen == [0.0]
+
+
+def test_assemble_context_threshold_is_strict_and_uses_handoff_defaults(tmp_path):
+    state = State()
+    state.metadata["chat_history"] = ["history"]
+    pruned = []
+    compact = {"task_id": "task-1"}
+    l0 = "L0: [BOUNDARIES: core, metrics] [PROHIBITED: delete-history, skip-verify]"
+    l1 = "L1: [TASK: New Task] [PHASE: P] [TOKEN: INITIAL] [AOS: 131.5]"
+    estimated = sum(
+        len(str(value)) for value in (l0, l1, state.metadata["chat_history"], "summary", json.dumps(compact))
+    ) // 3.8
+    candidate = ContextHub(
+        deps=ContextHubDependencies(
+            state_reader=lambda: state,
+            text_reader=lambda name="program.md": "rules",
+            memory_reader=lambda phase: {},
+            wiki_reader=lambda query, max_results=3: {},
+            renderer=lambda value, aggression=0.0: "summary",
+            dialogue_pruner=lambda history: (pruned.append(history) or "compact"),
+            compactor=lambda value, confidence=0.5: compact,
+            handoff_reader=lambda: {},
+        )
+    )
+    at_boundary = candidate.assemble_context("task-1", [0, 1], budget=estimated)
+    below_boundary = candidate.assemble_context("task-1", [0, 1], budget=estimated - 0.01)
+    assert "--- COMPACT HISTORY ---" not in at_boundary
+    assert "--- COMPACT HISTORY ---" in below_boundary
+    assert len(pruned) == 1
 
 
 def test_extracted_packs_match_frozen_donor_for_identical_ports(tmp_path):

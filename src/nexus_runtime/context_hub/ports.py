@@ -10,6 +10,10 @@ class StateReader(Protocol):
     def __call__(self) -> Any: ...
 
 
+class HandoffReader(Protocol):
+    def __call__(self) -> Mapping[str, Any]: ...
+
+
 class TextReader(Protocol):
     def __call__(self, name: str = "program.md") -> str: ...
 

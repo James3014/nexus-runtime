@@ -7,6 +7,7 @@ write learning state, or discover services; all such behavior is injected.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from nexus_runtime.task_context import (
 
 from .ports import (
     DialoguePruner,
+    HandoffReader,
     KnowledgeReader,
     LearningWriter,
     MemoryReader,
@@ -41,6 +43,7 @@ class ContextHubDependencies:
     renderer: Renderer
     dialogue_pruner: DialoguePruner
     compactor: StateCompactor
+    handoff_reader: HandoffReader | None = None
     knowledge_reader: KnowledgeReader | None = None
     belief_reader: Any | None = None
     learning_writer: LearningWriter | None = None
@@ -298,7 +301,15 @@ class ContextHub:
             confidence=float(params.get("confidence", 0.5)),
         )
         l0 = "L0: [BOUNDARIES: core, metrics] [PROHIBITED: delete-history, skip-verify]"
-        l1 = f"L1: [TASK: {getattr(state, 'task_id', task_id)}]"
+        if self.deps.handoff_reader is not None:
+            handoff = self.deps.handoff_reader()
+        else:
+            handoff = {}
+        l1 = (
+            f"L1: [TASK: {handoff.get('task_id', 'New Task')}] "
+            f"[PHASE: {handoff.get('phase', os.environ.get('NEXUS_PHASE', 'P'))}] "
+            f"[TOKEN: {handoff.get('state_token', 'INITIAL')}] [AOS: 131.5]"
+        )
         history = getattr(state, "metadata", {}).get("chat_history", [])
         estimated_total = sum(
             len(str(value)) for value in (l0, l1, history, summary, json.dumps(compact))
