@@ -152,9 +152,25 @@ class RetryService:
                     "blocker": "durable request is missing; cannot safely reconstruct the task",
                 },
             }
-        predecessor = self.dispatch.validate_predecessor(request, state)
+        try:
+            predecessor = self.dispatch.validate_predecessor(request, state)
+        except RuntimeError as exc:
+            return {
+                **state,
+                "retry": {**meta, "decision": "BLOCK", "blocker": str(exc)},
+            }
         retry_request = self.contract.build_retry_request(state)
-        retry_request = self.dispatch.rebind_fresh_attempt(retry_request, predecessor)
+        rebound = self.dispatch.rebind_fresh_attempt(retry_request, predecessor)
+        if not isinstance(rebound, Mapping):
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCK",
+                    "blocker": "WORKFORCE_REBIND_FAILED",
+                },
+            }
+        retry_request = dict(rebound)
         result = dict(self.submission.submit(retry_request))
         result["retry"] = {
             **meta,
