@@ -19,7 +19,7 @@ from nexus_runtime.memory import (
     MissingMemoryBindingError,
     NexusCompositeLessonStore,
 )
-from nexus_runtime_support_candidate import build_runtime_exports
+from nexus_runtime_support_candidate import build_memory_retrieval_adapter, build_runtime_exports
 
 
 class LearningProjectionPort:
@@ -165,3 +165,22 @@ def test_default_runtime_memory_builder_reads_installed_learning_jsonl(tmp_path:
     assert result["task_id"] == "runtime-memory"
     assert result["gate_passed"] is True
     assert result["response"]["lessons"][0]["finding_id"] == "default-1"
+
+
+def test_public_memory_builder_composes_explicit_findings_and_repository_ports(tmp_path: Path) -> None:
+    ledger = tmp_path / "lessons.jsonl"
+    write_jsonl(ledger, [row("local-1", "parser local")])
+
+    class Findings:
+        def search(self, query, *, kind, scope):
+            return [SimpleNamespace(id="finding-1", task_id="t", body="parser finding", title="", extra={}, evidence_paths=["receipt:f"])]
+
+    class Repository:
+        def search_fts(self, table_name, query, *, limit, fallback_columns):
+            return None
+
+    adapter = build_memory_retrieval_adapter(
+        tmp_path, local_path=ledger, findings_store=Findings(), repository=Repository()
+    )
+    lessons = adapter.retrieve(query_text="parser", limit=5)
+    assert {lesson.finding_id for lesson in lessons} == {"local-1", "finding-1"}
