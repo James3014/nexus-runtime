@@ -79,6 +79,6 @@ this deterministic fixture.
 
 ## Delivery provenance
 
-The accepted caller delivery is the durable worktree `/Users/jameschen/Workspace/Nexus-new-repo-split`, branch `codex/repo-split-delivery`, revision `1ae08059513ded50a2caa23c9586cd3d46b386f1`; its git common directory is `/Users/jameschen/Workspace/Nexus-new/.git`. The canonical Nexus-new `main` checkout remains dirty and untouched. Host memory is supplied through an explicit adapter (`build_memory_retrieval_adapter`); no provider or deployment is selected implicitly.
+The accepted caller delivery is the durable worktree `/Users/jameschen/Workspace/Nexus-new-repo-split`, branch `codex/repo-split-delivery`, revision `1ae08059513ded50a2caa23c9586cd3d46b386f1`; its git common directory is `/Users/jameschen/Workspace/Nexus-new/.git`. The canonical Nexus-new `main` checkout remains dirty and untouched. Host memory is supplied through the explicit `nexus.services.capability_registry.build_real_executor_invoker("memory")` adapter, passed via `build_runtime_exports(default_capability_invokers={...})` to the original `ProjectMemoryManager` SQLite search; no provider or deployment is selected implicitly.
 
 Final caller evidence is `/private/tmp/nexus-final-1ae-root.xml` (808 PASS and 2 reproduced donor-baseline failures). Runtime/caller split evidence is `/private/tmp/nexus-binding-7f6-root.xml` (88 PASS) and `/private/tmp/nexus-binding-b0f-root.xml` (150 PASS). These establish bounded engineering evidence; they do not declare the overall goal complete.
