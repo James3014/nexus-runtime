@@ -47,6 +47,8 @@ jobs:
         run: |
           set -euo pipefail
           venv="$RUNNER_TEMP/runtime-wheel-venv/bin/python"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
           "$venv" -m build --wheel --no-isolation --outdir "$RUNNER_TEMP/runtime-wheel-dist" .
           mkdir -p "$RUNNER_TEMP/runtime-wheel-tests"
           cp tests/test_*.py "$RUNNER_TEMP/runtime-wheel-tests/"
