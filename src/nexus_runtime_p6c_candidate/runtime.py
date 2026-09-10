@@ -348,7 +348,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
         if not isinstance(value, Mapping):
             return {}
 
-        v_stage = value.get("verifier_stage") if isinstance(value.get("verifier_stage"), Mapping) else {}
+        v_stage = _mapping(value.get("verifier_stage"))
         v_refs = value.get("verifier_evidence_refs") or v_stage.get("evidence_refs") or []
         if isinstance(v_refs, (list, tuple)):
             sorted_refs = sorted(str(r) for r in v_refs)
@@ -1188,21 +1188,9 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
         candidate/apply hash agreement, verifier PASS, and a complete disk receipt
         bound to the same task.
         """
-        response = (
-            local_stage.get("response")
-            if isinstance(local_stage.get("response"), Mapping)
-            else {}
-        )
-        candidate = (
-            response.get("candidate_summary")
-            if isinstance(response.get("candidate_summary"), Mapping)
-            else {}
-        )
-        verifier = (
-            response.get("verifier_summary")
-            if isinstance(response.get("verifier_summary"), Mapping)
-            else {}
-        )
+        response = _mapping(local_stage.get("response"))
+        candidate = _mapping(response.get("candidate_summary"))
+        verifier = _mapping(response.get("verifier_summary"))
         evidence_refs = [str(item) for item in response.get("evidence_refs", []) or []]
         candidate_hash = str(candidate.get("selected_candidate_hash") or "").strip()
         hash_matched = candidate.get("selected_candidate_hash_matches_applied") is True
@@ -2013,6 +2001,11 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             payload = str(context.get("online_payload") or "")
             local_context_forwarded = False
             capability_context_forwarded = False
+            planner_context = context.get("planner")
+            canonical_context = (
+                context.get("schema") == REQUEST_SCHEMA
+                or (isinstance(planner_context, Mapping) and bool(_mapping(planner_context).get("plan_hash")))
+            )
             if include_local_context:
                 local_stage = context.get("local", {})
                 # P2: never dump raw local_outputs (patch/CoT/private reasoning) into Online.
@@ -2022,7 +2015,15 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 ):
                     build_online_safe_local_forward = _nexus_generated_bindings.build_online_safe_local_forward
 
-                    safe = build_online_safe_local_forward(local_stage)
+                    safe = build_online_safe_local_forward(
+                        local_stage,
+                        runtime_task_id=task_id,
+                        runtime_canonical_execution=context.get("canonical_execution") if isinstance(context.get("canonical_execution"), Mapping) else None,
+                        runtime_execution_attempt=context.get("execution_attempt") if isinstance(context.get("execution_attempt"), Mapping) else None,
+                        runtime_source_hash=str(context.get("source_hash") or ""),
+                        runtime_execution_world=str(_mapping(context.get("canonical_execution")).get("execution_world") or "product_runtime"),
+                        final_prompt=prompt,
+                    )
                     forward = safe.get("forward", {}) if isinstance(safe, Mapping) else {}
                     if isinstance(forward, Mapping) and (
                         forward.get("concise_summary")
@@ -2037,7 +2038,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                         )
                         local_context_forwarded = True
                 capability_results = context.get("capability_results", {})
-                if capability_results:
+                if capability_results and not canonical_context:
                     compressed = bool(context.get("capability_context_compressed"))
                     # Compressed path: evidence summary only. Uncompressed: capability
                     # stage receipts (status/refs/task_id), not private Local CoT fields.
@@ -2055,6 +2056,47 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     )
                     capability_context_forwarded = True
             stdin = f"{prompt}\n\n[PAYLOAD]\n{payload}" if payload else prompt
+
+            # Canonical Planner contexts require the shared package before provider invocation.
+            if canonical_context and context.get("capability_evidence_bundle") is None:
+                return normalize_online_invoker_payload(
+                    provider=spec.provider, task_id=task_id, invoked=False,
+                    output_delivered=False, gate_passed=False, provider_call_count=0,
+                    response="", raw_response="", usage={},
+                    error="canonical_runtime_context_bundle_missing",
+                    evidence_refs=[f"online:{spec.provider}:{task_id}:context_bundle_missing"],
+                    transport=TRANSPORT_REGISTERED_CLI,
+                    selection_source=SELECTION_EXPLICIT_REQUEST,
+                    extra={"live_provider_claim": False},
+                )
+            context_package = None
+            build_online_consumption_receipt = None
+            if context.get("capability_evidence_bundle") is not None:
+                try:
+                    from nexus_runtime.task_context import append_model_context_to_prompt, build_online_context_package
+                    from nexus_runtime.task_context.consumption import build_online_consumption_receipt
+                    context_package = build_online_context_package(context)
+                    stdin = append_model_context_to_prompt(stdin, context_package)
+                except ModuleNotFoundError:
+                    return normalize_online_invoker_payload(
+                        provider=spec.provider, task_id=task_id, invoked=False,
+                        output_delivered=False, gate_passed=False, provider_call_count=0,
+                        response="", raw_response="", usage={},
+                        error="canonical_runtime_dependency_missing",
+                        evidence_refs=[f"online:{spec.provider}:{task_id}:context_package_dependency_missing"],
+                        transport=TRANSPORT_REGISTERED_CLI, selection_source=SELECTION_EXPLICIT_REQUEST,
+                        extra={"live_provider_claim": False},
+                    )
+                except ValueError as exc:
+                    return normalize_online_invoker_payload(
+                        provider=spec.provider, task_id=task_id, invoked=False,
+                        output_delivered=False, gate_passed=False, provider_call_count=0,
+                        response="", raw_response="", usage={},
+                        error=f"canonical_runtime_context_package_invalid:{exc}",
+                        evidence_refs=[f"online:{spec.provider}:{task_id}:context_package_invalid"],
+                        transport=TRANSPORT_REGISTERED_CLI, selection_source=SELECTION_EXPLICIT_REQUEST,
+                        extra={"live_provider_claim": False},
+                    )
 
             meta = ONLINE_CLI_SPEC_REGISTRY.get(spec.provider, {})
             print_flag = str(meta.get("print_flag") or "").strip()
@@ -2152,6 +2194,16 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             cwd_hash = hashlib.sha256(cwd_str.encode("utf-8")).hexdigest()
             input_sha256 = hashlib.sha256(stdin.encode("utf-8")).hexdigest()
 
+            def attach_context_receipt(result_payload: dict[str, Any]) -> dict[str, Any]:
+                if context_package is not None and build_online_consumption_receipt is not None:
+                    result_payload["model_context_consumption"] = build_online_consumption_receipt(
+                        context_package,
+                        result_payload,
+                        physical_transport=runner is subprocess.run,
+                        expected_provider_input_sha256=input_sha256,
+                    )
+                return result_payload
+
             proc_inv_id = hashlib.sha256(
                 json.dumps([task_id, attempt_id, spec.provider, cmd_fp, input_sha256, cwd_hash]).encode("utf-8")
             ).hexdigest()
@@ -2197,7 +2249,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             except subprocess.TimeoutExpired as exc:
                 elapsed = int((time.monotonic() - start_time) * 1000)
                 pe = _build_process_evidence(True, "", str(exc), None, max(0, elapsed))
-                return normalize_online_invoker_payload(
+                return attach_context_receipt(normalize_online_invoker_payload(
                     provider=spec.provider,
                     task_id=task_id,
                     invoked=True,
@@ -2212,11 +2264,11 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     transport=TRANSPORT_REGISTERED_CLI,
                     selection_source=SELECTION_EXPLICIT_REQUEST,
                     extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
-                )
+                ))
             except OSError as exc:
                 elapsed = int((time.monotonic() - start_time) * 1000)
                 pe = _build_process_evidence(False, "", str(exc), None, max(0, elapsed))
-                return normalize_online_invoker_payload(
+                return attach_context_receipt(normalize_online_invoker_payload(
                     provider=spec.provider,
                     task_id=task_id,
                     invoked=False,
@@ -2231,14 +2283,14 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     transport=TRANSPORT_REGISTERED_CLI,
                     selection_source=SELECTION_EXPLICIT_REQUEST,
                     extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
-                )
+                ))
             elapsed = int((time.monotonic() - start_time) * 1000)
             stdout = str(getattr(result, "stdout", "") or "")
             stderr = str(getattr(result, "stderr", "") or "")
             returncode = int(getattr(result, "returncode", 1))
             delivered = bool(stdout.strip())
             pe = _build_process_evidence(True, stdout, stderr, returncode, max(0, elapsed))
-            return normalize_online_invoker_payload(
+            return attach_context_receipt(normalize_online_invoker_payload(
                 provider=spec.provider,
                 task_id=task_id,
                 invoked=True,
@@ -2258,7 +2310,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 transport=TRANSPORT_REGISTERED_CLI,
                 selection_source=SELECTION_EXPLICIT_REQUEST,
                 extra={"returncode": returncode, "stderr": stderr, "process_evidence": pe},
-            )
+            ))
 
         invoke.provider = spec.provider  # type: ignore[attr-defined]
         invoke.online_invoker_provider = spec.provider  # type: ignore[attr-defined]
@@ -3593,6 +3645,45 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 if name in postflight_names and name in plan.selected_capabilities
             ]
 
+            def _guarded_capability_invoker(
+                capability_name: str,
+                invoker: Any,
+                capability_context: dict[str, Any],
+            ) -> Any:
+                if fenced and getattr(invoker, "effectful", False) is not True and getattr(invoker, "pure", False) is not True:
+                    raise ValueError("unclassified_selected_capability")
+                if effect_journal is not None and getattr(invoker, "effectful", False) is True:
+                    import hashlib as _effect_hash
+                    import json as _effect_json
+                    effect_context = dict(capability_context)
+                    effect_context["capability_name"] = capability_name
+                    request_digest = _effect_hash.sha256(_effect_json.dumps(effect_context, sort_keys=True, default=str).encode()).hexdigest()
+                    identity = {
+                        "task_id": request.task_id,
+                        "workspace_revision": request.workspace_revision,
+                        "planner_decision_id": planner_decision_id,
+                        "attempt_number": attempt_number,
+                        "action": f"capability:{capability_name}",
+                        "subject_revision": request.workspace_revision,
+                        "request_digest": request_digest,
+                    }
+                    deterministic_effect_id = _nexus_generated_bindings.deterministic_effect_id
+                    operation_digest = _nexus_generated_bindings.operation_digest
+                    effect_journal_bindings.append({"effect_id": deterministic_effect_id(identity), "operation_id": operation_digest(identity), "action": identity["action"], "request_digest": request_digest, "project_root": str(effect_journal.project_root)})
+                    with _runtime_write_context(runtime_writer_factory, task_id=request.task_id, role="effect_journal", path=effect_journal.path, owner_context=owner_context) as effect_context:
+                        _assert_runtime_context_active(runtime_writer_factory, effect_context)
+                        result = effect_journal.execute(
+                            identity=identity,
+                            subject=request.task_id,
+                            request_digest=request_digest,
+                            dispatch=lambda: effect_dispatch.dispatch(lambda: invoker(capability_context)),
+                            reconcile=lambda record: effect_reconcile.reconcile(record),
+                        )
+                    saved = effect_journal.get(deterministic_effect_id(identity)) or {}
+                    effect_journal_bindings[-1].update({"generation": saved.get("generation"), "state": saved.get("state"), "result_digest": saved.get("result_digest", ""), "project_root": str(effect_journal.project_root)})
+                    return result
+                return invoker(capability_context)
+
             def _invoke_capability(
                 capability_name: str,
                 invoker: Any,
@@ -3609,39 +3700,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     }
                 else:
                     try:
-                        if fenced and getattr(invoker, "effectful", False) is not True and getattr(invoker, "pure", False) is not True:
-                            raise ValueError("unclassified_selected_capability")
-                        if effect_journal is not None and getattr(invoker, "effectful", False) is True:
-                            import hashlib as _effect_hash
-                            import json as _effect_json
-                            effect_context = dict(capability_context)
-                            effect_context["capability_name"] = capability_name
-                            request_digest = _effect_hash.sha256(_effect_json.dumps(effect_context, sort_keys=True, default=str).encode()).hexdigest()
-                            identity = {
-                                "task_id": request.task_id,
-                                "workspace_revision": request.workspace_revision,
-                                "planner_decision_id": planner_decision_id,
-                                "attempt_number": attempt_number,
-                                "action": f"capability:{capability_name}",
-                                "subject_revision": request.workspace_revision,
-                                "request_digest": request_digest,
-                            }
-                            deterministic_effect_id = _nexus_generated_bindings.deterministic_effect_id
-                            operation_digest = _nexus_generated_bindings.operation_digest
-                            effect_journal_bindings.append({"effect_id": deterministic_effect_id(identity), "operation_id": operation_digest(identity), "action": identity["action"], "request_digest": request_digest, "project_root": str(effect_journal.project_root)})
-                            with _runtime_write_context(runtime_writer_factory, task_id=request.task_id, role="effect_journal", path=effect_journal.path, owner_context=owner_context) as effect_context:
-                                _assert_runtime_context_active(runtime_writer_factory, effect_context)
-                                result = effect_journal.execute(
-                                    identity=identity,
-                                    subject=request.task_id,
-                                    request_digest=request_digest,
-                                    dispatch=lambda: effect_dispatch.dispatch(lambda: invoker(capability_context)),
-                                    reconcile=lambda record: effect_reconcile.reconcile(record),
-                                )
-                            saved = effect_journal.get(deterministic_effect_id(identity)) or {}
-                            effect_journal_bindings[-1].update({"generation": saved.get("generation"), "state": saved.get("state"), "result_digest": saved.get("result_digest", ""), "project_root": str(effect_journal.project_root)})
-                        else:
-                            result = invoker(capability_context)
+                        result = _guarded_capability_invoker(capability_name, invoker, capability_context)
                     except Exception as exc:  # fail closed in the shared receipt
                         result = {
                             "task_id": request.task_id,
@@ -3678,25 +3737,30 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     value = getattr(request.local_request, field_name, None)
                     if value not in (None, ""):
                         capability_context[field_name] = value
-            for capability_name, invoker in preflight_items:
-                _invoke_capability(capability_name, invoker, capability_context)
-
-            # Immutable shared evidence bundle (P2) — both Local and Online must see same baseline.
-            build_capability_evidence_bundle = _nexus_generated_bindings.build_capability_evidence_bundle
-
-            evidence_bundle = build_capability_evidence_bundle(
+            # Shared caller helper owns selection order, exclusions, invocation, and sealing.
+            preflight_invokers = {
+                name: (
+                    invoker
+                    if not callable(invoker)
+                    else lambda context, name=name, invoker=invoker: _guarded_capability_invoker(
+                        name, invoker, dict(context)
+                    )
+                )
+                for name, invoker in preflight_items
+            }
+            capability_results, evidence_bundle = materialize_selected_capability_evidence(
+                planner_output=plan_payload,
+                selected_capabilities=list(plan.selected_capabilities),
                 task_id=request.task_id,
-                workspace_revision=request.workspace_revision,
                 task_statement=request.task_statement,
-                plan_payload=plan_payload,
+                workspace_revision=request.workspace_revision,
                 plan_hash=plan_hash,
                 planner_decision_id=planner_decision_id,
-                capability_results=capability_results,
-                selected_capabilities=list(plan.selected_capabilities),
-                source_hash=hashlib.sha256(
-                    f"{request.workspace_revision}:{request.task_statement}".encode("utf-8")
-                ).hexdigest(),
+                capability_invokers=preflight_invokers,
+                capability_context=capability_context,
+                codeintel=dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {},
             )
+            capability_context["capability_results"] = capability_results
             plan_payload = dict(plan_payload)
             _evidence_consumer_view = _nexus_generated_bindings._evidence_consumer_view
             _verify_evidence_bundle = _nexus_generated_bindings._verify_evidence_bundle
@@ -3911,6 +3975,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 effect_journal_bindings=effect_journal_bindings,
                 runtime_writer_factory=runtime_writer_factory,
                 owner_context=owner_context,
+                execution_attempt=execution_attempt,
             )
             if request.local_enabled:
                 stages["local"] = local_stage
@@ -4005,6 +4070,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 "online_authorization_source": online_decision.online_authorization_source,
                 "online_preflight_status": online_decision.preflight_status,
                 "approved_online_providers": list(online_decision.approved_online_providers),
+                "execution_attempt": execution_attempt,
+                "source_hash": str(evidence_bundle.get("source_hash") or ""),
             }
             if canonical_execution is not None:
                 context["canonical_execution"] = canonical_execution
@@ -4117,7 +4184,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 return bool(stage.get("invoked") and stage.get("evidence_present") and stage.get("gate_passed"))
 
             receipt_complete = all(_stage_complete(stage) for stage in required_stages)
-            outcome_contributed = any(bool(stage.get("outcome_contributed")) for stage in required_stages)
+            outcome_contributed = any(bool(stage.get("outcome_contributed")) for stage in required_stages) and _stage_complete(verifier_stage)
             # P4: full wiring closure — every selected capability must truly succeed.
             # SKIPPED / SELECTED_NOT_EXECUTED / STUB / FAILED / BLOCKED / invoked=false
             # / gate_passed=false all block capability_closure_complete.
@@ -4589,18 +4656,39 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                         or ""
                     )
                     # Re-run attach with final prompt so consumption_proof binds to Online injection.
-                    forward_base = build_online_safe_local_forward(local_stage)
+                    forward_base = build_online_safe_local_forward(
+                        local_stage,
+                        runtime_task_id=request.task_id,
+                        runtime_canonical_execution=canonical_execution,
+                        runtime_execution_attempt=execution_attempt,
+                        runtime_source_hash=str(evidence_bundle.get("source_hash") or ""),
+                        runtime_execution_world=str(_mapping(canonical_execution).get("execution_world") or "product_runtime"),
+                        final_prompt=assembled,
+                    )
                     attach_verified_assist_to_forward = _nexus_generated_bindings.attach_verified_assist_to_forward
+                    validate_vap_runtime_binding = _nexus_generated_bindings.validate_vap_runtime_binding
+                    vap_binding = validate_vap_runtime_binding(
+                        vap_packet,
+                        task_id=request.task_id,
+                        canonical_execution=canonical_execution or {},
+                        execution_attempt=execution_attempt,
+                        source_hash=str(evidence_bundle.get("source_hash") or ""),
+                        execution_world=str(_mapping(canonical_execution).get("execution_world") or "product_runtime"),
+                    )
+                    if not vap_binding.get("ok"):
+                        raise ValueError(str(vap_binding.get("reason") or "vap_runtime_binding_failed"))
 
                     online_safe_forward = attach_verified_assist_to_forward(
                         forward_base,
                         vap_packet,
                         consume=bool(request.online_enabled and online_stage.get("invoked")),
                         consumed_by_stage="online_prompt_assembly",
-                        final_prompt=assembled if assembled else str(
-                            (forward_base.get("verified_assist") or {}).get("injection_fragment")
-                            or ""
-                        ),
+                        final_prompt=assembled,
+                        runtime_task_id=request.task_id,
+                        runtime_canonical_execution=canonical_execution or {},
+                        runtime_execution_attempt=execution_attempt,
+                        runtime_source_hash=str(evidence_bundle.get("source_hash") or ""),
+                        runtime_execution_world=str(_mapping(canonical_execution).get("execution_world") or "product_runtime"),
                     )
                     verified_assist_block = dict(online_safe_forward.get("verified_assist") or {})
                     # Mark local substitution online_consumed when credit proves consumption.
@@ -4614,6 +4702,27 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 except Exception:
                     online_safe_forward = {}
                     verified_assist_block = {}
+
+            if request.local_enabled and request.online_enabled:
+                verifier_response = _mapping(verifier_stage.get("response"))
+                verifier_response = _mapping(verifier_response.get("response")) if isinstance(verifier_response.get("response"), Mapping) else verifier_response
+                verifier_bound = bool(
+                    _stage_complete(verifier_stage)
+                    and str(verifier_response.get("task_id") or "") == request.task_id
+                    and execution_attempt.get("attempt_id")
+                    and str(verifier_response.get("attempt_id") or verifier_response.get("execution_attempt_id") or "") == str(execution_attempt.get("attempt_id") or "")
+                    and evidence_bundle.get("source_hash")
+                    and str(verifier_response.get("source_hash") or "") == str(evidence_bundle.get("source_hash") or "")
+                )
+                vap_credit = _mapping(verified_assist_block.get("credit"))
+                outcome_contributed = bool(vap_credit.get("assist_credited")) and verifier_bound
+                claim_boundary["outcome_contributed"] = outcome_contributed
+                if isinstance(local_stage.get("substitution_trace"), Mapping):
+                    local_stage = dict(local_stage)
+                    trace = dict(local_stage.get("substitution_trace") or {})
+                    trace["final_outcome_contributed"] = outcome_contributed
+                    local_stage["substitution_trace"] = trace
+                    stages["local"] = local_stage
 
             codeintel_hash = _hash_json(dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {})
             treatment_config = {
@@ -5018,6 +5127,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             effect_journal_bindings: list[dict[str, Any]] | None = None,
             runtime_writer_factory: Any = None,
             owner_context: Any = None,
+            execution_attempt: Mapping[str, Any] | None = None,
         ) -> dict[str, Any]:
             if not request.local_enabled:
                 return _stage("local", status="NOT_REQUESTED", reason="local_route_disabled")
@@ -5187,6 +5297,33 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     **local_authority_stage_fields,
                 )
             payload = _mapping(response)
+            if str(payload.get("action") or "") == "advisor" and "hybrid_route_advisory" not in payload:
+                try:
+                    advisory_route_from_local_response = _nexus_generated_bindings.advisory_route_from_local_response
+
+                    advisory_route = advisory_route_from_local_response(
+                        payload,
+                        task_id=request.task_id,
+                        planner_decision_id=str(
+                            plan.get("planner_decision_id") or plan.get("plan_hash") or ""
+                        ),
+                        evidence_refs=tuple(str(ref) for ref in payload.get("evidence_refs", ()) or ()),
+                    )
+                    payload = dict(payload)
+                    payload["hybrid_route_advisory"] = advisory_route.to_dict()
+                except (TypeError, ValueError) as exc:
+                    return _stage(
+                        "local",
+                        status="FAILED",
+                        invoked=bool(payload.get("local_model_invoked", payload.get("invoked", False))),
+                        gate_passed=False,
+                        evidence_present=True,
+                        reason=f"advisory_guard_failed_closed:{exc}",
+                        response=payload,
+                        provider_call_count=int(payload.get("provider_call_count") or 0),
+                        model_call_count=int(payload.get("model_call_count") or 0),
+                        **local_authority_stage_fields,
+                    )
             formal_lineage: dict[str, Any] = {}
             if workforce_admission_enabled:
                 if local_authority is not None and local_authority.get("mutation_intent") is False:
@@ -5216,6 +5353,53 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     model_call_count=int(payload.get("model_call_count") or 0),
                     **lineage_fields,
                 )
+            existing_advisory = payload.get("hybrid_route_advisory")
+            if "hybrid_route_advisory" in payload and not isinstance(existing_advisory, Mapping):
+                return _stage(
+                    "local", status="FAILED",
+                    invoked=bool(payload.get("local_model_invoked", payload.get("invoked", False))),
+                    gate_passed=False, evidence_present=True,
+                    reason="invalid_local_advisory:advisory_payload_not_mapping", response=payload,
+                    provider_call_count=int(payload.get("provider_call_count") or 0),
+                    model_call_count=int(payload.get("model_call_count") or 0),
+                    **local_authority_stage_fields,
+                )
+            if isinstance(existing_advisory, Mapping):
+                try:
+                    hybrid_route_decision_from_payload = _nexus_generated_bindings.hybrid_route_decision_from_payload
+
+                    advisory_decision = hybrid_route_decision_from_payload(existing_advisory)
+                    metadata = advisory_decision.metadata
+                    if str(metadata.get("task_id") or "") != request.task_id:
+                        raise ValueError("advisory_task_identity_mismatch")
+                    if str(metadata.get("planner_decision_id") or "") != str(
+                        plan.get("planner_decision_id") or plan.get("plan_hash") or ""
+                    ):
+                        raise ValueError("advisory_planner_identity_mismatch")
+                    if advisory_decision.authority.value == "fail_closed":
+                        planner_snapshot = plan.get("signal_snapshot")
+                        if not isinstance(planner_snapshot, Mapping) or planner_snapshot.get("fail_closed_enabled") is not True:
+                            raise ValueError("fail_closed_override_not_planner_enabled")
+                        return _stage(
+                            "local", status="FAILED",
+                            invoked=bool(payload.get("local_model_invoked", payload.get("invoked", False))),
+                            gate_passed=False, evidence_present=True,
+                            reason=advisory_decision.fallback_block_reason or "advisory_guard_blocked",
+                            response=payload,
+                            provider_call_count=int(payload.get("provider_call_count") or 0),
+                            model_call_count=int(payload.get("model_call_count") or 0),
+                            **local_authority_stage_fields,
+                        )
+                except (TypeError, ValueError) as exc:
+                    return _stage(
+                        "local", status="FAILED",
+                        invoked=bool(payload.get("local_model_invoked", payload.get("invoked", False))),
+                        gate_passed=False, evidence_present=True,
+                        reason=f"invalid_local_advisory:{exc}", response=payload,
+                        provider_call_count=int(payload.get("provider_call_count") or 0),
+                        model_call_count=int(payload.get("model_call_count") or 0),
+                        **local_authority_stage_fields,
+                    )
             if formal_lineage:
                 local_authority_stage_fields = {
                     **local_authority_stage_fields,
@@ -5256,13 +5440,19 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 ),
                 "verifier_passed": local_verifier_status in {"pass", "passed"},
                 "online_consumed": False,
-                "final_outcome_contributed": bool(payload.get("outcome_contributed", False)),
+                "final_outcome_contributed": False,
                 "partial_success_claimed": False,
                 "fallback_reason": str(payload.get("fallback_reason") or ""),
             }
             # P1: produce VerifiedAssistPacket from real Local receipt (not hand-written pilot).
             # Packet rides on response so build_online_safe_local_forward can attach consumption.
-            if invoked and delivered and task_identity_valid and not payload.get("verified_assist_packet"):
+            declared_consume = bool(payload.get("consume_verified_assist"))
+            declared_packet_missing = declared_consume and not isinstance(
+                payload.get("verified_assist_packet"), Mapping
+            )
+            if declared_packet_missing:
+                stage_bits["vap_integrity_failure"] = "missing_packet"
+            if invoked and delivered and task_identity_valid and not declared_packet_missing:
                 try:
                     build_vap_from_local_receipt = _nexus_generated_bindings.build_vap_from_local_receipt
 
@@ -5279,15 +5469,40 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                         task_contract_hash=plan_hash,
                         treatment_run_id=str(request.task_id),
                         plan_hash=plan_hash,
+                        canonical_execution=(
+                            plan.get("canonical_execution")
+                            if isinstance(plan.get("canonical_execution"), Mapping)
+                            else shared_snapshot.get("canonical_execution")
+                        ),
+                        execution_attempt=execution_attempt,
+                        source_hash=hashlib.sha256(
+                            f"{request.workspace_revision}:{request.task_statement}".encode("utf-8")
+                        ).hexdigest(),
+                        execution_world=str(
+                            (
+                                plan.get("canonical_execution")
+                                if isinstance(plan.get("canonical_execution"), Mapping)
+                                else {}
+                            ).get("execution_world")
+                            or "product_runtime"
+                        ),
                     )
                     if vap is not None:
                         payload = dict(payload)
+                        declared_packet = payload.get("verified_assist_packet")
+                        if isinstance(declared_packet, Mapping) and str(
+                            declared_packet.get("packet_hash") or ""
+                        ) != vap.packet_hash:
+                            payload["vap_integrity_failure"] = "packet_hash_substitution"
                         payload["verified_assist_packet"] = vap.to_dict()
                         payload["consume_verified_assist"] = True
                         payload["verified_assist_stage"] = "online_prompt_assembly"
                         refs = list(refs) + [f"local:{request.task_id}:vap:{vap.packet_hash[:16]}"]
                         stage_bits["verified_assist_packet_hash"] = vap.packet_hash
+                        stage_bits["verified_assist_packet_expected_hash"] = vap.packet_hash
                         stage_bits["verified_assist_packet_id"] = vap.packet_id
+                        if payload.get("vap_integrity_failure"):
+                            stage_bits["vap_integrity_failure"] = str(payload["vap_integrity_failure"])
                 except Exception as exc:
                     # Local native outcome retained, but VAP/consumer closure fail-closed incomplete
                     payload = dict(payload)
@@ -5302,7 +5517,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 invoked=invoked,
                 evidence_present=bool(payload.get("receipt_path") or refs or payload.get("verified_assist_packet")),
                 gate_passed=local_boundary_passed,
-                outcome_contributed=bool(payload.get("outcome_contributed", False)),
+                outcome_contributed=False,
                 evidence_refs=refs,
                 planner_snapshot_hash=_hash_json(shared_snapshot),
                 task_id=request.task_id,
@@ -5355,11 +5570,125 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             if invoker is None:
                 return _stage("online", status="NOT_RUN", reason="online_invoker_not_supplied")
 
+            # VAP binding is a pre-provider gate.  The with_nexus wrapper is not
+            # the only possible invoker, so validate every custom/registered edge
+            # here using runtime-owned context and expected packet identity.
+            local_stage_value = context.get("local")
+            local_stage = local_stage_value if isinstance(local_stage_value, Mapping) else {}
+            local_response_value = local_stage.get("response")
+            local_response = (
+                local_response_value if isinstance(local_response_value, Mapping) else {}
+            )
+            local_advisory = local_response.get("hybrid_route_advisory")
+            local_reason = str(local_stage.get("reason") or "")
+            if local_reason.startswith(("advisory_guard_failed_closed:", "invalid_local_advisory:")):
+                return _stage(
+                    "online", status="BLOCKED", invoked=False, gate_passed=False,
+                    evidence_present=True, reason=local_reason,
+                    evidence_refs=[f"online:{context.get('task_id')}:invalid_local_advisory"],
+                    response={"output_delivered": False, "provider_call_count": 0},
+                )
+            if local_advisory is not None:
+                try:
+                    hybrid_route_decision_from_payload = _nexus_generated_bindings.hybrid_route_decision_from_payload
+
+                    advisory_decision = hybrid_route_decision_from_payload(local_advisory)
+                    metadata = advisory_decision.metadata
+                    if str(metadata.get("task_id") or "") != str(context.get("task_id") or ""):
+                        raise ValueError("advisory_task_identity_mismatch")
+                    if str(metadata.get("planner_decision_id") or "") != str(context.get("planner_decision_id") or ""):
+                        raise ValueError("advisory_planner_identity_mismatch")
+                    if advisory_decision.authority.value == "fail_closed":
+                        planner_snapshot = context.get("planner", {}).get("signal_snapshot") if isinstance(context.get("planner"), Mapping) else None
+                        if not isinstance(planner_snapshot, Mapping) or planner_snapshot.get("fail_closed_enabled") is not True:
+                            raise ValueError("fail_closed_override_not_planner_enabled")
+                        return _stage(
+                            "online", status="BLOCKED", invoked=False, gate_passed=False,
+                            evidence_present=True,
+                            reason=advisory_decision.fallback_block_reason or "local_advisory_guard_blocked",
+                            evidence_refs=[f"online:{context.get('task_id')}:local_advisory_guard_blocked"],
+                            response={"output_delivered": False, "provider_call_count": 0},
+                        )
+                except (TypeError, ValueError) as exc:
+                    return _stage(
+                        "online", status="BLOCKED", invoked=False, gate_passed=False,
+                        evidence_present=True,
+                        reason=f"invalid_local_advisory:{exc}",
+                        evidence_refs=[f"online:{context.get('task_id')}:invalid_local_advisory"],
+                        response={"output_delivered": False, "provider_call_count": 0},
+                    )
+            local_packet = (
+                local_response.get("verified_assist_packet")
+                if isinstance(local_response.get("verified_assist_packet"), Mapping)
+                else None
+            )
+            vap_declared = bool(
+                local_response.get("consume_verified_assist")
+                or local_stage.get("consume_verified_assist")
+                or local_stage.get("verified_assist_packet_expected_hash")
+                or local_packet is not None
+            )
+            if vap_declared:
+                validate_vap_runtime_binding = _nexus_generated_bindings.validate_vap_runtime_binding
+
+                expected_packet_hash = str(
+                    local_stage.get("verified_assist_packet_expected_hash") or ""
+                )
+                expected_packet_id = str(local_stage.get("verified_assist_packet_id") or "")
+                failure_reason = str(local_stage.get("vap_integrity_failure") or "")
+                if local_packet is None:
+                    failure_reason = failure_reason or "missing_packet"
+                elif expected_packet_hash and str(local_packet.get("packet_hash") or "") != expected_packet_hash:
+                    failure_reason = failure_reason or "packet_hash_substitution"
+                elif expected_packet_id and str(local_packet.get("packet_id") or "") != expected_packet_id:
+                    failure_reason = failure_reason or "packet_id_substitution"
+                if not failure_reason:
+                    canonical = (
+                        context.get("canonical_execution")
+                        if isinstance(context.get("canonical_execution"), Mapping)
+                        else {}
+                    )
+                    verdict = validate_vap_runtime_binding(
+                        local_packet,
+                        task_id=str(context.get("task_id") or ""),
+                        canonical_execution=canonical,
+                        execution_attempt=(
+                            context.get("execution_attempt")
+                            if isinstance(context.get("execution_attempt"), Mapping)
+                            else {}
+                        ),
+                        source_hash=str(context.get("source_hash") or ""),
+                        execution_world=str(canonical.get("execution_world") or "product_runtime"),
+                    )
+                    if not verdict.get("ok"):
+                        failure_reason = str(verdict.get("reason") or "binding_mismatch")
+                if failure_reason:
+                    return _stage(
+                        "online",
+                        status="FAILED",
+                        invoked=False,
+                        evidence_present=True,
+                        gate_passed=False,
+                        reason=f"vap_runtime_binding_failed:{failure_reason}",
+                        response={
+                            "task_id": str(context.get("task_id") or ""),
+                            "invoked": False,
+                            "output_delivered": False,
+                            "gate_passed": False,
+                            "provider_call_count": 0,
+                            "model_call_count": 0,
+                            "error": f"vap_runtime_binding_failed:{failure_reason}",
+                        },
+                        evidence_refs=[
+                            f"online:{context.get('task_id')}:vap_binding_failed:{failure_reason}"
+                        ],
+                        task_id=str(context.get("task_id") or ""),
+                    )
+
             # Product deny / unauthorized decisions must never invoke Online transport
             # (including custom repair-style callables). Injected fixtures authorize
             # via online_execution_authorized=true with injected_test_transport source.
             decision_from_context = _nexus_generated_bindings.decision_from_context
-
             decision = decision_from_context(context)
             if decision is not None and not decision.online_execution_authorized:
                 return _stage(
@@ -5486,6 +5815,50 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 reason=f"{name}_task_id_mismatch" if not task_identity_valid else "",
                 response=payload,
             )
+    def materialize_selected_capability_evidence(
+        *, planner_output: Mapping[str, Any], selected_capabilities: list[str],
+        task_id: str, task_statement: str, workspace_revision: str,
+        plan_hash: str, planner_decision_id: str,
+        capability_invokers: Mapping[str, Any] | None,
+        capability_context: Mapping[str, Any] | None = None,
+        codeintel: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+        """Execute selected preflight capabilities and seal their evidence."""
+        selected = [str(name) for name in selected_capabilities]
+        postflight_names = {
+            "acceptance_check", "artifact_gate", "bdd_acceptance_skill", "claim_gate", "delivery_gate",
+        }
+        local_stage_capabilities = _nexus_generated_bindings.LOCAL_STAGE_CAPABILITIES
+        ensure = _nexus_generated_bindings.ensure_selected_coverage_invokers
+        invokers = ensure(selected, capability_invokers, codeintel=dict(codeintel or {}))
+        results: dict[str, dict[str, Any]] = {}
+        context = dict(capability_context or {})
+        context.update({"schema": REQUEST_SCHEMA, "task_id": task_id,
+                        "workspace_revision": workspace_revision, "task_statement": task_statement,
+                        "planner": dict(planner_output), "capability_results": results})
+        for name, invoker in invokers.items():
+            if name in local_stage_capabilities or name in postflight_names or name not in set(selected):
+                continue
+            if not callable(invoker):
+                value: Any = {"task_id": task_id, "invoked": False, "gate_passed": False,
+                              "evidence_refs": [f"capability:{name}:{task_id}:not_callable"]}
+            else:
+                try:
+                    value = invoker(context)
+                except Exception as exc:
+                    value = {"task_id": task_id, "invoked": True, "gate_passed": False,
+                             "evidence_refs": [f"capability:{name}:{task_id}:exception"],
+                             "error": f"{exc.__class__.__name__}:{exc}"}
+            results[name] = _capability_stage(name, task_id, value)
+        bundle = _nexus_generated_bindings.build_capability_evidence_bundle(
+            task_id=task_id, workspace_revision=workspace_revision,
+            task_statement=task_statement, plan_payload=dict(planner_output), plan_hash=plan_hash,
+            planner_decision_id=planner_decision_id, capability_results=results,
+            selected_capabilities=selected,
+            source_hash=hashlib.sha256(f"{workspace_revision}:{task_statement}".encode()).hexdigest(),
+        )
+        return results, bundle
+
     excluded = {'bindings', '_nexus_generated_bindings', 'RuntimeBindings', 'TransportBindings', 'require_complete_bindings'}
     values = {k: v for k, v in locals().items() if k not in excluded and not k.startswith('__')}
     return RuntimeExports(values)

@@ -469,7 +469,7 @@ def build_online_nexus_context(
     final_payloads: list[dict[str, Any]] = []
     for p in consumed_capability_payloads:
         markers = [str(m) for m in (p.get("markers") or [])]
-        fields = p.get("fields") if isinstance(p.get("fields"), Mapping) else {}
+        fields = _mapping(p.get("fields"))
         markers.extend(str(m) for m in (fields.get("markers") or []))
         if any(m and m in prompt for m in markers) or (
             str(p.get("capability") or "") and f'{p.get("capability")}:payload' in prompt
@@ -531,7 +531,7 @@ def build_online_nexus_context(
         "selected_capabilities": list(selected),
         "consumer_execution_modes": dict(consumer_execution_modes),
         "consumer_contract_source": (
-            "nexus.services.capability_registry.PLANNER_EXECUTION_CONTRACTS"
+            "nexus_runtime_support_candidate.services.capability_registry.PLANNER_EXECUTION_CONTRACTS"
         ),
         "prompt_sections_present": list(sections),
         "codeintel_present": codeintel_present,
@@ -544,9 +544,7 @@ def build_online_nexus_context(
             "guidance_hash": guidance_pack["guidance_hash"],
             "fixture_kind": guidance_pack["fixture_kind"],
             "selected_capabilities": list(guidance_pack["selected_capabilities"]),
-            "public_claim_allowed": False,
         },
-        "public_claim_allowed": False,
     }
 
     return OnlineNexusContext(
@@ -593,8 +591,8 @@ def build_online_nexus_context_from_runtime(
     if isinstance(cap_results, Mapping) and "codeintel" in cap_results:
         stage = cap_results.get("codeintel")
         stage_map = stage if isinstance(stage, Mapping) else {}
-        response = stage_map.get("response") if isinstance(stage_map.get("response"), Mapping) else {}
-        evidence = response.get("evidence") if isinstance(response.get("evidence"), Mapping) else {}
+        response = _mapping(stage_map.get("response"))
+        evidence = _mapping(response.get("evidence"))
         if evidence:
             codeintel = {**codeintel, **evidence}
 
@@ -602,21 +600,70 @@ def build_online_nexus_context_from_runtime(
     vap_injection = ""
     local_stage = ctx.get("local")
     if isinstance(local_stage, Mapping) and local_stage.get("invoked"):
+        declared = False
+        expected_packet_hash = ""
+        packet: dict[str, Any] | None = None
         try:
+            from nexus_runtime_support_candidate.services.verified_assist_contract import validate_vap_runtime_binding
+
+            local_response = _mapping(local_stage.get("response"))
+            packet_value = local_response.get("verified_assist_packet")
+            packet = dict(packet_value) if isinstance(packet_value, Mapping) else None
+            declared = bool(
+                local_response.get("consume_verified_assist")
+                or local_stage.get("consume_verified_assist")
+            )
+            if declared and packet is None:
+                raise ValueError("vap_runtime_binding_failed:missing_packet")
+            expected_packet_hash = str(
+                local_stage.get("verified_assist_packet_expected_hash") or ""
+            )
+            expected_packet_id = str(local_stage.get("verified_assist_packet_id") or "")
+            if expected_packet_hash and str((packet or {}).get("packet_hash") or "") != expected_packet_hash:
+                raise ValueError("vap_runtime_binding_failed:packet_hash_substitution")
+            if expected_packet_id and str((packet or {}).get("packet_id") or "") != expected_packet_id:
+                raise ValueError("vap_runtime_binding_failed:packet_id_substitution")
+            if str(local_stage.get("vap_integrity_failure") or ""):
+                raise ValueError(
+                    f"vap_runtime_binding_failed:{local_stage.get('vap_integrity_failure')}"
+                )
+            canonical = _mapping(ctx.get("canonical_execution"))
+            attempt = _mapping(ctx.get("execution_attempt"))
+            if packet is not None:
+                binding = validate_vap_runtime_binding(
+                    packet,
+                    task_id=str(ctx.get("task_id") or ""),
+                    canonical_execution=canonical,
+                    execution_attempt=attempt,
+                    source_hash=str(ctx.get("source_hash") or ""),
+                    execution_world=str(canonical.get("execution_world") or "product_runtime"),
+                )
+                if not binding.get("ok"):
+                    raise ValueError(str(binding.get("reason") or "vap_runtime_binding_failed"))
             from nexus_runtime_support_candidate.services.local_substitution import build_online_safe_local_forward
 
-            safe = build_online_safe_local_forward(local_stage)
+            safe = build_online_safe_local_forward(
+                local_stage,
+                runtime_task_id=str(ctx.get("task_id") or ""),
+                runtime_canonical_execution=canonical,
+                runtime_execution_attempt=attempt,
+                runtime_source_hash=str(ctx.get("source_hash") or ""),
+                runtime_execution_world=str(canonical.get("execution_world") or "product_runtime"),
+                final_prompt=str(ctx.get("online_prompt") or ctx.get("task_statement") or ""),
+            )
             forward = safe.get("forward", {}) if isinstance(safe, Mapping) else {}
             if isinstance(forward, Mapping) and forward:
                 local_forward = dict(forward)
             va = safe.get("verified_assist") if isinstance(safe, Mapping) else None
             if isinstance(va, Mapping):
                 vap_injection = str(va.get("injection_fragment") or "")
-                packet = va.get("packet") if isinstance(va.get("packet"), Mapping) else {}
-                if packet.get("packet_hash"):
-                    local_forward["verified_assist_packet_hash"] = str(packet.get("packet_hash"))
-                    local_forward["verified_assist_packet_id"] = str(packet.get("packet_id") or "")
+                va_packet = _mapping(va.get("packet"))
+                if va_packet.get("packet_hash"):
+                    local_forward["verified_assist_packet_hash"] = str(va_packet.get("packet_hash"))
+                    local_forward["verified_assist_packet_id"] = str(va_packet.get("packet_id") or "")
         except Exception:
+            if declared or expected_packet_hash or packet is not None:
+                raise
             local_forward = {}
             vap_injection = ""
 
