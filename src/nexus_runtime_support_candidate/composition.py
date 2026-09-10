@@ -76,6 +76,7 @@ from .services.verified_assist_contract import (
     attach_verified_assist_to_forward,
     build_treatment_fingerprint,
     build_vap_from_local_receipt,
+    validate_vap_runtime_binding,
 )
 
 
@@ -100,6 +101,9 @@ def _unsupported(name: str):
         raise UnsupportedAdapterError(f"omitted_runtime_adapter:{name}")
     return raise_unsupported
 
+def _runtime_projection_binding_missing(*args: Any, **kwargs: Any) -> Any:
+    raise ValueError("runtime_advisory_binding_missing")
+
 
 
 class MissingCapabilityBindingError(RuntimeError):
@@ -121,6 +125,9 @@ def _ensure_selected_coverage_invokers(
 def build_runtime_exports(
     *, policy_path: str | Path | None = None,
     default_capability_invokers: Mapping[str, Any] | None = None,
+    advisory_route_from_local_response: Any = None,
+    hybrid_route_decision_from_payload: Any = None,
+    memory_retrieval_builder: Any = None,
 ):
     """Bind runtime implementations and optional explicit host capability adapters.
 
@@ -189,7 +196,7 @@ def build_runtime_exports(
         "build_execution_attempt_id": build_execution_attempt_id,
         "build_online_safe_local_forward": build_online_safe_local_forward,
         "build_root_receipt": build_root_receipt,
-        "build_memory_retrieval_adapter": build_memory_retrieval_adapter,
+        "build_memory_retrieval_adapter": memory_retrieval_builder if memory_retrieval_builder is not None else build_memory_retrieval_adapter,
         "build_treatment_fingerprint": build_treatment_fingerprint,
         "build_vap_from_local_receipt": build_vap_from_local_receipt,
         "decision_from_context": decision_from_context,
@@ -208,6 +215,9 @@ def build_runtime_exports(
         "replan_canonical_task_bundle": replan_canonical_task_bundle,
         "resolve_online_execution_decision": resolve_online_execution_decision,
         "validate_receipt_base": validate_receipt_base,
+        "advisory_route_from_local_response": advisory_route_from_local_response or _runtime_projection_binding_missing,
+        "hybrid_route_decision_from_payload": hybrid_route_decision_from_payload or _runtime_projection_binding_missing,
+        "validate_vap_runtime_binding": validate_vap_runtime_binding,
     }
     return build_runtime(bind_runtime(bindings))
 

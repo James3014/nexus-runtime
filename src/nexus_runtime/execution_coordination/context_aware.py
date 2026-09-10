@@ -17,11 +17,13 @@ class _ConsumptionTracker:
         self.package: dict[str, Any] | None = None
         self.prompt: str | None = None
         self.receipt: dict[str, Any] | None = None
+        self.host_materialized = False
 
     def reset(self) -> None:
         self.package = None
         self.prompt = None
         self.receipt = None
+        self.host_materialized = False
 
 
 class _ContextAwareStatePort:
@@ -49,6 +51,8 @@ class _ContextAwareStatePort:
             if str(receipt.get("attempt_id") or "") != str(attempt_id):
                 raise ValueError("worker_consumption_checkpoint_attempt_mismatch")
             payload["model_context_consumption"] = receipt
+            if self._tracker.host_materialized:
+                payload["worker_model_context_consumption"] = receipt
         return self._delegate.checkpoint(task_id, status, payload, attempt_id)
 
 
@@ -90,6 +94,23 @@ class _ContextAwareContractPort:
         self._tracker.package = package
         self._tracker.prompt = serialized_prompt
         return serialized_prompt
+
+    def base_prompt(self, contract: Any) -> str:
+        return str(self._delegate.prompt(contract))
+
+    def materialize_worker_context(self, **kwargs: Any) -> Any:
+        self._tracker.reset()
+        hook = getattr(self._delegate, "materialize_worker_context", None)
+        if not callable(hook):
+            return None
+        result = hook(**kwargs)
+        if result is None:
+            return None
+        prompt, package = result
+        self._tracker.package = package
+        self._tracker.prompt = str(prompt)
+        self._tracker.host_materialized = True
+        return str(prompt), package
 
 
 class _ContextAwareWorkerPort:

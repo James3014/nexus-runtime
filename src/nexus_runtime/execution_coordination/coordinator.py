@@ -159,6 +159,7 @@ class ExecutionCoordinator:
         if deadline is not None and time.time() >= deadline:
             raise RuntimeError("WALL_TIME_BUDGET_EXHAUSTED")
         status = str(state.get("status"))
+        fresh_submission = status == "SUBMITTED"
         dispatch_binding = self.contract.provider_binding(request, state)
         self.contract.assert_persisted_dispatch(state, request, dispatch_binding)
         self.contract.revalidate_task_card(
@@ -344,6 +345,28 @@ class ExecutionCoordinator:
                     dispatch_binding,
                     active_provider=provider,
                 )
+                base_prompt = getattr(self.contract, "base_prompt", None)
+                prompt = base_prompt(contract) if callable(base_prompt) else self.contract.prompt(contract)
+                model = (
+                    str(((dispatch_binding.get("canonical_dispatch_envelope") or {}).get("model", dispatch_binding["model"])))
+                    if dispatch_binding is not None else str(request.get("model") or "").strip() or None
+                )
+                materialize = getattr(self.contract, "materialize_worker_context", None)
+                package = None
+                result = None
+                if callable(materialize):
+                    result = materialize(
+                        request=request, state=state, task_id=task_id, attempt_id=attempt_id,
+                        fresh_submission=fresh_submission, contract=contract, lease=lease,
+                        base_prompt=prompt, actual_provider=provider, actual_model=model,
+                    )
+                    if result is not None:
+                        prompt, package = result
+                self.contract.revalidate_provider_boundary(
+                    contract, request, task_id, dispatch_binding, active_provider=provider
+                )
+                if not callable(materialize) or result is None:
+                    prompt = self.contract.prompt(contract)
                 configured_timeout = float(request.get("timeout_seconds", 900.0))
                 remaining_timeout = (
                     max(0.0, deadline - time.time())
@@ -356,17 +379,8 @@ class ExecutionCoordinator:
                     provider,
                     invoke_contract,
                     lease,
-                    prompt=self.contract.prompt(contract),
-                    model=(
-                        str(
-                            (
-                                dispatch_binding.get("canonical_dispatch_envelope")
-                                or {}
-                            ).get("model", dispatch_binding["model"])
-                        )
-                        if dispatch_binding is not None
-                        else str(request.get("model") or "").strip() or None
-                    ),
+                    prompt=prompt,
+                    model=model,
                     timeout_seconds=min(configured_timeout, remaining_timeout),
                     on_process_group=on_process_group,
                 )

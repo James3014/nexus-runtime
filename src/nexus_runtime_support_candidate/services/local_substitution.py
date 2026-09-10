@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
-
 ELIGIBLE_ACTIONS = frozenset(
     {
         "advisor",
@@ -184,6 +183,13 @@ def build_verified_local_artifact(
 
 def build_online_safe_local_forward(
     local_stage_or_response: Mapping[str, Any] | Any,
+    *,
+    runtime_task_id: str = "",
+    runtime_canonical_execution: Mapping[str, Any] | None = None,
+    runtime_execution_attempt: Mapping[str, Any] | None = None,
+    runtime_source_hash: str = "",
+    runtime_execution_world: str = "",
+    final_prompt: str = "",
 ) -> dict[str, Any]:
     """Extract Online-safe Local evidence only (no raw patch / CoT / long dumps)."""
     payload: dict[str, Any]
@@ -322,6 +328,12 @@ def build_online_safe_local_forward(
                 or payload.get("verified_assist_stage")
                 or "online_prompt_assembly"
             ),
+            runtime_task_id=runtime_task_id,
+            runtime_canonical_execution=runtime_canonical_execution,
+            runtime_execution_attempt=runtime_execution_attempt,
+            runtime_source_hash=runtime_source_hash,
+            runtime_execution_world=runtime_execution_world,
+            final_prompt=final_prompt,
         )
         result["public_claim_allowed"] = False
     return result
