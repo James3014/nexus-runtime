@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from nexus_runtime.execution_state import ExecutionStateStore
 
 
@@ -256,3 +258,212 @@ def test_custom_error_receipt_callback(tmp_path):
     assert len(custom_calls) == 1
     assert custom_calls[0][0] == "t"
     assert custom_calls[0][2] == "UnicodeDecodeError"
+
+
+@pytest.mark.parametrize(
+    "invalid_id",
+    [
+        "../outside",
+        "..",
+        ".",
+        "/",
+        "\\",
+        "a/b",
+        "a\\b",
+        "/tmp/x",
+        "\\tmp\\x",
+        "C:\\state",
+        "C:state",
+        "*",
+        "?",
+        "[",
+        "]",
+        "t*",
+        "t?",
+        "t[0]",
+        "",
+        "   ",
+        "t\0null",
+    ],
+)
+def test_hostile_task_ids_rejected_across_all_apis(tmp_path, invalid_id):
+    outside_sentinel = tmp_path / "outside.json"
+    sentinel_content = '{"probe": "sentinel"}'
+    outside_sentinel.write_text(sentinel_content, encoding="utf-8")
+
+    state_dir = tmp_path / "state"
+    store = ExecutionStateStore(state_dir)
+
+    # 1. state_path
+    with pytest.raises(ValueError):
+        store.state_path(invalid_id)
+
+    # 2. archive_candidates
+    with pytest.raises(ValueError):
+        store.archive_candidates(invalid_id)
+
+    # 3. read_snapshot
+    with pytest.raises(ValueError):
+        store.read_snapshot(invalid_id)
+
+    # 4. latest_archive
+    with pytest.raises(ValueError):
+        store.latest_archive(invalid_id)
+
+    # 5. read_raw
+    with pytest.raises(ValueError):
+        store.read_raw(invalid_id)
+
+    # 6. load_path with invalid task_id
+    with pytest.raises(ValueError):
+        store.load_path(outside_sentinel, invalid_id)
+
+    # 7. write (must reject BEFORE side effects: no state_dir, no lock, no temp)
+    fresh_state_dir = tmp_path / f"fresh_{abs(hash(invalid_id))}"
+    fresh_store = ExecutionStateStore(fresh_state_dir)
+    with pytest.raises(ValueError):
+        fresh_store.write(invalid_id, {"task_id": invalid_id, "status": "RUNNING"})
+    assert not fresh_state_dir.exists(), "write() must not create state directory on invalid ID"
+
+    # 8. mutate (must reject BEFORE lock or side effects)
+    with pytest.raises(ValueError):
+        fresh_store.mutate(invalid_id, {"status": "DONE"})
+    assert not fresh_state_dir.exists(), "mutate() must not create state directory on invalid ID"
+
+    # 9. write_locked / mutate_locked
+    with pytest.raises(ValueError):
+        store.write_locked(invalid_id, {"task_id": invalid_id, "status": "RUNNING"})
+    with pytest.raises(ValueError):
+        store.mutate_locked(invalid_id, {"status": "DONE"})
+
+    # 10. outside sentinel must remain byte-identical
+    assert outside_sentinel.read_text(encoding="utf-8") == sentinel_content
+
+
+def test_symlink_escape_current_state_rejected(tmp_path):
+    outside = tmp_path / "outside.json"
+    outside_content = json.dumps({"task_id": "t", "status": "SUCCEEDED", "probe": "leak"})
+    outside.write_text(outside_content, encoding="utf-8")
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    sym = state_dir / "t.json"
+    sym.symlink_to(outside)
+
+    store = ExecutionStateStore(state_dir)
+
+    with pytest.raises(ValueError):
+        store.read_snapshot("t")
+
+    with pytest.raises(ValueError):
+        store.read_raw("t")
+
+    with pytest.raises(ValueError):
+        store.mutate("t", {"status": "OVERWRITTEN"})
+
+    with pytest.raises(ValueError):
+        store.write("t", {"task_id": "t", "status": "OVERWRITTEN"})
+
+    assert outside.read_text(encoding="utf-8") == outside_content
+
+
+def test_symlink_escape_archive_state_rejected(tmp_path):
+    outside = tmp_path / "outside.json"
+    outside_content = json.dumps({"task_id": "t", "status": "SUCCEEDED", "probe": "leak"})
+    outside.write_text(outside_content, encoding="utf-8")
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    archive_dir = tmp_path / "nexus-state-archive"
+    archive_dir.mkdir()
+
+    sym = archive_dir / "t.json"
+    sym.symlink_to(outside)
+
+    store = ExecutionStateStore(state_dir)
+
+    with pytest.raises(ValueError):
+        store.read_snapshot("t")
+
+    with pytest.raises(ValueError):
+        store.archive_candidates("t")
+
+    with pytest.raises(ValueError):
+        store.latest_archive("t")
+
+    assert outside.read_text(encoding="utf-8") == outside_content
+
+
+def test_symlink_escape_intermediate_directory_rejected(tmp_path):
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "t.json"
+    outside_file.write_text(json.dumps({"task_id": "t", "status": "SUCCEEDED"}), encoding="utf-8")
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    sym_dir = state_dir / "sub"
+    sym_dir.symlink_to(outside_dir)
+
+    store = ExecutionStateStore(state_dir)
+    with pytest.raises(ValueError):
+        store.load_path(sym_dir / "t.json", "t")
+
+
+def test_direct_load_path_containment(tmp_path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    archive_dir = tmp_path / "nexus-state-archive"
+    archive_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({"task_id": "t", "status": "SUCCEEDED"}), encoding="utf-8")
+
+    current = state_dir / "t.json"
+    current.write_text(json.dumps({"task_id": "t", "status": "RUNNING"}), encoding="utf-8")
+
+    archive = archive_dir / "t.json"
+    archive.write_text(json.dumps({"task_id": "t", "status": "DONE"}), encoding="utf-8")
+
+    store = ExecutionStateStore(state_dir)
+
+    with pytest.raises(ValueError):
+        store.load_path(outside, "t")
+
+    assert store.load_path(current, "t")["status"] == "RUNNING"
+    assert store.load_path(archive, "t")["status"] == "DONE"
+
+
+def test_validate_writes_false_preserves_path_containment(tmp_path):
+    state_dir = tmp_path / "state"
+    store = ExecutionStateStore(state_dir, validate_writes=False)
+
+    with pytest.raises(ValueError):
+        store.write("../outside", {"anything": "goes"})
+
+    with pytest.raises(ValueError):
+        store.write_locked("../outside", {"anything": "goes"})
+
+    with pytest.raises(ValueError):
+        store.read_snapshot("../outside")
+
+    assert not (tmp_path / "outside.json").exists()
+
+
+def test_callbacks_not_invoked_on_invalid_task_id(tmp_path):
+    callbacks = []
+
+    def bw(task_id, state):
+        callbacks.append("before_write")
+        return state
+
+    def val(task_id, payload, path):
+        callbacks.append("validator")
+        return payload
+
+    state_dir = tmp_path / "state"
+    store = ExecutionStateStore(state_dir, before_write=bw, validator=val)
+
+    with pytest.raises(ValueError):
+        store.write("../outside", {"task_id": "x", "status": "RUNNING"})
+
+    assert callbacks == []

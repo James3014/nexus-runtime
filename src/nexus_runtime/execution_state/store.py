@@ -1,4 +1,14 @@
-"""Durable JSON execution-state storage with atomic, locked mutation."""
+"""Durable JSON execution-state storage with atomic, locked mutation.
+
+Security containment invariant:
+- All untrusted task identifiers are strictly validated before any filesystem,
+  glob, lock, or allocation operation.
+- Candidate state and archive paths are verified to resolve strictly within the
+  configured state directory or archive directory roots.
+- Claim ceiling: Resolved containment guarantees path confinement under stable
+  filesystem topologies; it does not claim race-free protection against
+  concurrent hostile filesystem mutations (TOCTOU).
+"""
 
 from __future__ import annotations
 
@@ -28,21 +38,62 @@ class ExecutionStateStore:
         self.before_write = before_write
         self.validate_writes = validate_writes
 
+    @property
+    def archive_dir(self) -> Path:
+        return self.state_dir.parent / "nexus-state-archive"
+
+    @staticmethod
+    def _validate_task_id(task_id: str) -> None:
+        if not isinstance(task_id, str):
+            raise ValueError(f"task_id must be a string, got {type(task_id).__name__}")  # noqa: TRY004
+        if not task_id or not task_id.strip():
+            raise ValueError("task_id must not be empty or whitespace")
+        if "/" in task_id or "\\" in task_id:
+            raise ValueError(f"task_id must not contain path separators: {task_id!r}")
+        if any(ch in task_id for ch in ("*", "?", "[", "]")):
+            raise ValueError(f"task_id must not contain glob metacharacters: {task_id!r}")
+        if "\0" in task_id:
+            raise ValueError(f"task_id must not contain NUL bytes: {task_id!r}")
+        if task_id in {".", ".."} or task_id.startswith(".."):
+            raise ValueError(f"task_id must not contain directory traversal: {task_id!r}")
+        if Path(task_id).is_absolute() or (len(task_id) >= 2 and task_id[1] == ":"):
+            raise ValueError(f"task_id must not be an absolute or rooted path: {task_id!r}")
+
+    def _assert_contained(self, path: Path, *, allow_archive: bool = False) -> None:
+        resolved = Path(path).resolve()
+        state_root = self.state_dir.resolve()
+        if resolved.is_relative_to(state_root):
+            return
+        if allow_archive:
+            archive_root = self.archive_dir.resolve()
+            if resolved.is_relative_to(archive_root):
+                return
+        raise ValueError(f"path escapes configured state roots: {path}")
+
     def state_path(self, task_id: str) -> Path:
-        return self.state_dir / f"{task_id}.json"
+        self._validate_task_id(task_id)
+        path = self.state_dir / f"{task_id}.json"
+        self._assert_contained(path, allow_archive=False)
+        return path
 
     def archive_candidates(self, task_id: str) -> list[Path]:
-        root = self.state_dir.parent / "nexus-state-archive"
-        return [
-            p
-            for p in [
-                root / f"{task_id}.json",
-                *sorted(root.glob(f"{task_id}--attempt-*.json")),
-            ]
-            if p.exists()
+        self._validate_task_id(task_id)
+        root = self.archive_dir
+        candidates = [
+            root / f"{task_id}.json",
+            *sorted(root.glob(f"{task_id}--attempt-*.json")),
         ]
+        results = []
+        for p in candidates:
+            if p.exists():
+                self._assert_contained(p, allow_archive=True)
+                results.append(p)
+        return results
 
     def load_path(self, path: Path, task_id: str):
+        self._validate_task_id(task_id)
+        path = Path(path)
+        self._assert_contained(path, allow_archive=True)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -57,12 +108,14 @@ class ExecutionStateStore:
         return value if value is not None else dict(payload)
 
     def read_snapshot(self, task_id: str):
+        self._validate_task_id(task_id)
         value = self.load_path(self.state_path(task_id), task_id)
         if value is not None:
             return value
         return self.latest_archive(task_id)[1]
 
     def latest_archive(self, task_id: str):
+        self._validate_task_id(task_id)
         values = []
         for path in self.archive_candidates(task_id):
             loaded = self.load_path(path, task_id)
@@ -91,14 +144,18 @@ class ExecutionStateStore:
                 fcntl.flock(h.fileno(), fcntl.LOCK_UN)
 
     def write(self, task_id: str, state: Mapping[str, Any]):
+        self._validate_task_id(task_id)
         with self.lock():
             return self.write_locked(task_id, state)
 
     def write_locked(self, task_id: str, state: Mapping[str, Any]):
         """Atomically replace state while the caller holds its operation guard."""
+        self._validate_task_id(task_id)
+        path = self.state_path(task_id)
+        self._assert_contained(path, allow_archive=False)
         normalized = dict(state)
         if self.validate_writes:
-            checked = self.validator(task_id, normalized, self.state_path(task_id))
+            checked = self.validator(task_id, normalized, path)
             if checked is None or checked.get("state_valid") is False:
                 raise ValueError("execution state validation failed")
             normalized = dict(checked)
@@ -120,7 +177,7 @@ class ExecutionStateStore:
             h.flush()
             os.fsync(h.fileno())
             tmp = Path(h.name)
-        tmp.replace(self.state_path(task_id))
+        tmp.replace(path)
         fd = os.open(self.state_dir, os.O_RDONLY)
         try:
             os.fsync(fd)
@@ -133,16 +190,22 @@ class ExecutionStateStore:
         task_id: str,
         update: Mapping[str, Any] | Callable[[dict[str, Any]], Mapping[str, Any]],
     ):
+        self._validate_task_id(task_id)
         with self.lock():
             return self.mutate_locked(task_id, update)
 
     def read_raw(self, task_id: str):
         """Read mutation input without converting corrupt bytes into a status receipt."""
-        return json.loads(self.state_path(task_id).read_text(encoding="utf-8"))
+        self._validate_task_id(task_id)
+        path = self.state_path(task_id)
+        self._assert_contained(path, allow_archive=False)
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def mutate_locked(self, task_id, update):
         """Mutate active state under an existing caller operation guard."""
+        self._validate_task_id(task_id)
         path = self.state_path(task_id)
+        self._assert_contained(path, allow_archive=False)
         if not path.exists():
             return None
         current = self.read_raw(task_id)
