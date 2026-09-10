@@ -149,10 +149,10 @@ class ContextHub:
         state = self._state()
         hotspots = sorted(
             {
-                str(v.get("file", ""))
+                str(v.get("file") if isinstance(v, dict) else getattr(v, "file", ""))
                 for v in violations
-                if isinstance(v, dict) and v.get("file")
             }
+            - {"", "None"}
         )
         pack = {
             "task_id": getattr(state, "task_id", ""),
@@ -176,6 +176,9 @@ class ContextHub:
             pack["wisdom_prior"] = self.deps.knowledge_reader.inject_wisdom_prior(
                 summary, hotspots[:5]
             )
+        else:
+            pack["recommended_skills"] = []
+            pack["wisdom_prior"] = ""
         if self.deps.belief_reader:
             confidence = float(self.deps.belief_reader("AUDIT_FAILURE_1") or 0.0)
             if confidence < 0.5:
@@ -437,6 +440,9 @@ class ContextHub:
             pack["wisdom_prior"] = self.deps.knowledge_reader.inject_wisdom_prior(
                 summary, hotspots
             )
+        else:
+            pack["recommended_skills"] = []
+            pack["wisdom_prior"] = ""
         return pack
 
     def record_crystal_lesson(
