@@ -48,5 +48,3 @@ def test_host_like_bindings_are_distinct_and_are_called():
     assert exports.plan_canonical_task_bundle("task") == "planned"
     assert exports.replan_canonical_task_bundle("task") == "replanned"
     assert [item[0] for item in calls] == ["plan", "replan"]
-
-
