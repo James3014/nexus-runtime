@@ -47,7 +47,7 @@ class ExecutionStateStore:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return None
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             return self.error_receipt(task_id, path, exc)
         if not isinstance(payload, Mapping):
             return self.error_receipt(
