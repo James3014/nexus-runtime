@@ -157,6 +157,9 @@ def build_online_consumption_receipt(
         return _seal_receipt(receipt)
 
     receipt["provider"] = reported_provider
+    if not receipt["worker_id"] or not receipt["model"]:
+        receipt["proof_basis"] = "ONLINE_WORKER_BINDING_MISSING"
+        return _seal_receipt(receipt)
     receipt["proof_basis"] = "ONLINE_PROVIDER_PROCESS_EVIDENCE"
     if (
         physical_transport

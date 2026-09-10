@@ -1,26 +1,59 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from dataclasses import dataclass
 
 import pytest
 
+from nexus_planning_candidate.services.capability_evidence_bundle import (
+    build_capability_evidence_bundle,
+)
 from nexus_runtime import build_runtime_exports
 from nexus_runtime.execution_coordination import ExecutionCoordinator, WorkerOutcome
 from nexus_runtime.task_context import (
     MODEL_CONTEXT_MARKER,
+    append_model_context_to_prompt,
     build_online_context_package,
+    build_planner_consumer_context_package,
     build_worker_context_package,
+    extract_model_context_from_prompt,
     wrap_online_invoker,
 )
-
 
 DECISION_HASH = "a" * 64
 PLAN_HASH = "b" * 64
 BUNDLE_HASH = "c" * 64
 
 
+def _sealed_bundle(task_id: str, statement: str, payload_capabilities=("memory", "codeintel")) -> dict:
+    return build_capability_evidence_bundle(
+        task_id=task_id,
+        workspace_revision="r" * 40,
+        task_statement=statement,
+        plan_payload={"selected_capabilities": ["memory", "codeintel"]},
+        plan_hash=PLAN_HASH,
+        planner_decision_id=DECISION_HASH,
+        capability_results={
+            name: {
+                "status": "SUCCEEDED",
+                "invoked": True,
+                "evidence_refs": [f"evidence:{name}"],
+                "response": {"consumer_payload": {"fields": {
+                    "summary": f"bounded {name} result",
+                    "evidence_id": f"evidence:{name}",
+                }}} if name in payload_capabilities else {},
+            }
+            for name in ("memory", "codeintel")
+        },
+        selected_capabilities=["memory", "codeintel"],
+    )
+
+
 def _planner_output(task_id: str = "task-1") -> dict:
+    statement = "repair the parser"
+    bundle = _sealed_bundle(task_id, statement)
     return {
         "decision_hash": DECISION_HASH,
         "plan_hash": PLAN_HASH,
@@ -32,6 +65,7 @@ def _planner_output(task_id: str = "task-1") -> dict:
         "plan_payload": {
             "signal_snapshot": {
                 "selected_capabilities": ["memory", "codeintel"],
+                "capability_evidence_bundle": bundle,
             }
         },
     }
@@ -64,6 +98,7 @@ def _worker_request(task_id: str = "task-1") -> dict:
 
 
 def _online_context() -> dict:
+    bundle = _sealed_bundle("online-1", "inspect bounded context")
     return {
         "task_id": "online-1",
         "task_statement": "inspect bounded context",
@@ -75,10 +110,7 @@ def _online_context() -> dict:
                 "selected_capabilities": ["memory", "codeintel"],
             },
         },
-        "capability_evidence_bundle": {
-            "bundle_hash": BUNDLE_HASH,
-            "evidence_ids": ["evidence:memory", "evidence:codeintel"],
-        },
+        "capability_evidence_bundle": bundle,
         "gateway_invocation_authority": {
             "gate_passed": True,
             "resolved_worker_id": "agy_flash",
@@ -99,7 +131,11 @@ def test_online_projection_binds_planner_evidence_and_worker_identity() -> None:
         "evidence:codeintel",
         "evidence:memory",
     ]
-    assert package["evidence_bundle_ids"] == [f"capability-evidence:{BUNDLE_HASH}"]
+    assert package["evidence_bundle_ids"] == [
+        f"capability-evidence:{_online_context()['capability_evidence_bundle']['bundle_hash']}"
+    ]
+    assert package["serialized_capability_ids"] == ["codeintel", "memory"]
+    assert package["serialized_evidence_ids"] == ["evidence:codeintel", "evidence:memory"]
     assert package["consumer_role"] == "online"
     assert package["consumer_channel"] == "online_provider"
     assert package["worker_binding"] == {
@@ -109,6 +145,131 @@ def test_online_projection_binds_planner_evidence_and_worker_identity() -> None:
     }
     assert package["physical_consumption_state"] == "NOT_PROVEN"
     assert package["outcome_contribution_state"] == "NOT_PROVEN"
+
+
+def test_projection_serializes_verified_bounded_payload_content() -> None:
+    context = _online_context()
+    package = build_online_context_package(context)
+    metadata = package["receipt"]["kept_sources"][1]["metadata"]
+    payloads = [record["payload"] for record in metadata["consumer_payload_records"]]
+    assert {p["fields"]["summary"] for p in payloads} == {
+        "bounded memory result", "bounded codeintel result"
+    }
+    assert package["serialized_capability_ids"] == ["codeintel", "memory"]
+    assert package["serialized_evidence_ids"] == ["evidence:codeintel", "evidence:memory"]
+
+
+def test_id_only_successful_evidence_stays_unserialized() -> None:
+    context = _online_context()
+    context["capability_evidence_bundle"] = _sealed_bundle(
+        "online-1", "inspect bounded context", payload_capabilities=("memory",)
+    )
+    package = build_online_context_package(context)
+    assert package["materialized_evidence_ids"] == ["evidence:codeintel", "evidence:memory"]
+    assert package["serialized_capability_ids"] == ["memory"]
+    assert package["serialized_evidence_ids"] == ["evidence:memory"]
+
+
+def test_tampered_sealed_evidence_bundle_fails_closed() -> None:
+    context = _online_context()
+    context["capability_evidence_bundle"]["entries"][0]["consumer_payload"]["fields"]["summary"] = "tampered"
+    with pytest.raises(ValueError, match="consumer_evidence_bundle_invalid"):
+        build_online_context_package(context)
+
+
+def test_public_builder_requires_payload_records_for_serialization():
+    package = build_planner_consumer_context_package(
+        task_id="t", attempt_id="a", planner_decision_id=DECISION_HASH,
+        planner_plan_hash=PLAN_HASH, task_statement="s",
+        selected_capability_ids=["memory"], materialized_evidence_ids=["ev:1"],
+        consumer_role="online", consumer_channel="online_provider",
+    )
+    assert package["serialized_capability_ids"] == []
+    assert package["serialized_evidence_ids"] == []
+    with pytest.raises(ValueError, match="consumer_payload_record_missing"):
+        build_planner_consumer_context_package(
+            task_id="t", attempt_id="a", planner_decision_id=DECISION_HASH,
+            planner_plan_hash=PLAN_HASH, task_statement="s",
+            selected_capability_ids=["memory"], materialized_evidence_ids=["ev:1"],
+            evidence_bundle_ids=["capability-evidence:x"],
+            serialized_bundle_ids=["capability-evidence:x"],
+            consumer_role="online", consumer_channel="online_provider",
+        )
+
+
+@pytest.mark.parametrize("fields", [[], None, {}])
+def test_public_payload_record_requires_nonempty_mapping_fields(fields):
+    bundle = _sealed_bundle("t", "s")
+    payload = dict(bundle["entries"][0]["consumer_payload"])
+    payload["fields"] = fields
+    with pytest.raises(ValueError, match="consumer_payload_record_invalid"):
+        build_planner_consumer_context_package(
+            task_id="t", attempt_id="a", planner_decision_id=DECISION_HASH,
+            planner_plan_hash=PLAN_HASH, task_statement="s",
+            selected_capability_ids=["memory"], materialized_evidence_ids=["evidence:memory"],
+            consumer_payload_records=[{"capability": "memory", "evidence_ids": ["evidence:memory"], "payload": payload}],
+            consumer_role="online", consumer_channel="online_provider",
+        )
+
+
+def test_online_worker_share_semantic_package_but_distinct_projection_and_payload_survives_json():
+    worker = _worker_request()
+    online = _online_context()
+    online.update({"task_id": "task-1", "attempt_id": "attempt-1", "task_statement": "repair the parser", "online_prompt": "repair the parser"})
+    online["capability_evidence_bundle"] = _sealed_bundle("task-1", "repair the parser")
+    online_package = build_online_context_package(online)
+    worker_package = build_worker_context_package(worker)
+    assert online_package["package_hash"] == worker_package["package_hash"]
+    assert online_package["consumer_projection_hash"] != worker_package["consumer_projection_hash"]
+    for package in (online_package, worker_package):
+        recovered = extract_model_context_from_prompt(
+            append_model_context_to_prompt("repair the parser", package)
+        )
+        assert {r["payload"]["fields"]["summary"] for r in recovered["receipt"]["kept_sources"][1]["metadata"]["consumer_payload_records"]} == {
+            "bounded memory result", "bounded codeintel result"
+        }
+        tampered = dict(recovered)
+        tampered["package_hash"] = "f" * 64
+        assert tampered["package_hash"] != package["package_hash"]
+
+
+@pytest.mark.parametrize("field", ["task_id", "plan_hash", "task_statement_hash"])
+def test_sealed_bundle_foreign_binding_fails_closed(field):
+    context = _online_context()
+    if field == "task_id":
+        context["task_id"] = "foreign"
+    elif field == "plan_hash":
+        context["planner"]["plan_hash"] = "foreign"
+    else:
+        context["task_statement"] = "foreign statement"
+    with pytest.raises(ValueError, match="consumer_evidence_bundle_(task|plan|statement)_mismatch"):
+        build_online_context_package(context)
+
+
+def test_new_process_json_readback_and_tamper_gate():
+    package = build_online_context_package(_online_context())
+    child = """
+import json, sys
+from nexus_runtime.task_context import validate_context_assembly_contract
+payload = json.load(sys.stdin)
+blockers = validate_context_assembly_contract(payload)
+print(json.dumps({'blockers': blockers}, sort_keys=True))
+sys.exit(0 if not blockers else 3)
+"""
+    valid = subprocess.run(
+        [sys.executable, "-c", child], input=json.dumps(package), text=True,
+        capture_output=True, check=False,
+    )
+    assert valid.returncode == 0, valid.stderr
+    assert json.loads(valid.stdout)["blockers"] == []
+    tampered = json.loads(json.dumps(package))
+    tampered["receipt"]["kept_sources"][1]["metadata"]["consumer_payload_records"][0]["payload"]["payload_hash"] = "0" * 64
+    invalid = subprocess.run(
+        [sys.executable, "-c", child], input=json.dumps(tampered), text=True,
+        capture_output=True, check=False,
+    )
+    assert invalid.returncode != 0
+    assert json.loads(invalid.stdout)["blockers"]
 
 
 def test_online_invoker_serializes_same_package_before_existing_adapter() -> None:

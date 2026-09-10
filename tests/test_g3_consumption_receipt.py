@@ -5,6 +5,9 @@ from dataclasses import dataclass
 
 import pytest
 
+from nexus_planning_candidate.services.capability_evidence_bundle import (
+    build_capability_evidence_bundle,
+)
 from nexus_runtime.execution_coordination import ExecutionCoordinator, WorkerOutcome
 from nexus_runtime.task_context import (
     MODEL_CONTEXT_MARKER,
@@ -26,14 +29,31 @@ P = "b" * 64
 B = "c" * 64
 
 
+def sealed_bundle(task="task-1", statement="repair parser"):
+    return build_capability_evidence_bundle(
+        task_id=task, workspace_revision="r" * 40, task_statement=statement,
+        plan_payload={"selected_capabilities": ["memory", "codeintel"]},
+        plan_hash=P, planner_decision_id=D,
+        capability_results={name: {
+            "status": "SUCCEEDED", "invoked": True,
+            "evidence_refs": [f"ev:{name}"],
+            "response": {"consumer_payload": {"fields": {
+                "summary": f"bounded {name} result", "evidence_id": f"ev:{name}"
+            }}},
+        } for name in ("memory", "codeintel")},
+        selected_capabilities=["memory", "codeintel"],
+    )
+
+
 def planner(task="task-1"):
+    bundle = sealed_bundle(task)
     return {
         "decision_hash": D,
         "plan_hash": P,
         "execution_decision": {"authority": "CapabilityPlanner", "task_id": task, "plan_hash": P},
         "plan_payload": {"signal_snapshot": {
             "selected_capabilities": ["memory", "codeintel"],
-            "capability_evidence_bundle": {"bundle_hash": B, "evidence_ids": ["ev:memory", "ev:codeintel"]},
+            "capability_evidence_bundle": bundle,
         }},
     }
 
@@ -53,11 +73,12 @@ def worker_request():
 
 
 def online_context():
+    bundle = sealed_bundle("online-1", "inspect context")
     return {
         "task_id": "online-1", "attempt_id": "attempt-online-1", "task_statement": "inspect context",
         "online_prompt": "inspect context", "planner_decision_id": D,
         "planner": {"plan_hash": P, "signal_snapshot": {"selected_capabilities": ["memory", "codeintel"]}},
-        "capability_evidence_bundle": {"bundle_hash": B, "evidence_ids": ["ev:memory", "ev:codeintel"]},
+        "capability_evidence_bundle": bundle,
         "gateway_invocation_authority": {"gate_passed": True, "resolved_worker_id": "agy_flash",
             "resolved_provider": "agy", "resolved_model": "gemini-3.6-flash-high"},
     }
@@ -89,6 +110,18 @@ def test_injected_online_transport_cannot_mint_physical_truth():
     receipt = build_online_consumption_receipt(package, process_result(), physical_transport=False,
         expected_provider_input_sha256="2" * 64)
     assert receipt["physical_consumption_state"] == PHYSICAL_CONSUMPTION_NOT_PROVEN
+
+
+def test_online_physical_claim_requires_worker_and_model_binding():
+    context = online_context()
+    context.pop("gateway_invocation_authority")
+    package = build_online_context_package(context)
+    receipt = build_online_consumption_receipt(
+        package, process_result(), physical_transport=True,
+        expected_provider_input_sha256="2" * 64,
+    )
+    assert receipt["physical_consumption_state"] == PHYSICAL_CONSUMPTION_NOT_PROVEN
+    assert receipt["proof_basis"] == "ONLINE_WORKER_BINDING_MISSING"
 
 
 def test_online_wrapper_attaches_receipt_to_exact_serialized_package():
