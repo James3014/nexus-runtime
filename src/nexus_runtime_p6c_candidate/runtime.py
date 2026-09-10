@@ -2315,6 +2315,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
         invoke.provider = spec.provider  # type: ignore[attr-defined]
         invoke.online_invoker_provider = spec.provider  # type: ignore[attr-defined]
         invoke.physical_provider_transport = runner is subprocess.run  # type: ignore[attr-defined]
+        invoke._nexus_model_context_wrapped = True  # type: ignore[attr-defined]
         return invoke
 
 
@@ -2482,6 +2483,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
         invoke.provider = key  # type: ignore[attr-defined]
         invoke.online_invoker_provider = key  # type: ignore[attr-defined]
         invoke.physical_provider_transport = True  # type: ignore[attr-defined]
+        invoke._nexus_model_context_wrapped = True  # type: ignore[attr-defined]
         return invoke
 
 
@@ -5054,7 +5056,58 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 and bool(stage.get("gate_passed"))
                 for stage in required_stages
             )
-            outcome_contributed = any(bool(stage.get("outcome_contributed")) for stage in required_stages if isinstance(stage, Mapping))
+            verifier_map = verifier if isinstance(verifier, Mapping) else {}
+            expected_attempt_id = str(
+                (finalized.get("execution_attempt") or {}).get("attempt_id")
+                if isinstance(finalized.get("execution_attempt"), Mapping)
+                else ""
+            )
+            evidence_bundle = finalized.get("capability_evidence_bundle")
+            expected_source_hash = str(
+                (evidence_bundle or {}).get("source_hash")
+                if isinstance(evidence_bundle, Mapping)
+                else (finalized.get("context_trace") or {}).get("source_hash", "")
+            )
+            verifier_response = (
+                verifier_map.get("response")
+                if isinstance(verifier_map.get("response"), Mapping)
+                else verifier_map
+            )
+            verifier_authoritative = bool(
+                verifier_map.get("invoked")
+                and verifier_map.get("evidence_present", bool(verifier_map.get("evidence_refs")))
+                and verifier_map.get("gate_passed")
+                and expected_attempt_id
+                and expected_source_hash
+                and str(verifier_response.get("attempt_id") or verifier_response.get("execution_attempt_id") or "") == expected_attempt_id
+                and str(verifier_response.get("source_hash") or "") == expected_source_hash
+                and str(verifier_response.get("task_id") or "") == str(finalized.get("task_id") or "")
+            )
+            vap_credit = finalized.get("verified_assist", {}).get("credit", {}) if isinstance(finalized.get("verified_assist"), Mapping) else {}
+            finalized_local = finalized.get("local") if isinstance(finalized.get("local"), Mapping) else {}
+            finalized_local_response = finalized_local.get("response") if isinstance(finalized_local.get("response"), Mapping) else {}
+            local_vap_required = bool(
+                finalized_local.get("invoked")
+                and (
+                    finalized_local.get("verified_assist_packet_expected_hash")
+                    or finalized_local.get("verified_assist_packet_id")
+                    or finalized_local_response.get("consume_verified_assist")
+                    or isinstance(finalized_local_response.get("verified_assist_packet"), Mapping)
+                )
+            )
+            physical_contribution = bool(vap_credit.get("assist_credited")) if local_vap_required else True
+            outcome_contributed = (
+                any(bool(stage.get("outcome_contributed")) for stage in required_stages if isinstance(stage, Mapping))
+                and verifier_authoritative
+                and physical_contribution
+            )
+            if isinstance(finalized.get("local"), Mapping):
+                finalized_local = dict(finalized["local"])
+                finalized_local["outcome_contributed"] = outcome_contributed
+                trace = dict(finalized_local.get("substitution_trace") or {})
+                trace["final_outcome_contributed"] = outcome_contributed
+                finalized_local["substitution_trace"] = trace
+                finalized["local"] = finalized_local
             bindings = finalized.get("effect_journal_bindings")
             if isinstance(bindings, list) and bindings:
                 if effect_journal is None:

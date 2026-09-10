@@ -125,6 +125,7 @@ def _ensure_selected_coverage_invokers(
 def build_runtime_exports(
     *, policy_path: str | Path | None = None,
     default_capability_invokers: Mapping[str, Any] | None = None,
+    planner_factory: Any = None,
     advisory_route_from_local_response: Any = None,
     hybrid_route_decision_from_payload: Any = None,
     memory_retrieval_builder: Any = None,
@@ -159,7 +160,7 @@ def build_runtime_exports(
     bindings = {
         "CanonicalPlanningBundle": CanonicalPlanningBundle,
         "CanonicalTaskContext": CanonicalTaskContext,
-        "CapabilityPlanner": CapabilityPlanner,
+        "CapabilityPlanner": planner_factory if planner_factory is not None else CapabilityPlanner,
         "EXECUTION_DEPTH_FULL": EXECUTION_DEPTH_FULL,
         "EXECUTION_DEPTH_LIGHT": EXECUTION_DEPTH_LIGHT,
         "EXECUTION_DEPTH_STANDARD": EXECUTION_DEPTH_STANDARD,
