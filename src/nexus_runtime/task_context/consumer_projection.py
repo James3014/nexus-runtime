@@ -282,23 +282,65 @@ def append_model_context_to_prompt(prompt: str, package: Mapping[str, Any]) -> s
     return f"{base}\n\n{MODEL_CONTEXT_MARKER}\n{serialize_model_context_package(package)}"
 
 
+def extract_model_context_from_prompt(prompt: str) -> dict[str, Any]:
+    """Recover exactly one serialized model-context package from a prompt."""
+
+    text = str(prompt or "")
+    marker = MODEL_CONTEXT_MARKER + "\n"
+    if text.count(marker) != 1:
+        raise ValueError("model_context_package_marker_invalid")
+    _, serialized = text.split(marker, 1)
+    try:
+        payload = json.loads(serialized)
+    except json.JSONDecodeError as exc:
+        raise ValueError("model_context_package_serialization_invalid") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("model_context_package_serialization_invalid")
+    return payload
+
+
 def wrap_online_invoker(
     invoker: Callable[[Mapping[str, Any]], Mapping[str, Any]],
 ) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
-    """Serialize the common package before the existing Online provider adapter."""
+    """Serialize and bind the common package before the existing Online adapter."""
 
     if getattr(invoker, "_nexus_model_context_wrapped", False):
         return invoker
 
     def wrapped(context: Mapping[str, Any]) -> Mapping[str, Any]:
+        from .consumption import build_online_consumption_receipt
+
         projected = dict(context)
         package = build_online_context_package(projected)
+        binding = _mapping(package.get("worker_binding"))
+        expected_provider = str(binding.get("provider") or "").strip()
+        actual_provider = str(
+            getattr(invoker, "online_invoker_provider", "")
+            or getattr(invoker, "provider", "")
+            or ""
+        ).strip()
+        if expected_provider and actual_provider and expected_provider != actual_provider:
+            raise ValueError("online_consumption_provider_substitution")
+
         projected["model_context_package"] = package
         projected["online_prompt"] = append_model_context_to_prompt(
             str(projected.get("online_prompt") or projected.get("task_statement") or ""),
             package,
         )
-        return invoker(projected)
+        if extract_model_context_from_prompt(projected["online_prompt"]) != package:
+            raise ValueError("online_consumption_package_substitution")
+        result = invoker(projected)
+        if not isinstance(result, Mapping):
+            raise ValueError("online_consumption_result_invalid")
+        payload = dict(result)
+        payload["model_context_consumption"] = build_online_consumption_receipt(
+            package,
+            payload,
+            physical_transport=bool(
+                getattr(invoker, "physical_provider_transport", False)
+            ),
+        )
+        return payload
 
     wrapped.__dict__.update(getattr(invoker, "__dict__", {}))
     wrapped._nexus_model_context_wrapped = True  # type: ignore[attr-defined]
