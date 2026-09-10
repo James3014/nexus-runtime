@@ -14,8 +14,10 @@ from __future__ import annotations
 import hashlib
 import json
 import statistics
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping, Sequence
+
+from nexus_runtime_support_candidate.contracts.canonical_execution import validate_canonical_execution_identity
 
 PACKET_SCHEMA = "nexus.verified_assist_packet.v1"
 CONSUMPTION_SCHEMA = "nexus.verified_assist_consumption.v1"
@@ -43,6 +45,7 @@ _ALLOWED_INJECTION_FIELDS = (
     "packet_role",
     "producer",
 )
+_LIVE_CONSUMPTION_MINT = object()
 
 # Pre-registered KEEP efficiency gates (no post-hoc metric shopping).
 PRIMARY_METRIC = "online_input_tokens"
@@ -68,6 +71,11 @@ def _stable_hash(payload: Mapping[str, Any] | Sequence[Any] | str) -> str:
     else:
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _is_sha256_text(value: Any) -> bool:
+    text = str(value or "").strip()
+    return len(text) == 64 and all(char in "0123456789abcdef" for char in text)
 
 
 def _cap_text(value: Any, limit: int = 800) -> str:
@@ -233,6 +241,10 @@ class VerifiedAssistPacket:
     treatment_run_id: str = ""
     planner_decision_id: str = ""
     task_contract_hash: str = ""
+    canonical_execution: dict[str, Any] = field(default_factory=dict)
+    execution_attempt: dict[str, Any] = field(default_factory=dict)
+    source_hash: str = ""
+    execution_world: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -273,6 +285,10 @@ def build_verified_assist_packet(
     verifier_evidence: str = "",
     producer_verification: ProducerVerification | Mapping[str, Any] | None = None,
     packet_id: str = "",
+    canonical_execution: Mapping[str, Any] | None = None,
+    execution_attempt: Mapping[str, Any] | None = None,
+    source_hash: str = "",
+    execution_world: str = "",
 ) -> VerifiedAssistPacket:
     """Build a packet with deterministic packet_hash over content fields."""
     prod = str(producer or "local_armor").strip().lower()
@@ -305,6 +321,10 @@ def build_verified_assist_packet(
         "treatment_run_id": str(treatment_run_id or "").strip(),
         "planner_decision_id": str(planner_decision_id or "").strip(),
         "task_contract_hash": str(task_contract_hash or "").strip(),
+        "canonical_execution": dict(canonical_execution or {}),
+        "execution_attempt": dict(execution_attempt or {}),
+        "source_hash": str(source_hash or "").strip(),
+        "execution_world": str(execution_world or "").strip(),
     }
     if not content["task_id"]:
         raise ValueError("verified_assist_packet_requires_task_id")
@@ -326,7 +346,149 @@ def build_verified_assist_packet(
         treatment_run_id=content["treatment_run_id"],
         planner_decision_id=content["planner_decision_id"],
         task_contract_hash=content["task_contract_hash"],
+        canonical_execution=content["canonical_execution"],
+        execution_attempt=content["execution_attempt"],
+        source_hash=content["source_hash"],
+        execution_world=content["execution_world"],
     )
+
+
+def _rebuild_verified_assist_packet(data: Mapping[str, Any]) -> VerifiedAssistPacket:
+    producer_verification = data.get("producer_verification")
+    return build_verified_assist_packet(
+        task_id=str(data.get("task_id") or ""),
+        treatment_run_id=str(data.get("treatment_run_id") or ""),
+        planner_decision_id=str(data.get("planner_decision_id") or ""),
+        task_contract_hash=str(data.get("task_contract_hash") or ""),
+        producer=str(data.get("producer") or "local_armor"),
+        reproduction_evidence=str(data.get("reproduction_evidence") or ""),
+        target_files=tuple(data.get("target_files") or ()),
+        exact_spans=tuple(data.get("exact_spans") or ()),
+        semantic_assertions=tuple(data.get("semantic_assertions") or ()),
+        failure_class=str(data.get("failure_class") or ""),
+        bounded_diagnosis=str(data.get("bounded_diagnosis") or ""),
+        verifier_evidence=str(data.get("verifier_evidence") or ""),
+        producer_verification=(
+            producer_verification if isinstance(producer_verification, Mapping) else None
+        ),
+        packet_id=str(data.get("packet_id") or ""),
+        canonical_execution=(
+            data.get("canonical_execution")
+            if isinstance(data.get("canonical_execution"), Mapping)
+            else None
+        ),
+        execution_attempt=(
+            data.get("execution_attempt")
+            if isinstance(data.get("execution_attempt"), Mapping)
+            else None
+        ),
+        source_hash=str(data.get("source_hash") or ""),
+        execution_world=str(data.get("execution_world") or ""),
+    )
+
+
+def validate_verified_assist_packet_integrity(
+    packet: VerifiedAssistPacket | Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Rebuild one complete VAP and return its canonical bound identity."""
+    if packet is None:
+        return {"ok": False, "reason": "packet_missing"}
+    data = packet.to_dict() if isinstance(packet, VerifiedAssistPacket) else dict(packet)
+    declared_task = str(data.get("task_id") or "").strip()
+    declared_hash = str(data.get("packet_hash") or "").strip()
+    declared_id = str(data.get("packet_id") or "").strip()
+    if data.get("schema_version") != PACKET_SCHEMA:
+        return {"ok": False, "reason": "packet_schema_version_invalid"}
+    if data.get("packet_role") != PACKET_ROLE:
+        return {"ok": False, "reason": "packet_role_invalid"}
+    if not declared_task:
+        return {"ok": False, "reason": "packet_task_id_missing"}
+    if not declared_hash:
+        return {"ok": False, "reason": "packet_hash_missing"}
+    if not declared_id:
+        return {"ok": False, "reason": "packet_id_missing"}
+    try:
+        rebuilt = _rebuild_verified_assist_packet(data)
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "packet_integrity_invalid"}
+    if declared_hash != rebuilt.packet_hash:
+        return {"ok": False, "reason": "packet_hash_mismatch"}
+    if declared_id != rebuilt.packet_id:
+        return {"ok": False, "reason": "packet_id_mismatch"}
+    canonical = rebuilt.to_dict()
+    missing_fields = sorted(key for key in canonical if key not in data)
+    if missing_fields:
+        return {
+            "ok": False,
+            "reason": f"packet_canonical_field_missing:{missing_fields[0]}",
+        }
+    for key in sorted(canonical):
+        if data.get(key) != canonical[key]:
+            return {
+                "ok": False,
+                "reason": f"packet_canonical_field_mismatch:{key}",
+            }
+    return {
+        "ok": True,
+        "reason": "packet_integrity_verified",
+        "task_id": rebuilt.task_id,
+        "packet_hash": rebuilt.packet_hash,
+        "packet_id": rebuilt.packet_id,
+        "canonical_packet": rebuilt,
+    }
+
+
+def validate_vap_runtime_binding(
+    packet: VerifiedAssistPacket | Mapping[str, Any] | None,
+    *,
+    task_id: str,
+    canonical_execution: Mapping[str, Any] | None,
+    execution_attempt: Mapping[str, Any] | None,
+    source_hash: str,
+    execution_world: str,
+) -> dict[str, Any]:
+    """Validate a VAP against runtime-owned identity before Online use."""
+    data = packet.to_dict() if isinstance(packet, VerifiedAssistPacket) else dict(packet or {})
+    runtime_task_id = str(task_id or "").strip()
+    runtime_canonical = dict(canonical_execution or {})
+    runtime_attempt = dict(execution_attempt or {})
+    runtime_source_hash = str(source_hash or "").strip()
+    runtime_execution_world = str(execution_world or "").strip()
+    if not runtime_task_id:
+        return {"ok": False, "reason": "task_id_missing"}
+    if not runtime_canonical:
+        return {"ok": False, "reason": "canonical_execution_missing"}
+    try:
+        validate_canonical_execution_identity(runtime_canonical)
+    except ValueError:
+        return {"ok": False, "reason": "canonical_execution_invalid"}
+    if str(runtime_canonical.get("task_id") or "").strip() != runtime_task_id:
+        return {"ok": False, "reason": "runtime_task_canonical_mismatch"}
+    if not str(runtime_attempt.get("attempt_id") or "").strip():
+        return {"ok": False, "reason": "execution_attempt_missing"}
+    if not runtime_source_hash:
+        return {"ok": False, "reason": "source_hash_missing"}
+    if not runtime_execution_world:
+        return {"ok": False, "reason": "execution_world_missing"}
+    if (
+        str(runtime_canonical.get("execution_world") or "").strip()
+        != runtime_execution_world
+    ):
+        return {"ok": False, "reason": "runtime_world_canonical_mismatch"}
+    if str(data.get("task_id") or "") != runtime_task_id:
+        return {"ok": False, "reason": "task_id_mismatch"}
+    if dict(data.get("canonical_execution") or {}) != runtime_canonical:
+        return {"ok": False, "reason": "canonical_execution_mismatch"}
+    if dict(data.get("execution_attempt") or {}) != runtime_attempt:
+        return {"ok": False, "reason": "execution_attempt_mismatch"}
+    if str(data.get("source_hash") or "") != runtime_source_hash:
+        return {"ok": False, "reason": "source_hash_mismatch"}
+    if str(data.get("execution_world") or "") != runtime_execution_world:
+        return {"ok": False, "reason": "execution_world_mismatch"}
+    packet_integrity = validate_verified_assist_packet_integrity(data)
+    if packet_integrity.get("ok") is not True:
+        return {"ok": False, "reason": str(packet_integrity.get("reason") or "packet_integrity_invalid")}
+    return {"ok": True, "reason": "runtime_binding_verified"}
 
 
 def packet_is_substantive(packet: VerifiedAssistPacket | Mapping[str, Any] | None) -> bool:
@@ -353,6 +515,10 @@ def build_vap_from_local_receipt(
     treatment_run_id: str = "",
     codeintel_hash: str = "",
     plan_hash: str = "",
+    canonical_execution: Mapping[str, Any] | None = None,
+    execution_attempt: Mapping[str, Any] | None = None,
+    source_hash: str = "",
+    execution_world: str = "",
 ) -> VerifiedAssistPacket | None:
     """Build VerifiedAssistPacket from a real LocalAssist/Local stage receipt.
 
@@ -360,6 +526,24 @@ def build_vap_from_local_receipt(
     LocalAssistService response (or UnifiedRuntime local stage ``response``).
     Returns None when Local did not produce enough structure for a substantive packet.
     """
+    canonical_identity = dict(canonical_execution or {})
+    attempt_identity = dict(execution_attempt or {})
+    if (
+        not canonical_identity
+        or not str(attempt_identity.get("attempt_id") or "").strip()
+        or not str(source_hash or "").strip()
+        or not str(execution_world or "").strip()
+    ):
+        return None
+    try:
+        validate_canonical_execution_identity(canonical_identity)
+    except ValueError:
+        return None
+    if (
+        str(canonical_identity.get("execution_world") or "").strip()
+        != str(execution_world or "").strip()
+    ):
+        return None
     if not isinstance(local_response, Mapping):
         return None
     # Accept either LocalAssistResponse dict or UnifiedRuntime local stage.
@@ -373,6 +557,8 @@ def build_vap_from_local_receipt(
 
     task_id = str(response.get("task_id") or local_response.get("task_id") or "").strip()
     if not task_id:
+        return None
+    if str(canonical_identity.get("task_id") or "").strip() != task_id:
         return None
 
     action = str(response.get("action") or "").strip().lower()
@@ -486,6 +672,10 @@ def build_vap_from_local_receipt(
             bounded_diagnosis=concise[:400],
             verifier_evidence=f"verifier_status={verifier_status}",
             producer_verification=producer_verification,
+        canonical_execution=canonical_identity,
+        execution_attempt=attempt_identity,
+            source_hash=source_hash,
+            execution_world=execution_world,
         )
     except ValueError:
         return None
@@ -519,11 +709,50 @@ class ConsumptionRecord:
     final_prompt_hash: str = ""
     hash_verified: bool = False
     packet_hash_verified: bool = False
+    _mint_provenance: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
+        d.pop("_mint_provenance", None)
         d["allowed_fields"] = list(self.allowed_fields)
         return d
+
+    def __copy__(self) -> ConsumptionRecord:
+        return _restore_consumption_record(self.to_dict())
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> ConsumptionRecord:
+        del memo
+        return _restore_consumption_record(self.to_dict())
+
+    def __reduce__(self) -> tuple[Any, tuple[dict[str, Any]]]:
+        return (_restore_consumption_record, (self.to_dict(),))
+
+
+def _restore_consumption_record(data: Mapping[str, Any]) -> ConsumptionRecord:
+    raw = dict(data)
+    raw["allowed_fields"] = tuple(raw.get("allowed_fields") or ())
+    return ConsumptionRecord(**raw)
+
+
+def _bind_live_consumption_mint(record: ConsumptionRecord) -> ConsumptionRecord:
+    binding = (_LIVE_CONSUMPTION_MINT, _stable_hash(record.to_dict()))
+    object.__setattr__(record, "_mint_provenance", binding)
+    return record
+
+
+def _has_valid_live_consumption_mint(record: ConsumptionRecord) -> bool:
+    binding = record._mint_provenance
+    return bool(
+        isinstance(binding, tuple)
+        and len(binding) == 2
+        and binding[0] is _LIVE_CONSUMPTION_MINT
+        and binding[1] == _stable_hash(record.to_dict())
+    )
 
 
 def record_packet_consumption(
@@ -536,7 +765,7 @@ def record_packet_consumption(
     final_prompt: str = "",
     injection_slot: str = "local_assist_context",
 ) -> ConsumptionRecord:
-    """Fail-closed physical consumption attribution for a VerifiedAssistPacket."""
+    """Build a projection record; this public path never mints product credit."""
     stage = str(consumed_by_stage or "").strip()
     empty = ConsumptionRecord(
         schema=CONSUMPTION_SCHEMA,
@@ -592,20 +821,29 @@ def record_packet_consumption(
     if stage and stage not in _CONSUMER_STAGE_WHITELIST:
         return _fail("blocked", "consumer_stage_not_whitelisted")
 
+    packet_integrity = validate_verified_assist_packet_integrity(data)
+    if packet_integrity.get("ok") is not True:
+        return _fail(
+            "blocked",
+            str(packet_integrity.get("reason") or "packet_integrity_invalid"),
+        )
+    rebuilt = packet_integrity.get("canonical_packet")
+    if not isinstance(rebuilt, VerifiedAssistPacket):
+        return _fail("blocked", "packet_integrity_invalid")
     fragment = str(injected_prompt_fragment or "")
-    hash_ref = packet_hash[:16] if packet_hash else ""
-    if not fragment or (hash_ref and hash_ref not in fragment and packet_hash not in fragment):
-        return _fail("not_consumed", "packet_hash_not_in_injection")
+    canonical_fragment = rebuilt.compact_injection()
+    if fragment != canonical_fragment:
+        return _fail("not_consumed", "injection_fragment_mismatch")
 
     if not stage:
         return _fail("not_consumed", "missing_consumed_by_stage")
 
+    if not final_prompt:
+        return _fail("not_consumed", "missing_final_prompt")
+
     fragment_hash = hashlib.sha256(fragment.encode("utf-8")).hexdigest()
-    final_hash = (
-        hashlib.sha256(str(final_prompt).encode("utf-8")).hexdigest() if final_prompt else fragment_hash
-    )
-    # If full prompt provided, fragment must be contained (physical injection).
-    if final_prompt and fragment not in final_prompt and hash_ref not in final_prompt:
+    final_hash = hashlib.sha256(str(final_prompt).encode("utf-8")).hexdigest()
+    if canonical_fragment not in final_prompt:
         return _fail("not_consumed", "fragment_not_in_final_prompt")
 
     proof = compute_consumption_proof(
@@ -625,7 +863,7 @@ def record_packet_consumption(
         consumed_by_stage=stage,
         consumption_proof=proof,
         reason="consumed",
-        assist_credit_allowed=True,
+        assist_credit_allowed=False,
         consumer_stage=stage,
         injection_slot=injection_slot,
         allowed_fields=tuple(_ALLOWED_INJECTION_FIELDS),
@@ -634,6 +872,56 @@ def record_packet_consumption(
         final_prompt_hash=final_hash,
         hash_verified=True,
         packet_hash_verified=True,
+    )
+
+
+def _mint_packet_consumption(
+    packet: VerifiedAssistPacket | Mapping[str, Any],
+    *,
+    runtime_task_id: str,
+    runtime_canonical_execution: Mapping[str, Any],
+    runtime_execution_attempt: Mapping[str, Any],
+    runtime_source_hash: str,
+    runtime_execution_world: str,
+    consumed_by_stage: str = "online_prompt_assembly",
+    injected_prompt_fragment: str = "",
+    expected_packet_hash: str = "",
+    final_prompt: str = "",
+    injection_slot: str = "local_assist_context",
+) -> ConsumptionRecord:
+    """Mint product credit only after canonical runtime and prompt revalidation."""
+    record = record_packet_consumption(
+        packet,
+        consumed_by_stage=consumed_by_stage,
+        injected_prompt_fragment=injected_prompt_fragment,
+        expected_packet_hash=expected_packet_hash,
+        final_prompt=final_prompt,
+        injection_slot=injection_slot,
+    )
+    if record.consumption_status != "consumed":
+        return record
+    binding = validate_vap_runtime_binding(
+        packet,
+        task_id=runtime_task_id,
+        canonical_execution=runtime_canonical_execution,
+        execution_attempt=runtime_execution_attempt,
+        source_hash=runtime_source_hash,
+        execution_world=runtime_execution_world,
+    )
+    if binding.get("ok") is not True:
+        return replace(
+            record,
+            consumption_status="blocked",
+            consumption_proof="",
+            reason=f"runtime_binding_invalid:{binding.get('reason')}",
+            assist_credit_allowed=False,
+            assembled_fragment_hash="",
+            final_prompt_hash="",
+            hash_verified=False,
+            packet_hash_verified=False,
+        )
+    return _bind_live_consumption_mint(
+        replace(record, assist_credit_allowed=True)
     )
 
 
@@ -674,10 +962,17 @@ def verify_consumption_proof(consumption: ConsumptionRecord | Mapping[str, Any] 
     frag = str(data.get("assembled_fragment_hash") or "").strip()
     final_h = str(data.get("final_prompt_hash") or "").strip()
     given = str(data.get("consumption_proof") or "").strip()
-    if not packet_hash or not stage or not frag or not final_h or not fields_hash:
+    if not packet_hash or not packet_id or not stage or not frag or not final_h or not fields_hash:
         return {
             "ok": False,
             "reason": "missing_physical_fields_for_proof",
+            "expected_proof": "",
+            "given_proof": given,
+        }
+    if not _is_sha256_text(packet_hash):
+        return {
+            "ok": False,
+            "reason": "packet_hash_not_sha256",
             "expected_proof": "",
             "given_proof": given,
         }
@@ -712,6 +1007,46 @@ def verify_consumption_proof(consumption: ConsumptionRecord | Mapping[str, Any] 
     }
 
 
+def verify_consumption_projection(
+    consumption: ConsumptionRecord | Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Verify serialized proof consistency without minting product credit."""
+    if consumption is None:
+        return {
+            "projection_verified": False,
+            "measurement_consumption_eligible": False,
+            "reason": "no_consumption_projection",
+            "product_credit_allowed": False,
+        }
+    data = consumption.to_dict() if isinstance(consumption, ConsumptionRecord) else dict(consumption)
+    if str(data.get("schema") or "") != CONSUMPTION_SCHEMA:
+        return {
+            "projection_verified": False,
+            "measurement_consumption_eligible": False,
+            "reason": "consumption_projection_schema_invalid",
+            "product_credit_allowed": False,
+        }
+    status = str(data.get("consumption_status") or "")
+    proof_check = verify_consumption_proof(data)
+    verified = status == "consumed" and proof_check.get("ok") is True
+    return {
+        "projection_verified": verified,
+        "measurement_consumption_eligible": verified,
+        "reason": "projection_verified" if verified else (
+            f"projection_denied:{proof_check.get('reason')}"
+            if status == "consumed"
+            else f"projection_denied:{status or 'missing'}"
+        ),
+        "packet_hash": str(data.get("packet_hash") or "").strip(),
+        "packet_id": str(data.get("packet_id") or "").strip(),
+        "consumption_proof": str(data.get("consumption_proof") or "") if verified else "",
+        "product_credit_allowed": False,
+        "physical_proof_ok": False,
+        "assist_credited": False,
+        "proof_verification": proof_check,
+    }
+
+
 def evaluate_assist_credit(consumption: ConsumptionRecord | Mapping[str, Any] | None) -> dict[str, Any]:
     """Assist credited only when status=consumed AND consumption_proof re-verifies.
 
@@ -724,7 +1059,26 @@ def evaluate_assist_credit(consumption: ConsumptionRecord | Mapping[str, Any] | 
             "public_claim_allowed": False,
             "physical_proof_ok": False,
         }
-    data = consumption.to_dict() if isinstance(consumption, ConsumptionRecord) else dict(consumption)
+    if (
+        not isinstance(consumption, ConsumptionRecord)
+        or not _has_valid_live_consumption_mint(consumption)
+    ):
+        data = (
+            consumption.to_dict()
+            if isinstance(consumption, ConsumptionRecord)
+            else dict(consumption)
+        )
+        return {
+            "assist_credited": False,
+            "reason": "live_consumption_mint_required",
+            "packet_hash": str(data.get("packet_hash") or "").strip(),
+            "consumption_status": str(data.get("consumption_status") or ""),
+            "consumption_proof": "",
+            "public_claim_allowed": False,
+            "physical_proof_ok": False,
+            "proof_verification": verify_consumption_proof(data),
+        }
+    data = consumption.to_dict()
     status = str(data.get("consumption_status") or "")
     packet_hash = str(data.get("packet_hash") or "").strip()
     proof_check = verify_consumption_proof(data)
@@ -749,6 +1103,11 @@ def attach_verified_assist_to_forward(
     consume: bool = True,
     consumed_by_stage: str = "online_prompt_assembly",
     final_prompt: str = "",
+    runtime_task_id: str = "",
+    runtime_canonical_execution: Mapping[str, Any] | None = None,
+    runtime_execution_attempt: Mapping[str, Any] | None = None,
+    runtime_source_hash: str = "",
+    runtime_execution_world: str = "",
 ) -> dict[str, Any]:
     """Attach packet to an existing online-safe forward payload (no new route)."""
     base = dict(online_safe_forward or {})
@@ -770,24 +1129,16 @@ def attach_verified_assist_to_forward(
     pkt = packet if isinstance(packet, VerifiedAssistPacket) else None
     if pkt is None:
         try:
-            raw = dict(packet)
-            pv = raw.get("producer_verification")
-            pkt = build_verified_assist_packet(
-                task_id=str(raw.get("task_id") or forward.get("task_id") or "unknown"),
-                treatment_run_id=str(raw.get("treatment_run_id") or ""),
-                planner_decision_id=str(raw.get("planner_decision_id") or ""),
-                task_contract_hash=str(raw.get("task_contract_hash") or ""),
-                producer=str(raw.get("producer") or "local_armor"),
-                reproduction_evidence=str(raw.get("reproduction_evidence") or ""),
-                target_files=tuple(raw.get("target_files") or ()),
-                exact_spans=tuple(raw.get("exact_spans") or ()),
-                semantic_assertions=tuple(raw.get("semantic_assertions") or ()),
-                failure_class=str(raw.get("failure_class") or ""),
-                bounded_diagnosis=str(raw.get("bounded_diagnosis") or ""),
-                verifier_evidence=str(raw.get("verifier_evidence") or ""),
-                producer_verification=pv if isinstance(pv, Mapping) else None,
-                packet_id=str(raw.get("packet_id") or ""),
-            )
+            if not isinstance(packet, Mapping):
+                raise TypeError("packet_mapping_required")
+            raw: dict[str, Any] = dict(packet)
+            raw.setdefault("task_id", str(forward.get("task_id") or "unknown"))
+            declared_packet_hash = str(raw.get("packet_hash") or "").strip()
+            if not declared_packet_hash:
+                raise ValueError("packet_hash_required")
+            pkt = _rebuild_verified_assist_packet(raw)
+            if declared_packet_hash != pkt.packet_hash:
+                raise ValueError("packet_hash_mismatch")
         except (TypeError, ValueError):
             consumption = record_packet_consumption(None)
             credit = evaluate_assist_credit(consumption)
@@ -801,7 +1152,6 @@ def attach_verified_assist_to_forward(
                 "public_claim_allowed": False,
             }
 
-    summary = pkt.online_safe_summary()
     injection = ""
     if consume:
         # Compact injection — full packet_hash retained for physical proof binding.
@@ -811,16 +1161,29 @@ def attach_verified_assist_to_forward(
         forward["concise_summary"] = (prior + ";" + tag).strip(";")[:200]
         forward["verified_assist_packet_hash"] = pkt.packet_hash
         forward["verified_assist_packet_id"] = pkt.packet_id
-        full_prompt = final_prompt or injection
-        if final_prompt and injection not in final_prompt:
-            full_prompt = str(final_prompt) + "\n" + injection
-        consumption = record_packet_consumption(
-            pkt,
-            consumed_by_stage=consumed_by_stage,
-            injected_prompt_fragment=injection,
-            expected_packet_hash=pkt.packet_hash,
-            final_prompt=full_prompt,
-        )
+        observed_prompt = str(final_prompt or "")
+        if injection and observed_prompt and injection in observed_prompt:
+            consumption = _mint_packet_consumption(
+                pkt,
+                runtime_task_id=runtime_task_id,
+                runtime_canonical_execution=dict(runtime_canonical_execution or {}),
+                runtime_execution_attempt=dict(runtime_execution_attempt or {}),
+                runtime_source_hash=runtime_source_hash,
+                runtime_execution_world=runtime_execution_world,
+                consumed_by_stage=consumed_by_stage,
+                injected_prompt_fragment=injection,
+                expected_packet_hash=pkt.packet_hash,
+                final_prompt=observed_prompt,
+            )
+        else:
+            # Missing provider-input evidence is not repaired after the fact.
+            consumption = record_packet_consumption(
+                pkt,
+                consumed_by_stage=consumed_by_stage,
+                injected_prompt_fragment="",
+                expected_packet_hash=pkt.packet_hash,
+                final_prompt=observed_prompt,
+            )
     else:
         consumption = record_packet_consumption(
             pkt,
