@@ -23,15 +23,7 @@ jobs:
       - name: Check out runtime
         uses: actions/checkout@v4
         with:
-          persist-credentials: false
-
-      - name: Check out frozen context donor
-        uses: actions/checkout@v4
-        with:
-          repository: James3014/Nexus-new
-          ref: 471a281badda342ccab26606e0c46cbca6867cbb
-          path: .ci/context-donor
-          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Check out canonical Learning owner
@@ -48,6 +40,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install pinned test dependencies and canonical Learning
         run: |
@@ -65,11 +58,53 @@ jobs:
           python -m pip wheel --no-deps --wheel-dir .ci/wheel .
           python -m pip install --no-deps --force-reinstall .ci/wheel/nexus_runtime-*.whl
 
+      - name: Record runtime identity
+        run: |
+          set -euo pipefail
+          expected_head='${{ github.event.pull_request.head.sha || github.sha }}'
+          actual_head=$(git rev-parse HEAD)
+          actual_tree=$(git rev-parse HEAD^{tree})
+          test "$actual_head" = "$expected_head"
+          python - <<'PY'
+          import pathlib
+          import sys
+
+          import nexus_runtime
+
+          print(f"runtime_head={pathlib.Path('.git/HEAD').read_text().strip()}")
+          print(f"runtime_module={nexus_runtime.__file__}")
+          print(f"python={sys.version}")
+          PY
+          echo "runtime_head=$actual_head"
+          echo "runtime_tree=$actual_tree"
+
       - name: Provision frozen donor locator
         run: |
-          sudo mkdir -p /private/tmp/astra-production-integrated-20260909
-          sudo cp -a .ci/context-donor/. /private/tmp/astra-production-integrated-20260909/
-          test "$(git -C /private/tmp/astra-production-integrated-20260909 rev-parse HEAD)" = "471a281badda342ccab26606e0c46cbca6867cbb"
+          set -euo pipefail
+          donor_sha=471a281badda342ccab26606e0c46cbca6867cbb
+          donor_repo="$RUNNER_TEMP/nexus-new-donor.git"
+          donor_stage="$RUNNER_TEMP/nexus-new-donor-export"
+          donor_locator=/private/tmp/astra-production-integrated-20260909
+          test ! -e "$donor_repo"
+          test ! -e "$donor_stage"
+          test ! -e "$donor_locator"
+          git init --bare "$donor_repo"
+          git -C "$donor_repo" fetch --no-tags --depth=1 \
+            https://github.com/James3014/Nexus-new.git "$donor_sha"
+          test "$(git --git-dir="$donor_repo" rev-parse "$donor_sha^{commit}")" = "$donor_sha"
+          donor_tree=$(git --git-dir="$donor_repo" rev-parse "$donor_sha^{tree}")
+          mkdir -p "$donor_stage"
+          git --git-dir="$donor_repo" archive "$donor_sha" | tar -x -C "$donor_stage"
+          sudo mkdir -p "$donor_locator"
+          sudo cp -a "$donor_stage/." "$donor_locator/"
+          sudo git -C "$donor_locator" init -q
+          sudo mkdir -p "$donor_locator/.git/objects/info"
+          echo "$donor_repo/objects" | sudo tee "$donor_locator/.git/objects/info/alternates" >/dev/null
+          sudo git -C "$donor_locator" update-ref refs/heads/frozen-donor "$donor_sha"
+          sudo git -C "$donor_locator" symbolic-ref HEAD refs/heads/frozen-donor
+          sudo git -C "$donor_locator" read-tree "$donor_sha"
+          test "$(sudo git -C "$donor_locator" rev-parse HEAD)" = "$donor_sha"
+          test "$(sudo git -C "$donor_locator" rev-parse HEAD^{tree})" = "$donor_tree"
 
       - name: Run full installed-package suite
         run: |
