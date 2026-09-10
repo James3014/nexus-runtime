@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
@@ -7,7 +8,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .budget import build_context_budget_receipt, validate_context_budget_receipt
-from .source_materialization import NO_SOURCE, validate_source_materialization_projection
+from .source_materialization import (
+    NO_SOURCE,
+    validate_source_materialization_projection,
+)
 
 CONTEXT_ASSEMBLY_CONTRACT_SCHEMA = "nexus.context_assembly_contract.v1"
 
@@ -230,6 +234,124 @@ def build_context_assembly_contract(
         consumer_channel=consumer_channel,
         worker_binding=dict(worker_binding or {}),
     ).to_dict()
+
+
+def project_context_for_consumer(
+    semantic_package: Mapping[str, Any],
+    *,
+    serialized_capability_ids: Sequence[str] = (),
+    serialized_evidence_ids: Sequence[str] = (),
+    serialized_bundle_ids: Sequence[str] = (),
+    serialized_source_materialization_hash: str = "",
+    consumer_role: str,
+    consumer_channel: str,
+    worker_binding: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Bind one validated semantic package to supplied consumer identity.
+
+    The semantic package is copied through a strict JSON round trip before it
+    is validated or projected.  Consumers therefore cannot mutate the source
+    package, and this operation cannot select capabilities or invent material.
+    """
+    try:
+        snapshot = _strict_json_snapshot(semantic_package)
+        blockers = validate_context_assembly_contract(snapshot)
+    except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid_semantic_context_package:{exc}") from exc
+    if blockers:
+        raise ValueError(f"invalid_semantic_context_package:{','.join(blockers)}")
+
+    if any(
+        snapshot.get(key)
+        for key in (
+            "serialized_capability_ids",
+            "serialized_evidence_ids",
+            "serialized_bundle_ids",
+            "serialized_source_materialization_hash",
+            "consumer_role",
+            "consumer_channel",
+            "worker_binding",
+        )
+    ):
+        raise ValueError("semantic_context_package_already_projected")
+
+    semantic_contract = ContextAssemblyContract(
+        task_id=snapshot["task_id"],
+        receipt=snapshot["receipt"],
+        context_policy=snapshot["context_policy"],
+        schema=snapshot["schema"],
+        attempt_id=snapshot["attempt_id"],
+        planner_decision_id=snapshot["planner_decision_id"],
+        planner_plan_hash=snapshot["planner_plan_hash"],
+        selected_capability_ids=tuple(snapshot["selected_capability_ids"]),
+        materialized_evidence_ids=tuple(snapshot["materialized_evidence_ids"]),
+        evidence_bundle_ids=tuple(snapshot["evidence_bundle_ids"]),
+        source_materialization=snapshot["source_materialization"],
+    ).to_dict()
+    if semantic_contract["package_hash"] != snapshot["package_hash"]:
+        raise ValueError("semantic_context_package_hash_mismatch")
+
+    try:
+        serialized_capability_ids = _require_id_sequence(
+            serialized_capability_ids, blocker="invalid_serialized_capability_ids"
+        )
+        serialized_evidence_ids = _require_id_sequence(
+            serialized_evidence_ids, blocker="invalid_serialized_evidence_ids"
+        )
+        serialized_bundle_ids = _require_id_sequence(
+            serialized_bundle_ids, blocker="invalid_serialized_bundle_ids"
+        )
+        serialized_source_materialization_hash = _require_optional_string(
+            serialized_source_materialization_hash,
+            blocker="invalid_serialized_source_materialization_hash",
+        )
+        consumer_role = _require_optional_string(consumer_role, blocker="invalid_consumer_role")
+        consumer_channel = _require_optional_string(
+            consumer_channel, blocker="invalid_consumer_channel"
+        )
+        if not consumer_role:
+            raise ValueError("consumer_role_required")
+        if not consumer_channel:
+            raise ValueError("consumer_channel_required")
+        if worker_binding is not None and not isinstance(worker_binding, Mapping):
+            raise ValueError("worker_binding_must_be_mapping")
+        worker_binding_snapshot = _strict_json_snapshot(worker_binding or {})
+    except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid_consumer_projection:{exc}") from exc
+
+    projected = _strict_json_snapshot(semantic_contract)
+    projected.update(
+        {
+            "serialized_capability_ids": list(serialized_capability_ids),
+            "serialized_evidence_ids": list(serialized_evidence_ids),
+            "serialized_bundle_ids": list(serialized_bundle_ids),
+            "serialized_source_materialization_hash": serialized_source_materialization_hash,
+            "consumer_role": consumer_role,
+            "consumer_channel": consumer_channel,
+            "worker_binding": worker_binding_snapshot,
+        }
+    )
+    projected["package_hash"] = semantic_contract["package_hash"]
+    projected["consumer_projection_hash"] = _consumer_projection_hash(projected)
+    blockers = validate_context_assembly_contract(projected)
+    if blockers:
+        raise ValueError(f"invalid_consumer_projection:{','.join(blockers)}")
+    projected["status"] = "PASS"
+    projected["blockers"] = []
+    projected["serialization_state"] = (
+        "SERIALIZED"
+        if (
+            projected["serialized_capability_ids"]
+            or projected["serialized_evidence_ids"]
+            or projected["serialized_bundle_ids"]
+            or projected["serialized_source_materialization_hash"]
+        )
+        else "NOT_SERIALIZED"
+    )
+    projected["consumer_projection_state"] = "BOUND"
+    projected["physical_consumption_state"] = "NOT_PROVEN"
+    projected["outcome_contribution_state"] = "NOT_PROVEN"
+    return _strict_json_snapshot(projected)
 
 
 def validate_context_assembly_contract(payload: Mapping[str, Any]) -> list[str]:
@@ -557,6 +679,42 @@ def _hash_fields(payload: Mapping[str, Any], fields: Sequence[str]) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _strict_json_snapshot(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("semantic_context_package_must_be_object")
+
+    def normalize(item: Any) -> Any:
+        if isinstance(item, Mapping):
+            normalized: dict[str, Any] = {}
+            for key, nested in item.items():
+                if not isinstance(key, str):
+                    raise ValueError("json_object_keys_must_be_strings")
+                normalized[key] = normalize(nested)
+            return normalized
+        if isinstance(item, (list, tuple)):
+            return [normalize(nested) for nested in item]
+        if item is None or isinstance(item, (str, int, bool)):
+            return item
+        if isinstance(item, float):
+            if not (item == item and abs(item) != float("inf")):
+                raise ValueError("json_numbers_must_be_finite")
+            return item
+        raise ValueError("json_value_type_unsupported")
+
+    normalized = normalize(copy.deepcopy(dict(value)))
+    encoded = json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    snapshot = json.loads(encoded.decode("utf-8"))
+    if not isinstance(snapshot, dict):
+        raise ValueError("semantic_context_package_must_be_object")
+    return snapshot
 
 
 def _canonical_json_value(value: Any) -> Any:

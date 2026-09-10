@@ -3,6 +3,7 @@
 from .assembly import (
     ContextAssemblyContract,
     build_context_assembly_contract,
+    project_context_for_consumer,
     validate_context_assembly_contract,
 )
 from .budget import (
@@ -38,6 +39,13 @@ from .source_materialization import (
 )
 
 __all__ = [
+    "DIRECT_SLICE",
+    "NO_SOURCE",
+    "RAW_SOURCE",
+    "REDUCED_CAPSULE",
+    "SOURCE_MATERIALIZATION_CLAIM_CEILING",
+    "SOURCE_MATERIALIZATION_SCHEMA",
+    "SOURCE_MATERIALIZATION_STRATEGIES",
     "ContextAssembler",
     "ContextAssemblyContract",
     "ContextBudgetReceipt",
@@ -46,14 +54,7 @@ __all__ = [
     "ContinuityEvent",
     "ContinuityEventSource",
     "ContinuitySnapshot",
-    "DIRECT_SLICE",
-    "NO_SOURCE",
-    "RAW_SOURCE",
-    "REDUCED_CAPSULE",
     "ResumeContext",
-    "SOURCE_MATERIALIZATION_CLAIM_CEILING",
-    "SOURCE_MATERIALIZATION_SCHEMA",
-    "SOURCE_MATERIALIZATION_STRATEGIES",
     "StatelessContextCoordinator",
     "build_context_assembly_contract",
     "build_context_budget_receipt",
@@ -62,6 +63,7 @@ __all__ = [
     "build_source_materialization_projection",
     "events_from_attempt_records",
     "project",
+    "project_context_for_consumer",
     "resume",
     "validate_context_assembly_contract",
     "validate_context_budget_receipt",
