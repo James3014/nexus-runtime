@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Callable
@@ -282,6 +284,13 @@ def append_model_context_to_prompt(prompt: str, package: Mapping[str, Any]) -> s
     return f"{base}\n\n{MODEL_CONTEXT_MARKER}\n{serialize_model_context_package(package)}"
 
 
+def _final_online_input(context: Mapping[str, Any]) -> str:
+    """Hash the known prompt/payload boundary before adapter-specific appends."""
+    prompt = str(context.get("online_prompt") or context.get("task_statement") or "")
+    payload = str(context.get("online_payload") or "")
+    return f"{prompt}\n\n[PAYLOAD]\n{payload}" if payload else prompt
+
+
 def extract_model_context_from_prompt(prompt: str) -> dict[str, Any]:
     """Recover exactly one serialized model-context package from a prompt."""
 
@@ -310,8 +319,9 @@ def wrap_online_invoker(
     def wrapped(context: Mapping[str, Any]) -> Mapping[str, Any]:
         from .consumption import build_online_consumption_receipt
 
-        projected = dict(context)
+        projected = copy.deepcopy(dict(context))
         package = build_online_context_package(projected)
+        receipt_package = copy.deepcopy(package)
         binding = _mapping(package.get("worker_binding"))
         expected_provider = str(binding.get("provider") or "").strip()
         actual_provider = str(
@@ -329,16 +339,18 @@ def wrap_online_invoker(
         )
         if extract_model_context_from_prompt(projected["online_prompt"]) != package:
             raise ValueError("online_consumption_package_substitution")
+        expected_input_sha256 = hashlib.sha256(
+            _final_online_input(projected).encode("utf-8")
+        ).hexdigest()
         result = invoker(projected)
-        if not isinstance(result, Mapping):
-            raise ValueError("online_consumption_result_invalid")
-        payload = dict(result)
+        payload = dict(result) if isinstance(result, Mapping) else {}
         payload["model_context_consumption"] = build_online_consumption_receipt(
-            package,
-            payload,
+            receipt_package,
+            result,
             physical_transport=bool(
                 getattr(invoker, "physical_provider_transport", False)
             ),
+            expected_provider_input_sha256=expected_input_sha256,
         )
         return payload
 

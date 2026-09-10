@@ -83,9 +83,10 @@ def _seal_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
 
 def build_online_consumption_receipt(
     package: Mapping[str, Any],
-    result: Mapping[str, Any],
+    result: Any,
     *,
     physical_transport: bool,
+    expected_provider_input_sha256: str = "",
 ) -> dict[str, Any]:
     """Reconcile the common package with existing provider process evidence.
 
@@ -98,6 +99,9 @@ def build_online_consumption_receipt(
     receipt = _base_receipt(package)
     if receipt["consumer_channel"] != "online_provider":
         raise ValueError("online_consumption_consumer_channel_invalid")
+    if not isinstance(result, Mapping):
+        receipt["proof_basis"] = "ONLINE_RESULT_NOT_MAPPING"
+        return _seal_receipt(receipt)
 
     process_evidence = result.get("process_evidence")
     if not isinstance(process_evidence, Mapping):
@@ -111,7 +115,11 @@ def build_online_consumption_receipt(
     provider_input_sha256 = str(process_evidence.get("provider_input_sha256") or "")
     invocation_id = str(process_evidence.get("process_invocation_id") or "")
     reported_attempt_id = str(process_evidence.get("attempt_id") or "")
-    call_count = int(result.get("provider_call_count") or 0)
+    raw_call_count = result.get("provider_call_count", 0)
+    if isinstance(raw_call_count, bool) or not isinstance(raw_call_count, int) or raw_call_count < 0:
+        receipt["proof_basis"] = "ONLINE_PROCESS_EVIDENCE_CALL_COUNT_INVALID"
+        return _seal_receipt(receipt)
+    call_count = raw_call_count
     process_started = process_evidence.get("process_started") is True
 
     receipt.update(
@@ -141,6 +149,12 @@ def build_online_consumption_receipt(
     if provider_input_sha256 and not _is_sha256(provider_input_sha256):
         receipt["proof_basis"] = "ONLINE_PROCESS_EVIDENCE_INPUT_HASH_INVALID"
         return _seal_receipt(receipt)
+    if not _is_sha256(expected_provider_input_sha256):
+        receipt["proof_basis"] = "ONLINE_FINAL_INPUT_HASH_MISSING"
+        return _seal_receipt(receipt)
+    if provider_input_sha256 != expected_provider_input_sha256:
+        receipt["proof_basis"] = "ONLINE_FINAL_INPUT_HASH_MISMATCH"
+        return _seal_receipt(receipt)
 
     receipt["provider"] = reported_provider
     receipt["proof_basis"] = "ONLINE_PROVIDER_PROCESS_EVIDENCE"
@@ -149,7 +163,6 @@ def build_online_consumption_receipt(
         and result.get("invoked") is True
         and call_count >= 1
         and process_started
-        and _is_sha256(provider_input_sha256)
         and invocation_id
     ):
         receipt["physical_consumption_state"] = PHYSICAL_CONSUMPTION_PROVEN
@@ -187,8 +200,20 @@ def build_worker_consumption_receipt(
         raise ValueError("worker_consumption_package_substitution")
 
     prompt_sha256 = _sha256_text(str(prompt))
-    call_count = int(getattr(execution_receipt, "provider_calls", 0) or 0)
-    attempt_count = int(getattr(execution_receipt, "provider_attempt_count", 0) or 0)
+    raw_call_count = getattr(execution_receipt, "provider_calls", 0)
+    raw_attempt_count = getattr(execution_receipt, "provider_attempt_count", 0)
+    if (
+        isinstance(raw_call_count, bool)
+        or not isinstance(raw_call_count, int)
+        or raw_call_count < 0
+        or isinstance(raw_attempt_count, bool)
+        or not isinstance(raw_attempt_count, int)
+        or raw_attempt_count < 0
+    ):
+        receipt["proof_basis"] = "WORKER_EXECUTION_EVIDENCE_COUNT_INVALID"
+        return _seal_receipt(receipt)
+    call_count = raw_call_count
+    attempt_count = raw_attempt_count
     receipt_provider = str(getattr(execution_receipt, "provider", "") or "")
     receipt_matches_provider = not receipt_provider or receipt_provider == str(provider)
 
@@ -221,7 +246,13 @@ def build_worker_consumption_receipt(
             ),
         }
     )
-    if receipt_matches_provider and call_count >= 1 and attempt_count >= 1:
+    if (
+        receipt_matches_provider
+        and isinstance(call_count, int)
+        and call_count >= 1
+        and isinstance(attempt_count, int)
+        and attempt_count >= 1
+    ):
         receipt["physical_consumption_state"] = PHYSICAL_CONSUMPTION_PROVEN
     return _seal_receipt(receipt)
 

@@ -19,6 +19,7 @@ from nexus_runtime.task_context import (
     validate_consumption_receipt,
     wrap_online_invoker,
 )
+from nexus_runtime.task_context.consumer_projection import _final_online_input
 
 D = "a" * 64
 P = "b" * 64
@@ -62,18 +63,19 @@ def online_context():
     }
 
 
-def process_result(provider="agy", attempt="attempt-online-1"):
+def process_result(provider="agy", attempt="attempt-online-1", input_hash="2" * 64):
     return {
         "provider": provider, "invoked": True, "provider_call_count": 1,
         "process_evidence": {"schema": "nexus.provider_process_evidence.v1", "provider": provider,
-            "process_started": True, "provider_input_sha256": "2" * 64, "attempt_id": attempt,
+            "process_started": True, "provider_input_sha256": input_hash, "attempt_id": attempt,
             "process_invocation_id": "3" * 64},
     }
 
 
 def test_online_process_evidence_binds_consumption_without_contribution():
     package = build_online_context_package(online_context())
-    receipt = build_online_consumption_receipt(package, process_result(), physical_transport=True)
+    receipt = build_online_consumption_receipt(package, process_result(), physical_transport=True,
+        expected_provider_input_sha256="2" * 64)
     assert receipt["physical_consumption_state"] == PHYSICAL_CONSUMPTION_PROVEN
     assert receipt["outcome_contribution_state"] == OUTCOME_CONTRIBUTION_NOT_PROVEN
     assert receipt["provider_input_sha256"] == "2" * 64
@@ -84,7 +86,8 @@ def test_online_process_evidence_binds_consumption_without_contribution():
 
 def test_injected_online_transport_cannot_mint_physical_truth():
     package = build_online_context_package(online_context())
-    receipt = build_online_consumption_receipt(package, process_result(), physical_transport=False)
+    receipt = build_online_consumption_receipt(package, process_result(), physical_transport=False,
+        expected_provider_input_sha256="2" * 64)
     assert receipt["physical_consumption_state"] == PHYSICAL_CONSUMPTION_NOT_PROVEN
 
 
@@ -92,12 +95,44 @@ def test_online_wrapper_attaches_receipt_to_exact_serialized_package():
     seen = {}
     def physical(context):
         seen.update(context)
-        return process_result()
+        return process_result(input_hash=hashlib.sha256(_final_online_input(context).encode()).hexdigest())
     physical.provider = "agy"
     physical.physical_provider_transport = True
     result = wrap_online_invoker(physical)(online_context())
     assert extract_model_context_from_prompt(seen["online_prompt"]) == seen["model_context_package"]
     assert result["model_context_consumption"]["physical_consumption_state"] == PHYSICAL_CONSUMPTION_PROVEN
+
+
+def test_online_wrapper_freezes_input_binding_and_package_snapshot():
+    original = online_context()
+
+    def mutating(context):
+        context["online_prompt"] = "mutated after pre-call freeze"
+        context["online_payload"] = "different payload"
+        context["model_context_package"]["task_id"] = "tampered"  # type: ignore[index]
+        return process_result(
+            input_hash=hashlib.sha256(_final_online_input(context).encode()).hexdigest()
+        )
+
+    mutating.provider = "agy"
+    mutating.physical_provider_transport = True
+    result = wrap_online_invoker(mutating)(original)
+    receipt = result["model_context_consumption"]
+    assert receipt["physical_consumption_state"] == PHYSICAL_CONSUMPTION_NOT_PROVEN
+    assert receipt["proof_basis"] == "ONLINE_FINAL_INPUT_HASH_MISMATCH"
+    assert original == online_context()
+
+
+def test_online_wrapper_nonmapping_result_is_durable_not_proven():
+    def nonmapping(_context):
+        return ["unexpected"]
+
+    nonmapping.provider = "agy"
+    nonmapping.physical_provider_transport = True
+    result = wrap_online_invoker(nonmapping)(online_context())
+    receipt = result["model_context_consumption"]
+    assert receipt["physical_consumption_state"] == PHYSICAL_CONSUMPTION_NOT_PROVEN
+    assert receipt["proof_basis"] == "ONLINE_RESULT_NOT_MAPPING"
 
 
 def test_online_pre_call_provider_substitution_fails_without_invocation():
@@ -115,20 +150,52 @@ def test_online_pre_call_provider_substitution_fails_without_invocation():
 def test_online_post_call_evidence_mismatch_downgrades_without_retry():
     package = build_online_context_package(online_context())
     provider_mismatch = build_online_consumption_receipt(
-        package, process_result("codex"), physical_transport=True
+        package, process_result("codex"), physical_transport=True,
+        expected_provider_input_sha256="2" * 64,
     )
     assert provider_mismatch["physical_consumption_state"] == PHYSICAL_CONSUMPTION_NOT_PROVEN
     assert provider_mismatch["proof_basis"] == "ONLINE_PROCESS_EVIDENCE_PROVIDER_MISMATCH"
     attempt_mismatch = build_online_consumption_receipt(
-        package, process_result(attempt="other"), physical_transport=True
+        package, process_result(attempt="other"), physical_transport=True,
+        expected_provider_input_sha256="2" * 64,
     )
     assert attempt_mismatch["physical_consumption_state"] == PHYSICAL_CONSUMPTION_NOT_PROVEN
     assert attempt_mismatch["proof_basis"] == "ONLINE_PROCESS_EVIDENCE_ATTEMPT_MISMATCH"
 
 
+def test_online_final_input_hash_mismatch_downgrades() -> None:
+    package = build_online_context_package(online_context())
+    receipt = build_online_consumption_receipt(
+        package, process_result(), physical_transport=True,
+        expected_provider_input_sha256="4" * 64,
+    )
+    assert receipt["physical_consumption_state"] == PHYSICAL_CONSUMPTION_NOT_PROVEN
+    assert receipt["proof_basis"] == "ONLINE_FINAL_INPUT_HASH_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"provider_call_count": "invalid", "process_evidence": {}},
+        {"provider_call_count": True, "process_evidence": {}},
+        {"provider_call_count": -1, "process_evidence": {}},
+        None,
+    ],
+)
+def test_online_malformed_post_effect_result_is_durable_not_proven(result) -> None:
+    package = build_online_context_package(online_context())
+    receipt = build_online_consumption_receipt(  # type: ignore[arg-type]
+        package, result, physical_transport=True, expected_provider_input_sha256="2" * 64
+    )
+    assert receipt["physical_consumption_state"] == PHYSICAL_CONSUMPTION_NOT_PROVEN
+    assert receipt["outcome_contribution_state"] == OUTCOME_CONTRIBUTION_NOT_PROVEN
+    assert receipt["proof_basis"]
+
+
 def test_consumption_receipt_tamper_and_contribution_overclaim_close_claim():
     package = build_online_context_package(online_context())
-    receipt = build_online_consumption_receipt(package, process_result(), physical_transport=True)
+    receipt = build_online_consumption_receipt(package, process_result(), physical_transport=True,
+        expected_provider_input_sha256="2" * 64)
     tampered = dict(receipt); tampered["package_hash"] = "9" * 64
     assert "consumption_receipt_hash_mismatch" in validate_consumption_receipt(tampered)
     overclaim = dict(receipt); overclaim["outcome_contribution_state"] = "PROVEN"
