@@ -1,8 +1,8 @@
 """Explicit runtime execution coordination contracts."""
 
+from .context_aware import ExecutionCoordinator
 from .coordinator import (
     EscalationDecision,
-    ExecutionCoordinator,
     WorkerEscalationPolicy,
     WorkerOutcome,
 )
