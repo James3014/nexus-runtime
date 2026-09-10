@@ -76,6 +76,7 @@ from .services.verified_assist_contract import (
     attach_verified_assist_to_forward,
     build_treatment_fingerprint,
     build_vap_from_local_receipt,
+    validate_vap_runtime_binding,
 )
 
 
@@ -100,6 +101,9 @@ def _unsupported(name: str):
         raise UnsupportedAdapterError(f"omitted_runtime_adapter:{name}")
     return raise_unsupported
 
+def _runtime_projection_binding_missing(*args: Any, **kwargs: Any) -> Any:
+    raise ValueError("runtime_advisory_binding_missing")
+
 
 
 class MissingCapabilityBindingError(RuntimeError):
@@ -121,6 +125,15 @@ def _ensure_selected_coverage_invokers(
 def build_runtime_exports(
     *, policy_path: str | Path | None = None,
     default_capability_invokers: Mapping[str, Any] | None = None,
+    planner_factory: Any = None,
+    canonical_planning_bundle_factory: Any = None,
+    canonical_task_context_factory: Any = None,
+    execution_replan_authorization_factory: Any = None,
+    plan_canonical_task_bundle_factory: Any = None,
+    replan_canonical_task_bundle_factory: Any = None,
+    advisory_route_from_local_response: Any = None,
+    hybrid_route_decision_from_payload: Any = None,
+    memory_retrieval_builder: Any = None,
 ):
     """Bind runtime implementations and optional explicit host capability adapters.
 
@@ -150,13 +163,13 @@ def build_runtime_exports(
     if not policy_path.is_file():
         raise FileNotFoundError(f"runtime_support_policy_missing:{policy_path}")
     bindings = {
-        "CanonicalPlanningBundle": CanonicalPlanningBundle,
-        "CanonicalTaskContext": CanonicalTaskContext,
-        "CapabilityPlanner": CapabilityPlanner,
+        "CanonicalPlanningBundle": canonical_planning_bundle_factory or CanonicalPlanningBundle,
+        "CanonicalTaskContext": canonical_task_context_factory or CanonicalTaskContext,
+        "CapabilityPlanner": planner_factory if planner_factory is not None else CapabilityPlanner,
         "EXECUTION_DEPTH_FULL": EXECUTION_DEPTH_FULL,
         "EXECUTION_DEPTH_LIGHT": EXECUTION_DEPTH_LIGHT,
         "EXECUTION_DEPTH_STANDARD": EXECUTION_DEPTH_STANDARD,
-        "ExecutionReplanAuthorization": ExecutionReplanAuthorization,
+        "ExecutionReplanAuthorization": execution_replan_authorization_factory or ExecutionReplanAuthorization,
         "EffectDispatchPort": EffectDispatchPort,
         "EffectJournal": EffectJournal,
         "EffectReconcilePort": EffectReconcilePort,
@@ -189,7 +202,7 @@ def build_runtime_exports(
         "build_execution_attempt_id": build_execution_attempt_id,
         "build_online_safe_local_forward": build_online_safe_local_forward,
         "build_root_receipt": build_root_receipt,
-        "build_memory_retrieval_adapter": build_memory_retrieval_adapter,
+        "build_memory_retrieval_adapter": memory_retrieval_builder if memory_retrieval_builder is not None else build_memory_retrieval_adapter,
         "build_treatment_fingerprint": build_treatment_fingerprint,
         "build_vap_from_local_receipt": build_vap_from_local_receipt,
         "decision_from_context": decision_from_context,
@@ -201,13 +214,16 @@ def build_runtime_exports(
         "normalize_online_invoker_payload": normalize_online_invoker_payload,
         "online_payload_indicates_non_delivery": online_payload_indicates_non_delivery,
         "operation_digest": operation_digest,
-        "plan_canonical_task_bundle": plan_canonical_task_bundle,
+        "plan_canonical_task_bundle": plan_canonical_task_bundle_factory or plan_canonical_task_bundle,
         "physical_online_authorized": physical_online_authorized,
         "read_generation": read_generation,
         "read_manifest": read_manifest,
-        "replan_canonical_task_bundle": replan_canonical_task_bundle,
+        "replan_canonical_task_bundle": replan_canonical_task_bundle_factory or replan_canonical_task_bundle,
         "resolve_online_execution_decision": resolve_online_execution_decision,
         "validate_receipt_base": validate_receipt_base,
+        "advisory_route_from_local_response": advisory_route_from_local_response or _runtime_projection_binding_missing,
+        "hybrid_route_decision_from_payload": hybrid_route_decision_from_payload or _runtime_projection_binding_missing,
+        "validate_vap_runtime_binding": validate_vap_runtime_binding,
     }
     return build_runtime(bind_runtime(bindings))
 
