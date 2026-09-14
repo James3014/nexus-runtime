@@ -27,6 +27,14 @@ def test_public_standalone_binding_is_explicitly_compatibility_not_authority():
     assert exports.planner_binding.replan_symbol.startswith("nexus_runtime_support_candidate.")
 
 
+def test_default_public_projection_preserves_planner_binding():
+    exports = build_public_runtime_exports()
+
+    assert exports.planner_binding.mode == PACKAGED_COMPATIBILITY
+    assert exports.planner_binding.runtime_is_planner_authority is False
+    assert getattr(exports.UnifiedRuntime, "_nexus_model_context_projected", False) is True
+
+
 def _host_planner_family():
     calls = []
 
