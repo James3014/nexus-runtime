@@ -1,17 +1,69 @@
 # nexus-runtime
 
 Independent source package for task planning/admission, execution coordination,
-retry/replan state, writer/event boundaries, and durable context storage.
+retry/replan state, writer/event boundaries, and durable context/state.
 
-The runtime is assembled from explicit typed bindings. Core contracts, learning,
-Open SWE execution, and repository intelligence remain external package owners.
-No provider or native service is selected implicitly.
+The runtime is assembled from explicit typed bindings. Core, Learning, Open SWE,
+and Repository Intelligence remain external package owners. No provider, host
+service, deployment target, or native backend is selected implicitly.
 
-The reviewed source is bound to Git revision `a3fd8006d61d4eb14637050c7da5a95e5e28d157`.
-Historical donor lineage remains recorded per file; the integrated execution
-state, execution coordination, retry, and local AST modules have bounded owner and
-caller evidence; final artifact readback remains pending. See `docs/current-source-ownership.json`,
-`docs/runtime-source-manifest.json`, and `docs/EXTRACTION_STATUS.md`.
+## Current source and evidence boundary
+
+The historical extraction/source-bound baseline is
+`a3fd8006d61d4eb14637050c7da5a95e5e28d157`. It is preserved as donor/extraction
+provenance, not as the current repository identity.
+
+The repository default branch is `codex/repo-split`. The current default-branch
+HEAD at this documentation refresh is
+`cff876d542cece27c12cb9e0c8c765d8a409aa7a`.
+
+The accepted runtime source line from PR #10 was merged at
+`39515b73a60fdf6322ee7e48a9f87ef681f46a26`, preserving accepted tree
+`03f2a6197c1fded3b8c17b6b8db41ef88f7a01b0`. The later default-branch commit is a
+source-ownership/evidence documentation refresh; it must not be misrepresented
+as a new deployment or runtime activation.
+
+Post-merge hosted standalone wheel and runtime test runs succeeded for the
+accepted PR #10 source line. Nexus-new consumer PR #910 subsequently merged its
+standalone-runtime integration. These are source/package/consumer facts only:
+they do not by themselves prove installation on a particular host, loaded
+service identity, release, deployment, or production readiness.
+
+See:
+
+- `docs/EXTRACTION_STATUS.md`
+- `docs/current-source-ownership.json`
+- `docs/runtime-source-manifest.json`
+
+Always keep repository source, accepted package/pin, installed artifact, loaded
+service, and runtime/canary acceptance as separate evidence clocks.
+
+## Ownership boundary
+
+`nexus-runtime` owns the independent runtime/package contracts for:
+
+- planning/admission composition;
+- execution coordination;
+- retry/replan state;
+- writer/event and effect boundaries;
+- durable execution/context state;
+- explicit host/backend composition ports.
+
+It does **not** implicitly own or select:
+
+- Nexus Core Evidence Trust or Completion Certification;
+- Nexus Learning policy authority;
+- Open SWE execution implementation;
+- Repository Intelligence decisions;
+- provider/model availability;
+- arbitrary production host activation;
+- protected merge, release, or deployment authority.
+
+The package still contains planner/admission implementation lineage required by
+accepted callers. Planner algorithm-source convergence across repositories is a
+separate ownership task; this repository must not be treated as permission to
+create a second/third route authority or to remove compatibility code without
+caller evidence.
 
 ## Local usage
 
@@ -31,8 +83,12 @@ from nexus_runtime import ContextHub, ContextHubDependencies, build_runtime_expo
 from nexus_runtime.execution_state import ExecutionStateStore
 from nexus_runtime.execution_coordination import ExecutionCoordinator
 from nexus_runtime.execution_coordination.ports import (
-    ExecutionStatePort, ExecutionContractPort, WorkerAdapterPort,
-    TargetExecutionPort, ProcessOwnershipPort, ExecutionFinalizationPort,
+    ExecutionStatePort,
+    ExecutionContractPort,
+    WorkerAdapterPort,
+    TargetExecutionPort,
+    ProcessOwnershipPort,
+    ExecutionFinalizationPort,
 )
 from nexus_runtime_support_candidate import build_memory_retrieval_adapter
 
@@ -44,41 +100,52 @@ invoker = exports.build_local_memory_capability_invoker(
 ```
 
 `ContextHub` and `ContextHubDependencies` are public assembly contracts. Core,
-Learning, Open SWE, and repository backends remain explicitly injected owners;
-the runtime does not discover providers, deploy services, or create those stores
-implicitly. `ExecutionStateStore` owns durable JSON state reads, atomic writes,
-and archive selection. `ExecutionCoordinator` accepts explicit state, contract,
-worker, target, process-ownership, and finalization effect ports; host code owns
-provider calls, worktrees, and candidate finalization.
+Learning, Open SWE, Repository Intelligence, and host backends remain explicitly
+injected owners. The runtime does not discover providers, deploy services, or
+create external stores implicitly.
 
-For a deterministic end-to-end run/retry/readback example, execute
-`tests/test_runtime_operations.py::test_real_planner_run_and_replan_successful_receipts`.
-It uses the real Planner and admission composition, writes a temporary
-candidate, verifies its bytes, retries once, and checks the resulting receipt
-lineage without contacting a provider.
+`ExecutionStateStore` owns durable JSON state reads, atomic writes, and archive
+selection. `ExecutionCoordinator` accepts explicit state, contract, worker,
+target, process-ownership, and finalization effect ports; host code owns provider
+calls, worktrees, and candidate finalization.
 
-`nexus_runtime_candidate` is retained as a compatibility namespace for older
-callers; the public composition binds the current `nexus_runtime_p6c_candidate`
-implementation. No source imports the compatibility namespace internally.
+For a deterministic end-to-end run/retry/readback example, execute:
+
+```console
+python -m pytest -q \
+  tests/test_runtime_operations.py::test_real_planner_run_and_replan_successful_receipts
+```
+
+The test uses the real Planner/admission composition, writes a temporary
+candidate, verifies its bytes, retries once, and checks receipt lineage without
+contacting a provider.
+
+`nexus_runtime_candidate` remains a compatibility namespace for older callers;
+the public composition binds the current `nexus_runtime_p6c_candidate`
+implementation. No current source should create a second algorithm merely to
+replace that compatibility name.
 
 ## Owner workflow integration
 
-`tests/integration/test_owner_workflow.py` is the full owner deterministic fixture: a
-deterministic OpenSWE graph writes an artifact, Repository Intelligence analyzes
-the changed file, Runtime emits and reads a receipt, Core certifies hashes from
-that artifact, and Learning projects the receipt. Run it with the owner wheels
-installed:
+`tests/integration/test_owner_workflow.py` is the deterministic owner integration
+fixture: a deterministic OpenSWE graph writes an artifact, Repository
+Intelligence analyzes the changed file, Runtime emits/reads a receipt, Core
+certifies hashes from that artifact, and Learning projects the receipt.
+
+Run it with the owner wheels installed:
 
 ```console
 .venv/bin/python -I -m pytest -q tests/integration/test_owner_workflow.py
 ```
 
-The test is skipped when optional owner packages are absent; acceptance requires
-the command above to run unskipped. Provider-backed execution remains outside
-this deterministic fixture.
+The test is skipped when optional owner packages are absent. Acceptance requires
+the command to run unskipped in the intended owner-package environment; a skip
+must not be reported as owner-integration PASS. Provider-backed execution and
+loaded-host acceptance remain separate gates.
 
-## Delivery provenance
+## Historical delivery evidence
 
-The accepted caller delivery is the durable worktree `/Users/jameschen/Workspace/Nexus-new-repo-split`, branch `codex/repo-split-delivery`, revision `1ae08059513ded50a2caa23c9586cd3d46b386f1`; its git common directory is `/Users/jameschen/Workspace/Nexus-new/.git`. The canonical Nexus-new `main` checkout remains dirty and untouched. Host memory is supplied through the explicit `nexus.services.capability_registry.build_real_executor_invoker("memory")` adapter, passed via `build_runtime_exports(default_capability_invokers={...})` to the original `ProjectMemoryManager` SQLite search; no provider or deployment is selected implicitly.
-
-Final caller evidence is `/private/tmp/nexus-final-1ae-root.xml` (808 PASS and 2 reproduced donor-baseline failures). Runtime/caller split evidence is `/private/tmp/nexus-binding-7f6-root.xml` (88 PASS) and `/private/tmp/nexus-binding-b0f-root.xml` (150 PASS). These establish bounded engineering evidence; they do not declare the overall goal complete.
+Earlier caller/worktree artifacts and `/private/tmp/...` XML results remain
+historical engineering evidence. They are not current physical witnesses merely
+because their paths appear in documentation. Use current Git/source/package and
+runtime readback for current claims.
