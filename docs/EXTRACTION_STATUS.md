@@ -6,12 +6,15 @@ original extraction evidence; it is not rewritten as evidence produced at the
 current repository revision. Historical donor provenance remains preserved per
 file.
 
-The current repository source is HEAD
-`39515b73a60fdf6322ee7e48a9f87ef681f46a26`, with tree
-`03f2a6197c1fded3b8c17b6b8db41ef88f7a01b0`. It contains the integrated
-runtime source plus accepted planner/admission and support candidates and the
-context checkpoint, search, read store, execution state, execution
-coordination, retry, and local AST modules.
+The current Python source-ownership snapshot is revision
+`1fc22650f3d4f268df9e68ae16903751a042abfe`. This is a source-scope anchor for
+the `src/**/*.py` hashes in `docs/current-source-ownership.json`, not a claim
+that the live repository HEAD will remain at that SHA. Later non-`src` commits
+do not invalidate this snapshot; any `src` mutation requires refreshing the
+ownership map. The snapshot contains the integrated runtime source plus accepted
+planner/admission and support candidates and the context checkpoint, search,
+read store, execution state, execution coordination, retry, local AST, and
+Planner-binding compatibility modules.
 
 Planner/support candidates retain their own historical provenance. Their API
 parity with the frozen runtime source remains an integration gate. Core,
@@ -34,9 +37,9 @@ or production readiness.
 
 ## Current ownership map
 
-`docs/current-source-ownership.json` records every Python source module at the
-current HEAD, its current hash, canonical owner, and donor lineage. The runtime
-public entrypoints are `nexus_runtime.build_runtime_exports`,
+`docs/current-source-ownership.json` records every Python source module at its
+`source_head` snapshot, with source hash, canonical owner, and donor lineage. The
+runtime public entrypoints are `nexus_runtime.build_runtime_exports`,
 `nexus_runtime.ContextHub`, `nexus_runtime.ContextHubDependencies`, and the
 explicit memory builder in `nexus_runtime_support_candidate`. Planner/admission,
 context, memory, and external Core/Learning/Open SWE/repository services retain
