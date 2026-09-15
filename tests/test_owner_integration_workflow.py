@@ -11,7 +11,13 @@ from typing import Any
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = Path(
+    os.environ.get(
+        "NEXUS_RUNTIME_SOURCE_ROOT",
+        str(Path(__file__).resolve().parents[1]),
+    )
+).resolve()
+REPO_ROOT = SOURCE_ROOT
 WORKFLOW = REPO_ROOT / ".github/workflows/owner-integration.yml"
 OWNER_WORKFLOW_TESTS = REPO_ROOT / "tests/integration/test_owner_workflow.py"
 
