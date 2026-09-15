@@ -24,15 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-
-      - name: Check out canonical Learning owner
-        uses: actions/checkout@v4
-        with:
-          repository: James3014/nexus-learning
-          ref: d09f05b942f35236562ae26e7b718d111368b0b1
-          path: .ci/nexus-learning
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python 3.11
@@ -42,20 +34,11 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install pinned test dependencies and canonical Learning
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install \
-            "pytest==9.0.2" \
-            "pytest-asyncio==1.3.0" \
-            "anyio==4.12.1" \
-            "pydantic==2.13.5" \
-            "PyYAML==6.0.3"
-          python -m pip install .ci/nexus-learning
-
       - name: Verify canonical Planner source binding
         run: |
           set -euo pipefail
+          expected_runtime_head='${{ github.event.pull_request.head.sha || github.sha }}'
+          test "$(git rev-parse HEAD)" = "$expected_runtime_head"
           snapshot_sha=$(python -c 'import json; print(json.load(open("docs/planner-source-lineage.json"))["canonical"]["snapshot_revision"])')
           canonical_ref=$(python -c 'import json; print(json.load(open("docs/planner-source-lineage.json"))["canonical"]["ref"])')
           snapshot_root="$RUNNER_TEMP/nexus-new-planner-snapshot"
@@ -80,7 +63,28 @@ jobs:
             --canonical-root "$snapshot_root" \
             --canonical-ref-root "$ref_root" \
             --runtime-root . \
+            --expected-runtime-head "$expected_runtime_head" \
             --manifest docs/planner-source-lineage.json
+
+      - name: Check out canonical Learning owner
+        uses: actions/checkout@v4
+        with:
+          repository: James3014/nexus-learning
+          ref: d09f05b942f35236562ae26e7b718d111368b0b1
+          path: .ci/nexus-learning
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install pinned test dependencies and canonical Learning
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            "pytest==9.0.2" \
+            "pytest-asyncio==1.3.0" \
+            "anyio==4.12.1" \
+            "pydantic==2.13.5" \
+            "PyYAML==6.0.3"
+          python -m pip install .ci/nexus-learning
 
       - name: Install runtime wheel
         run: |

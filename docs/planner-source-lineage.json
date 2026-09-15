@@ -1,5 +1,5 @@
 {
-  "schema": "nexus.runtime.planner_source_lineage.v2",
+  "schema": "nexus.runtime.planner_source_lineage.v3",
   "canonical": {
     "repository": "James3014/Nexus-new",
     "ref": "main",
@@ -12,7 +12,7 @@
     "role": "STANDALONE_QUALIFICATION_COPY"
   },
   "comparison": {
-    "schema": "nexus.runtime.planner_source_binding.v2",
+    "schema": "nexus.runtime.planner_source_binding.v3",
     "normalized_structure": {
       "schema": "python_ast_planner_structure.v2",
       "strip_docstrings": true,
@@ -25,8 +25,9 @@
     "raw_binding": {
       "algorithm": "ordered_path_content_sha256.v1",
       "canonical_pair_source_set_sha256": "3e59c13914d19f920ecb964655b4c9d97a21bc32ed97fa67597315416e490a62",
+      "canonical_coverage_source_set_sha256": "889935a7714b9e649feb6670cc5e4580193e6098281a1bc7cd28b2469d533746",
       "packaged_pair_source_set_sha256": "0d24cbeba2439ac92dbb25af3c41a302d5d920635a2e20bcc37c09aca218d48b",
-      "packaged_coverage_source_set_sha256": "a341a27aa7ecd0572670b60e8ef01631de198b4aef4334c28fb110579cec1b15"
+      "packaged_coverage_source_set_sha256": "2ccaefe2373a8775b6ac24906b9ea85d713b841fb18800b22618a0f80d7aef53"
     }
   },
   "invariants": {
@@ -36,6 +37,39 @@
     "raw_source_change_requires_explicit_rebind": true
   },
   "coverage": {
+    "canonical_semantic_roots": [
+      "nexus/engine/planner"
+    ],
+    "canonical_semantic_paths": [
+      "nexus/config/model_workforce.yaml",
+      "nexus/contracts/canonical_execution.py",
+      "nexus/contracts/execution_identity.py",
+      "nexus/contracts/workforce_admission.py",
+      "nexus/core/belief_contracts.py",
+      "nexus/core/lite_route_oracle.py",
+      "nexus/engine/canonical_execution.py",
+      "nexus/engine/capability_aliases.py",
+      "nexus/engine/capability_contracts.py",
+      "nexus/engine/capability_planner.py",
+      "nexus/engine/capability_signals.py",
+      "nexus/engine/harness_route_policy.py",
+      "nexus/engine/harness_sensors.py",
+      "nexus/engine/local_assist_recommendation.py",
+      "nexus/engine/planner/ab_evaluator.py",
+      "nexus/engine/planner/policy_applier.py",
+      "nexus/engine/planner/skill_mount_evidence.py",
+      "nexus/engine/policy_evaluator.py",
+      "nexus/engine/route_signal_adapter.py",
+      "nexus/evidence/claim_boundary.py",
+      "nexus/evidence/receipt_base.py",
+      "nexus/learning/shared_playbook.py",
+      "nexus/learning/skill_catalog.py",
+      "nexus/research/isolation_contracts.py",
+      "nexus/research/isolation_policy.py",
+      "nexus/services/capability_evidence_bundle.py",
+      "nexus/services/model_workforce_policy.py",
+      "nexus/services/runtime_workforce_admission.py"
+    ],
     "packaged_semantic_roots": [
       "src/nexus_planning_candidate"
     ],
@@ -47,6 +81,10 @@
       {
         "path": "src/nexus_planning_candidate/composition.py",
         "reason": "runtime_composition_boundary_not_canonical_algorithm_source"
+      },
+      {
+        "path": "src/nexus_planning_candidate/config/model_workforce.yaml",
+        "reason": "runtime_policy_resource_bound_by_raw_coverage_not_structural_pair"
       }
     ]
   },
