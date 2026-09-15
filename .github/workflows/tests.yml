@@ -35,15 +35,6 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Check out canonical Planner owner
-        uses: actions/checkout@v4
-        with:
-          repository: James3014/Nexus-new
-          ref: main
-          path: .ci/nexus-new-planner
-          fetch-depth: 1
-          persist-credentials: false
-
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -64,8 +55,16 @@ jobs:
 
       - name: Verify canonical Planner source parity
         run: |
+          set -euo pipefail
+          canonical_root="$RUNNER_TEMP/nexus-new-planner"
+          test ! -e "$canonical_root"
+          git init -q "$canonical_root"
+          git -C "$canonical_root" remote add origin https://github.com/James3014/Nexus-new.git
+          git -C "$canonical_root" fetch --no-tags --depth=1 origin main
+          git -C "$canonical_root" checkout --detach FETCH_HEAD
+          echo "canonical_planner_head=$(git -C "$canonical_root" rev-parse HEAD)"
           python scripts/ci/verify_planner_source_parity.py \
-            --canonical-root .ci/nexus-new-planner \
+            --canonical-root "$canonical_root" \
             --runtime-root . \
             --manifest docs/planner-source-lineage.json
 
