@@ -35,6 +35,15 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Check out canonical Planner owner
+        uses: actions/checkout@v4
+        with:
+          repository: James3014/Nexus-new
+          ref: main
+          path: .ci/nexus-new-planner
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -52,6 +61,13 @@ jobs:
             "pydantic==2.13.5" \
             "PyYAML==6.0.3"
           python -m pip install .ci/nexus-learning
+
+      - name: Verify canonical Planner source parity
+        run: |
+          python scripts/ci/verify_planner_source_parity.py \
+            --canonical-root .ci/nexus-new-planner \
+            --runtime-root . \
+            --manifest docs/planner-source-lineage.json
 
       - name: Install runtime wheel
         run: |
