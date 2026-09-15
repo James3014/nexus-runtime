@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "39515b73a60fdf6322ee7e48a9f87ef681f46a26",
+  "source_head": "1fc22650f3d4f268df9e68ae16903751a042abfe",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -285,9 +285,16 @@
     },
     {
       "path": "nexus_runtime/__init__.py",
-      "sha256": "e53c3affea4c83326c0a630520b1800184c54646e40bbf4a3b7c5146a48fa5a0",
+      "sha256": "a8eb6497c0c63f1180fd4c574bc9b76be665d77694f7287737fb30888a4a2b91",
       "canonical_owner": "runtime context",
       "donor": "accepted context-hub/task-context candidate",
+      "lineage_status": "known"
+    },
+    {
+      "path": "nexus_runtime/planner_binding.py",
+      "sha256": "d85acbec6dbf033c3029c9b198b7ac177656e390872507075487e58a3133f3cf",
+      "canonical_owner": "runtime composition",
+      "donor": "planner/runtime layering compatibility forwarder",
       "lineage_status": "known"
     },
     {
@@ -648,6 +655,13 @@
       "lineage_status": "known"
     },
     {
+      "path": "nexus_runtime_support_candidate/planner_binding.py",
+      "sha256": "fb6e1522204a5a505b9821e4ab27d2d04e30c5d6d7fcad0c6141047fd9d609ce",
+      "canonical_owner": "runtime support",
+      "donor": "planner/runtime layering binding implementation",
+      "lineage_status": "known"
+    },
+    {
       "path": "nexus_runtime_support_candidate/contracts/__init__.py",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "canonical_owner": "runtime support",
@@ -684,7 +698,7 @@
     },
     {
       "path": "nexus_runtime_support_candidate/engine/canonical_execution.py",
-      "sha256": "375ec36cf608419ceba735b938a7abb1742746a7ff6d9ababb0076cd605cd742",
+      "sha256": "3fd19c8d95a7cb203d69be1d2faf8e26c847527be2f68b9a1c5a6bdf524ca228",
       "canonical_owner": "runtime support",
       "donor": "accepted support candidate",
       "lineage_status": "known"

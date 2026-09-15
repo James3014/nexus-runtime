@@ -13,15 +13,21 @@ The historical extraction/source-bound baseline is
 `a3fd8006d61d4eb14637050c7da5a95e5e28d157`. It is preserved as donor/extraction
 provenance, not as the current repository identity.
 
-The repository default branch is `codex/repo-split`. The current default-branch
-HEAD at this documentation refresh is
-`cff876d542cece27c12cb9e0c8c765d8a409aa7a`.
+The repository default branch is `codex/repo-split`. Live repository HEAD is
+intentionally not hard-coded here; read Git/GitHub when current revision identity
+matters.
+
+The current Python source-ownership snapshot is bound to
+`1fc22650f3d4f268df9e68ae16903751a042abfe`. That SHA is a source-scope anchor for
+the `src/**/*.py` hashes in `docs/current-source-ownership.json`, not a standing
+claim about the live repository HEAD. Later non-`src` commits do not invalidate
+the snapshot; any `src` mutation requires refreshing the ownership map.
 
 The accepted runtime source line from PR #10 was merged at
 `39515b73a60fdf6322ee7e48a9f87ef681f46a26`, preserving accepted tree
-`03f2a6197c1fded3b8c17b6b8db41ef88f7a01b0`. The later default-branch commit is a
-source-ownership/evidence documentation refresh; it must not be misrepresented
-as a new deployment or runtime activation.
+`03f2a6197c1fded3b8c17b6b8db41ef88f7a01b0`. Later Planner-binding and
+compatibility-source changes are represented in the current ownership snapshot;
+none of these source facts imply deployment or runtime activation.
 
 Post-merge hosted standalone wheel and runtime test runs succeeded for the
 accepted PR #10 source line. Nexus-new consumer PR #910 subsequently merged its

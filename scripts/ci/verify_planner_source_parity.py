@@ -26,6 +26,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 MANIFEST_SCHEMA = "nexus.runtime.planner_source_lineage.v3"
 RECEIPT_SCHEMA = "nexus.runtime.planner_source_binding_receipt.v3"
@@ -160,13 +161,33 @@ def _git_origin_repository(root: Path) -> str | None:
     remote = _git_output(root, "remote", "get-url", "origin")
     if remote is None:
         return None
-    value = remote.strip().removesuffix("/").removesuffix(".git")
+
+    value = remote.strip()
+    repository: str | None = None
     if value.startswith("git@github.com:"):
-        return value[len("git@github.com:") :]
-    marker = "github.com/"
-    if marker in value:
-        return value.split(marker, 1)[1]
-    return None
+        repository = value[len("git@github.com:") :]
+    else:
+        parsed = urlparse(value)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "github.com"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port is not None
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        repository = parsed.path
+
+    repository = repository.strip("/")
+    if repository.endswith(".git"):
+        repository = repository[:-4]
+    parts = repository.split("/")
+    if len(parts) != 2 or not all(parts):
+        return None
+    return f"{parts[0]}/{parts[1]}"
 
 
 def _load_manifest(path: Path) -> dict[str, Any]:
