@@ -150,10 +150,10 @@ def _git_branch(root: Path) -> str | None:
 
 
 def _git_clean(root: Path) -> bool | None:
-    value = _git_output(root, "status", "--porcelain=v1")
-    if value is None:
-        return True if _git_head(root) is not None else None
-    return value == ""
+    lines = _git_lines(root, "status", "--porcelain=v1")
+    if lines is None:
+        return None
+    return not lines
 
 
 def _git_origin_repository(root: Path) -> str | None:

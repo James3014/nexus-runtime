@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -576,3 +577,15 @@ def test_guard_rejects_runtime_repository_base_head_and_dirty_substitution(
         error.startswith("runtime_baseline_not_ancestor_of_head:")
         for error in receipt["errors"]
     )
+
+
+def test_git_status_failure_is_not_treated_as_clean(tmp_path: Path, monkeypatch) -> None:
+    spec = importlib.util.spec_from_file_location("planner_source_parity_guard", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+
+    monkeypatch.setattr(guard, "_git_lines", lambda root, *args: None)
+    monkeypatch.setattr(guard, "_git_head", lambda root: "a" * 40)
+
+    assert guard._git_clean(tmp_path) is None
