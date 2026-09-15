@@ -56,6 +56,8 @@ jobs:
       - name: Verify canonical Planner source binding
         run: |
           set -euo pipefail
+          expected_runtime_head='${{ github.event.pull_request.head.sha || github.sha }}'
+          test "$(git rev-parse HEAD)" = "$expected_runtime_head"
           snapshot_sha=$(python -c 'import json; print(json.load(open("docs/planner-source-lineage.json"))["canonical"]["snapshot_revision"])')
           canonical_ref=$(python -c 'import json; print(json.load(open("docs/planner-source-lineage.json"))["canonical"]["ref"])')
           snapshot_root="$RUNNER_TEMP/nexus-new-planner-snapshot"
@@ -80,6 +82,7 @@ jobs:
             --canonical-root "$snapshot_root" \
             --canonical-ref-root "$ref_root" \
             --runtime-root . \
+            --expected-runtime-head "$expected_runtime_head" \
             --manifest docs/planner-source-lineage.json
 
       - name: Install runtime wheel
