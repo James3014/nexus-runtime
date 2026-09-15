@@ -1,5 +1,5 @@
 {
-  "schema": "nexus.runtime.planner_source_lineage.v1",
+  "schema": "nexus.runtime.planner_source_lineage.v2",
   "canonical": {
     "repository": "James3014/Nexus-new",
     "ref": "main",
@@ -11,18 +11,44 @@
     "baseline_revision": "7f163c6c144366c1e5003d5a757076790ce11a2d",
     "role": "STANDALONE_QUALIFICATION_COPY"
   },
-  "normalization": {
-    "schema": "python_ast_planner_semantics.v1",
-    "strip_docstrings": true,
-    "namespace_aliases": {
-      "nexus_planning_candidate": "nexus",
-      "nexus_runtime_support_candidate": "nexus"
+  "comparison": {
+    "schema": "nexus.runtime.planner_source_binding.v2",
+    "normalized_structure": {
+      "schema": "python_ast_planner_structure.v2",
+      "strip_docstrings": true,
+      "namespace_aliases": {
+        "nexus_planning_candidate": "nexus",
+        "nexus_runtime_support_candidate": "nexus"
+      },
+      "claim": "STRUCTURAL_PARITY_MODULO_EXPLICIT_EXTRACTION_DIFFERENCES"
+    },
+    "raw_binding": {
+      "algorithm": "ordered_path_content_sha256.v1",
+      "canonical_pair_source_set_sha256": "3e59c13914d19f920ecb964655b4c9d97a21bc32ed97fa67597315416e490a62",
+      "packaged_pair_source_set_sha256": "0d24cbeba2439ac92dbb25af3c41a302d5d920635a2e20bcc37c09aca218d48b",
+      "packaged_coverage_source_set_sha256": "a341a27aa7ecd0572670b60e8ef01631de198b4aef4334c28fb110579cec1b15"
     }
   },
   "invariants": {
     "runtime_is_planner_authority": false,
     "external_override_must_be_complete": true,
-    "standalone_copy_may_not_define_independent_planner_semantics": true
+    "standalone_copy_may_not_define_independent_planner_semantics": true,
+    "raw_source_change_requires_explicit_rebind": true
+  },
+  "coverage": {
+    "packaged_semantic_roots": [
+      "src/nexus_planning_candidate"
+    ],
+    "excluded_paths": [
+      {
+        "path": "src/nexus_planning_candidate/__init__.py",
+        "reason": "package_export_surface_not_canonical_algorithm_source"
+      },
+      {
+        "path": "src/nexus_planning_candidate/composition.py",
+        "reason": "runtime_composition_boundary_not_canonical_algorithm_source"
+      }
+    ]
   },
   "pairs": [
     {
@@ -124,6 +150,14 @@
     {
       "canonical_path": "nexus/services/capability_evidence_bundle.py",
       "packaged_path": "src/nexus_planning_candidate/services/capability_evidence_bundle.py"
+    },
+    {
+      "canonical_path": "nexus/services/model_workforce_policy.py",
+      "packaged_path": "src/nexus_planning_candidate/services/model_workforce_policy.py"
+    },
+    {
+      "canonical_path": "nexus/services/runtime_workforce_admission.py",
+      "packaged_path": "src/nexus_planning_candidate/services/runtime_workforce_admission.py"
     }
   ]
 }
