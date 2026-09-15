@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
-"""Verify Runtime packaged Planner semantics against the canonical Nexus-new source.
+"""Verify Runtime's packaged Planner binding against the canonical Nexus-new source.
 
-The verifier compares a manifest-defined set of Python source pairs after a
-small, explicit normalization that removes docstrings and maps extracted package
-names back to the canonical ``nexus`` namespace. It never imports either codebase
-and therefore cannot turn the canonical repository into a runtime dependency.
+The verifier has three independent gates:
+
+1. immutable source identity: the canonical snapshot checkout must match the
+   manifest revision/repository, while a second checkout must be the declared
+   current canonical ref;
+2. raw source-set binding: canonical, packaged pair, and complete packaged
+   planning-package source sets must match manifest-pinned digests, so observable
+   docstring/namespace changes cannot be hidden by normalization;
+3. normalized structural parity: after the explicitly documented extraction
+   namespace relocation and docstring normalization, paired algorithm structure
+   must still match.
+
+The normalized comparison is deliberately not claimed as full behavioral
+identity. Raw binding makes every observable source change require an explicit
+manifest rebind and a new independent review.
 """
 
 from __future__ import annotations
@@ -14,13 +25,14 @@ import ast
 import hashlib
 import json
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
-MANIFEST_SCHEMA = "nexus.runtime.planner_source_lineage.v1"
-RECEIPT_SCHEMA = "nexus.runtime.planner_source_parity_receipt.v1"
-NORMALIZATION_SCHEMA = "python_ast_planner_semantics.v1"
+MANIFEST_SCHEMA = "nexus.runtime.planner_source_lineage.v2"
+RECEIPT_SCHEMA = "nexus.runtime.planner_source_binding_receipt.v2"
+COMPARISON_SCHEMA = "nexus.runtime.planner_source_binding.v2"
+STRUCTURAL_SCHEMA = "python_ast_planner_structure.v2"
+RAW_BINDING_ALGORITHM = "ordered_path_content_sha256.v1"
 CANONICAL_REPOSITORY = "James3014/Nexus-new"
 PACKAGED_REPOSITORY = "James3014/nexus-runtime"
 CANONICAL_ROLE = "CANONICAL_ALGORITHM_SOURCE"
@@ -43,7 +55,7 @@ def _normalize_module_name(name: str | None) -> str | None:
     return name
 
 
-class _PlannerSemanticNormalizer(ast.NodeTransformer):
+class _PlannerStructuralNormalizer(ast.NodeTransformer):
     def visit_Import(self, node: ast.Import) -> ast.AST:
         for alias in node.names:
             alias.name = _normalize_module_name(alias.name) or alias.name
@@ -68,20 +80,32 @@ def _strip_docstrings(node: ast.AST) -> None:
         _strip_docstrings(child)
 
 
-def semantic_digest(path: Path) -> str:
+def structural_digest(path: Path) -> str:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
-    tree = _PlannerSemanticNormalizer().visit(tree)
+    tree = _PlannerStructuralNormalizer().visit(tree)
     _strip_docstrings(tree)
     ast.fix_missing_locations(tree)
     normalized = ast.dump(tree, annotate_fields=True, include_attributes=False)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def _git_head(root: Path) -> str | None:
+def raw_source_set_digest(root: Path, relative_paths: list[str] | set[str]) -> str:
+    digest = hashlib.sha256()
+    for relative in sorted(relative_paths):
+        path = _resolve_under(root, relative, field="raw_binding")
+        data = path.read_bytes()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(data).hexdigest().encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _git_output(root: Path, *args: str) -> str | None:
     try:
         completed = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            ["git", "-C", str(root), *args],
             check=True,
             capture_output=True,
             text=True,
@@ -90,6 +114,36 @@ def _git_head(root: Path) -> str | None:
         return None
     value = completed.stdout.strip()
     return value or None
+
+
+def _git_head(root: Path) -> str | None:
+    return _git_output(root, "rev-parse", "HEAD")
+
+
+def _git_branch(root: Path) -> str | None:
+    return _git_output(root, "branch", "--show-current")
+
+
+def _git_clean(root: Path) -> bool | None:
+    value = _git_output(root, "status", "--porcelain=v1", "--untracked-files=no")
+    if value is None:
+        # Empty output is represented as None by _git_output. Distinguish that
+        # from a non-repository by checking HEAD.
+        return True if _git_head(root) is not None else None
+    return value == ""
+
+
+def _git_origin_repository(root: Path) -> str | None:
+    remote = _git_output(root, "remote", "get-url", "origin")
+    if remote is None:
+        return None
+    value = remote.strip().removesuffix("/").removesuffix(".git")
+    if value.startswith("git@github.com:"):
+        return value[len("git@github.com:") :]
+    marker = "github.com/"
+    if marker in value:
+        return value.split(marker, 1)[1]
+    return None
 
 
 def _load_manifest(path: Path) -> dict[str, Any]:
@@ -103,21 +157,51 @@ def _load_manifest(path: Path) -> dict[str, Any]:
         raise ValueError("planner_source_lineage_canonical_repository_invalid")
     if canonical.get("role") != CANONICAL_ROLE:
         raise ValueError("planner_source_lineage_canonical_role_invalid")
+    if not isinstance(canonical.get("ref"), str) or not canonical["ref"]:
+        raise ValueError("planner_source_lineage_canonical_ref_invalid")
+    snapshot_revision = canonical.get("snapshot_revision")
+    if (
+        not isinstance(snapshot_revision, str)
+        or len(snapshot_revision) != 40
+        or any(character not in "0123456789abcdef" for character in snapshot_revision.lower())
+    ):
+        raise ValueError("planner_source_lineage_snapshot_revision_invalid")
     if packaged.get("repository") != PACKAGED_REPOSITORY:
         raise ValueError("planner_source_lineage_packaged_repository_invalid")
     if packaged.get("role") != PACKAGED_ROLE:
         raise ValueError("planner_source_lineage_packaged_role_invalid")
 
-    normalization = payload.get("normalization", {})
-    if normalization.get("schema") != NORMALIZATION_SCHEMA:
-        raise ValueError("planner_source_lineage_normalization_invalid")
-    if normalization.get("strip_docstrings") is not True:
+    comparison = payload.get("comparison", {})
+    if comparison.get("schema") != COMPARISON_SCHEMA:
+        raise ValueError("planner_source_lineage_comparison_schema_invalid")
+    structural = comparison.get("normalized_structure", {})
+    if structural.get("schema") != STRUCTURAL_SCHEMA:
+        raise ValueError("planner_source_lineage_structural_schema_invalid")
+    if structural.get("strip_docstrings") is not True:
         raise ValueError("planner_source_lineage_docstring_normalization_invalid")
-    if normalization.get("namespace_aliases") != {
+    if structural.get("namespace_aliases") != {
         "nexus_planning_candidate": "nexus",
         "nexus_runtime_support_candidate": "nexus",
     }:
         raise ValueError("planner_source_lineage_namespace_aliases_invalid")
+    if structural.get("claim") != "STRUCTURAL_PARITY_MODULO_EXPLICIT_EXTRACTION_DIFFERENCES":
+        raise ValueError("planner_source_lineage_structural_claim_invalid")
+
+    raw_binding = comparison.get("raw_binding", {})
+    if raw_binding.get("algorithm") != RAW_BINDING_ALGORITHM:
+        raise ValueError("planner_source_lineage_raw_binding_algorithm_invalid")
+    for field in (
+        "canonical_pair_source_set_sha256",
+        "packaged_pair_source_set_sha256",
+        "packaged_coverage_source_set_sha256",
+    ):
+        value = raw_binding.get(field)
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value.lower())
+        ):
+            raise ValueError(f"planner_source_lineage_raw_binding_invalid:{field}")
 
     invariants = payload.get("invariants", {})
     if invariants.get("runtime_is_planner_authority") is not False:
@@ -126,8 +210,61 @@ def _load_manifest(path: Path) -> dict[str, Any]:
         raise ValueError("planner_source_lineage_complete_override_invalid")
     if invariants.get("standalone_copy_may_not_define_independent_planner_semantics") is not True:
         raise ValueError("planner_source_lineage_semantic_owner_invalid")
-    if not payload.get("pairs"):
+    if invariants.get("raw_source_change_requires_explicit_rebind") is not True:
+        raise ValueError("planner_source_lineage_raw_rebind_invariant_invalid")
+
+    pairs = payload.get("pairs")
+    if not isinstance(pairs, list) or not pairs:
         raise ValueError("planner_source_lineage_pairs_required")
+    canonical_paths: set[str] = set()
+    packaged_paths: set[str] = set()
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            raise ValueError("planner_source_lineage_pair_invalid")
+        canonical_path = pair.get("canonical_path")
+        packaged_path = pair.get("packaged_path")
+        if not isinstance(canonical_path, str) or not canonical_path:
+            raise ValueError("planner_source_lineage_canonical_path_required")
+        if not isinstance(packaged_path, str) or not packaged_path:
+            raise ValueError("planner_source_lineage_packaged_path_required")
+        if canonical_path in canonical_paths:
+            raise ValueError(f"planner_source_lineage_duplicate_canonical_path:{canonical_path}")
+        if packaged_path in packaged_paths:
+            raise ValueError(f"planner_source_lineage_duplicate_packaged_path:{packaged_path}")
+        canonical_paths.add(canonical_path)
+        packaged_paths.add(packaged_path)
+
+    coverage = payload.get("coverage")
+    if not isinstance(coverage, dict):
+        raise ValueError("planner_source_lineage_coverage_required")
+    semantic_roots = coverage.get("packaged_semantic_roots")
+    if (
+        not isinstance(semantic_roots, list)
+        or not semantic_roots
+        or not all(isinstance(root, str) and root for root in semantic_roots)
+    ):
+        raise ValueError("planner_source_lineage_coverage_roots_invalid")
+    if len(set(semantic_roots)) != len(semantic_roots):
+        raise ValueError("planner_source_lineage_duplicate_coverage_root")
+
+    excluded_paths = coverage.get("excluded_paths")
+    if not isinstance(excluded_paths, list):
+        raise ValueError("planner_source_lineage_excluded_paths_invalid")
+    seen_exclusions: set[str] = set()
+    for exclusion in excluded_paths:
+        if not isinstance(exclusion, dict):
+            raise ValueError("planner_source_lineage_exclusion_invalid")
+        excluded_path = exclusion.get("path")
+        reason = exclusion.get("reason")
+        if not isinstance(excluded_path, str) or not excluded_path:
+            raise ValueError("planner_source_lineage_exclusion_path_required")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f"planner_source_lineage_exclusion_reason_required:{excluded_path}")
+        if excluded_path in seen_exclusions:
+            raise ValueError(f"planner_source_lineage_duplicate_exclusion:{excluded_path}")
+        if excluded_path in packaged_paths:
+            raise ValueError(f"planner_source_lineage_exclusion_also_paired:{excluded_path}")
+        seen_exclusions.add(excluded_path)
     return payload
 
 
@@ -142,9 +279,199 @@ def _resolve_under(root: Path, relative: str, *, field: str) -> Path:
     return resolved
 
 
+def _path_is_under(relative: str, root_relative: str) -> bool:
+    path = Path(relative)
+    root = Path(root_relative)
+    return path == root or root in path.parents
+
+
+def _discover_packaged_coverage(
+    *,
+    manifest: dict[str, Any],
+    runtime_root: Path,
+) -> tuple[dict[str, Any], list[str], set[str]]:
+    paired_paths = {pair["packaged_path"] for pair in manifest["pairs"]}
+    coverage = manifest["coverage"]
+    semantic_roots = list(coverage["packaged_semantic_roots"])
+    excluded = {item["path"]: item["reason"] for item in coverage["excluded_paths"]}
+    errors: list[str] = []
+    observed: set[str] = set()
+
+    for root_rel in semantic_roots:
+        root_path = _resolve_under(runtime_root, root_rel, field="coverage_root")
+        if not root_path.is_dir():
+            errors.append(f"planner_source_lineage_coverage_root_missing:{root_rel}")
+            continue
+        for path in sorted(root_path.rglob("*.py")):
+            try:
+                source = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                relative = path.resolve().relative_to(runtime_root.resolve()).as_posix()
+                errors.append(f"planner_source_lineage_coverage_source_unreadable:{relative}:{exc}")
+                continue
+            if not source.strip():
+                continue
+            relative = path.resolve().relative_to(runtime_root.resolve()).as_posix()
+            observed.add(relative)
+
+    for excluded_path in sorted(excluded):
+        resolved = _resolve_under(runtime_root, excluded_path, field="excluded")
+        if not resolved.is_file():
+            errors.append(f"planner_source_lineage_exclusion_missing:{excluded_path}")
+        elif excluded_path not in observed:
+            errors.append(f"planner_source_lineage_exclusion_not_semantic_source:{excluded_path}")
+        elif not any(_path_is_under(excluded_path, root) for root in semantic_roots):
+            errors.append(f"planner_source_lineage_exclusion_outside_coverage:{excluded_path}")
+
+    paired_in_coverage = {
+        path
+        for path in paired_paths
+        if any(_path_is_under(path, root) for root in semantic_roots)
+    }
+    for paired_path in sorted(paired_in_coverage - observed):
+        errors.append(f"planner_source_lineage_paired_source_not_observed:{paired_path}")
+
+    uncovered = sorted(observed - paired_paths - set(excluded))
+    for path in uncovered:
+        errors.append(f"planner_source_lineage_uncovered_packaged_source:{path}")
+
+    excluded_observed = sorted(observed & set(excluded))
+    paired_observed = sorted(observed & paired_paths)
+    receipt = {
+        "semantic_roots": semantic_roots,
+        "observed_nonempty_python_count": len(observed),
+        "paired_observed_count": len(paired_observed),
+        "excluded_observed_count": len(excluded_observed),
+        "accounted_observed_count": len(paired_observed) + len(excluded_observed),
+        "uncovered_paths": uncovered,
+        "excluded_paths": [
+            {"path": path, "reason": excluded[path]} for path in excluded_observed
+        ],
+    }
+    return receipt, errors, observed
+
+
+def _append_identity_errors(
+    *,
+    manifest: dict[str, Any],
+    canonical_root: Path,
+    canonical_ref_root: Path,
+    errors: list[str],
+) -> dict[str, Any]:
+    canonical = manifest["canonical"]
+    snapshot_head = _git_head(canonical_root)
+    snapshot_origin = _git_origin_repository(canonical_root)
+    snapshot_clean = _git_clean(canonical_root)
+    ref_head = _git_head(canonical_ref_root)
+    ref_branch = _git_branch(canonical_ref_root)
+    ref_origin = _git_origin_repository(canonical_ref_root)
+    ref_clean = _git_clean(canonical_ref_root)
+
+    if snapshot_head != canonical["snapshot_revision"]:
+        errors.append(
+            "canonical_snapshot_revision_mismatch:"
+            f"expected={canonical['snapshot_revision']}:observed={snapshot_head}"
+        )
+    if snapshot_origin != canonical["repository"]:
+        errors.append(
+            "canonical_snapshot_repository_mismatch:"
+            f"expected={canonical['repository']}:observed={snapshot_origin}"
+        )
+    if snapshot_clean is not True:
+        errors.append("canonical_snapshot_checkout_not_clean")
+    if ref_branch != canonical["ref"]:
+        errors.append(
+            "canonical_ref_name_mismatch:"
+            f"expected={canonical['ref']}:observed={ref_branch}"
+        )
+    if ref_origin != canonical["repository"]:
+        errors.append(
+            "canonical_ref_repository_mismatch:"
+            f"expected={canonical['repository']}:observed={ref_origin}"
+        )
+    if ref_clean is not True:
+        errors.append("canonical_ref_checkout_not_clean")
+
+    return {
+        "snapshot_revision_expected": canonical["snapshot_revision"],
+        "snapshot_revision_observed": snapshot_head,
+        "snapshot_repository_observed": snapshot_origin,
+        "snapshot_clean": snapshot_clean,
+        "ref_expected": canonical["ref"],
+        "ref_revision_observed": ref_head,
+        "ref_name_observed": ref_branch,
+        "ref_repository_observed": ref_origin,
+        "ref_clean": ref_clean,
+    }
+
+
+def _observe_raw_bindings(
+    *,
+    manifest: dict[str, Any],
+    canonical_root: Path,
+    canonical_ref_root: Path,
+    runtime_root: Path,
+    coverage_paths: set[str],
+    errors: list[str],
+) -> dict[str, Any]:
+    canonical_paths = {pair["canonical_path"] for pair in manifest["pairs"]}
+    packaged_paths = {pair["packaged_path"] for pair in manifest["pairs"]}
+    expected = manifest["comparison"]["raw_binding"]
+
+    observed: dict[str, str | None] = {
+        "canonical_snapshot_pair_source_set_sha256": None,
+        "canonical_ref_pair_source_set_sha256": None,
+        "packaged_pair_source_set_sha256": None,
+        "packaged_coverage_source_set_sha256": None,
+    }
+    calculations = (
+        (
+            "canonical_snapshot_pair_source_set_sha256",
+            canonical_root,
+            canonical_paths,
+            expected["canonical_pair_source_set_sha256"],
+            "canonical_snapshot_raw_binding_mismatch",
+        ),
+        (
+            "canonical_ref_pair_source_set_sha256",
+            canonical_ref_root,
+            canonical_paths,
+            expected["canonical_pair_source_set_sha256"],
+            "canonical_ref_raw_binding_mismatch",
+        ),
+        (
+            "packaged_pair_source_set_sha256",
+            runtime_root,
+            packaged_paths,
+            expected["packaged_pair_source_set_sha256"],
+            "packaged_pair_raw_binding_mismatch",
+        ),
+        (
+            "packaged_coverage_source_set_sha256",
+            runtime_root,
+            coverage_paths,
+            expected["packaged_coverage_source_set_sha256"],
+            "packaged_coverage_raw_binding_mismatch",
+        ),
+    )
+    for receipt_field, root, paths, expected_digest, error_prefix in calculations:
+        try:
+            digest = raw_source_set_digest(root, paths)
+        except (OSError, UnicodeError, ValueError) as exc:
+            errors.append(f"{error_prefix}:unreadable:{exc}")
+            continue
+        observed[receipt_field] = digest
+        if digest != expected_digest:
+            errors.append(
+                f"{error_prefix}:expected={expected_digest}:observed={digest}"
+            )
+    return observed
+
+
 def verify(
     *,
     canonical_root: Path,
+    canonical_ref_root: Path,
     runtime_root: Path,
     manifest_path: Path,
 ) -> tuple[dict[str, Any], int]:
@@ -152,40 +479,68 @@ def verify(
     errors: list[str] = []
     pair_receipts: list[dict[str, Any]] = []
 
+    identity = _append_identity_errors(
+        manifest=manifest,
+        canonical_root=canonical_root,
+        canonical_ref_root=canonical_ref_root,
+        errors=errors,
+    )
+    coverage_receipt, coverage_errors, coverage_paths = _discover_packaged_coverage(
+        manifest=manifest,
+        runtime_root=runtime_root,
+    )
+    errors.extend(coverage_errors)
+
     for pair in manifest["pairs"]:
         canonical_rel = pair["canonical_path"]
         packaged_rel = pair["packaged_path"]
-        canonical_path = _resolve_under(
-            canonical_root, canonical_rel, field="canonical"
+        canonical_path = _resolve_under(canonical_root, canonical_rel, field="canonical")
+        canonical_ref_path = _resolve_under(
+            canonical_ref_root, canonical_rel, field="canonical_ref"
         )
         packaged_path = _resolve_under(runtime_root, packaged_rel, field="packaged")
 
+        missing = False
         if not canonical_path.is_file():
             errors.append(f"canonical_source_missing:{canonical_rel}")
-            continue
+            missing = True
+        if not canonical_ref_path.is_file():
+            errors.append(f"canonical_ref_source_missing:{canonical_rel}")
+            missing = True
         if not packaged_path.is_file():
             errors.append(f"packaged_source_missing:{packaged_rel}")
+            missing = True
+        if missing:
             continue
 
         try:
-            canonical_digest = semantic_digest(canonical_path)
-            packaged_digest = semantic_digest(packaged_path)
+            canonical_digest = structural_digest(canonical_path)
+            packaged_digest = structural_digest(packaged_path)
         except (OSError, SyntaxError, UnicodeError) as exc:
             errors.append(f"planner_source_unreadable:{canonical_rel}:{packaged_rel}:{exc}")
             continue
 
-        match = canonical_digest == packaged_digest
+        structural_match = canonical_digest == packaged_digest
         pair_receipts.append(
             {
                 "canonical_path": canonical_rel,
                 "packaged_path": packaged_rel,
-                "canonical_semantic_sha256": canonical_digest,
-                "packaged_semantic_sha256": packaged_digest,
-                "match": match,
+                "canonical_structural_sha256": canonical_digest,
+                "packaged_structural_sha256": packaged_digest,
+                "structural_match": structural_match,
             }
         )
-        if not match:
-            errors.append(f"planner_semantic_drift:{canonical_rel}:{packaged_rel}")
+        if not structural_match:
+            errors.append(f"planner_structural_drift:{canonical_rel}:{packaged_rel}")
+
+    raw_bindings = _observe_raw_bindings(
+        manifest=manifest,
+        canonical_root=canonical_root,
+        canonical_ref_root=canonical_ref_root,
+        runtime_root=runtime_root,
+        coverage_paths=coverage_paths,
+        errors=errors,
+    )
 
     canonical = manifest["canonical"]
     packaged = manifest["packaged"]
@@ -193,13 +548,8 @@ def verify(
         "schema": RECEIPT_SCHEMA,
         "status": "PASS" if not errors else "FAIL",
         "canonical_repository": canonical["repository"],
-        "canonical_ref": canonical["ref"],
-        "canonical_snapshot_revision": canonical["snapshot_revision"],
-        "canonical_observed_revision": _git_head(canonical_root),
-        "canonical_snapshot_is_observed_revision": (
-            canonical["snapshot_revision"] == _git_head(canonical_root)
-        ),
         "canonical_role": canonical["role"],
+        "canonical_identity": identity,
         "packaged_repository": packaged["repository"],
         "packaged_baseline_revision": packaged["baseline_revision"],
         "runtime_observed_revision": _git_head(runtime_root),
@@ -207,9 +557,16 @@ def verify(
         "runtime_is_planner_authority": manifest["invariants"][
             "runtime_is_planner_authority"
         ],
-        "normalization_schema": manifest["normalization"]["schema"],
+        "comparison_schema": manifest["comparison"]["schema"],
+        "structural_comparison_schema": manifest["comparison"][
+            "normalized_structure"
+        ]["schema"],
+        "structural_claim": manifest["comparison"]["normalized_structure"]["claim"],
+        "raw_binding_algorithm": manifest["comparison"]["raw_binding"]["algorithm"],
+        "raw_bindings": raw_bindings,
         "pair_count": len(manifest["pairs"]),
         "checked_pair_count": len(pair_receipts),
+        "coverage": coverage_receipt,
         "pairs": pair_receipts,
         "errors": errors,
     }
@@ -219,6 +576,7 @@ def verify(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--canonical-root", type=Path, required=True)
+    parser.add_argument("--canonical-ref-root", type=Path, required=True)
     parser.add_argument("--runtime-root", type=Path, default=Path.cwd())
     parser.add_argument(
         "--manifest",
@@ -228,11 +586,14 @@ def main() -> int:
     args = parser.parse_args()
 
     canonical_root = args.canonical_root.resolve()
+    canonical_ref_root = args.canonical_ref_root.resolve()
     runtime_root = args.runtime_root.resolve()
     manifest_path = args.manifest.resolve()
 
     if not canonical_root.is_dir():
         raise SystemExit(f"canonical_root_missing:{canonical_root}")
+    if not canonical_ref_root.is_dir():
+        raise SystemExit(f"canonical_ref_root_missing:{canonical_ref_root}")
     if not runtime_root.is_dir():
         raise SystemExit(f"runtime_root_missing:{runtime_root}")
     if not manifest_path.is_file():
@@ -241,6 +602,7 @@ def main() -> int:
     try:
         receipt, exit_code = verify(
             canonical_root=canonical_root,
+            canonical_ref_root=canonical_ref_root,
             runtime_root=runtime_root,
             manifest_path=manifest_path,
         )
