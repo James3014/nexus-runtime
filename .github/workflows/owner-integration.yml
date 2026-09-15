@@ -1,0 +1,154 @@
+name: Owner integration
+
+on:
+  pull_request:
+    branches:
+      - codex/repo-split
+  push:
+    branches:
+      - codex/repo-split
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owner-integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  owner-integration:
+    name: Required canonical owner integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXUS_RUNTIME_OWNER_INTEGRATION_STRICT: "1"
+      RUNTIME_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+      CORE_REF: 5e54a243b6f1e26824880a11ef4138812c623c78
+      LEARNING_REF: 00004ad1889eec1cf92546dd8bfd58f2a88a1acf
+      OPENSWE_REF: 92c605bf0796f3f97991ea48528e2543ed27bd4c
+      RIE_REF: b65fb7a0a38685b69aff6866d56243ed9856f625
+    steps:
+      - name: Check out exact current runtime
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out canonical Core owner
+        uses: actions/checkout@v4
+        with:
+          repository: James3014/nexus-core
+          ref: 5e54a243b6f1e26824880a11ef4138812c623c78
+          path: .ci/owners/nexus-core
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out canonical Learning owner
+        uses: actions/checkout@v4
+        with:
+          repository: James3014/nexus-learning
+          ref: 00004ad1889eec1cf92546dd8bfd58f2a88a1acf
+          path: .ci/owners/nexus-learning
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out canonical Open SWE owner
+        uses: actions/checkout@v4
+        with:
+          repository: James3014/nexus-open-swe-runtime
+          ref: 92c605bf0796f3f97991ea48528e2543ed27bd4c
+          path: .ci/owners/nexus-open-swe-runtime
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out canonical Repository Intelligence owner
+        uses: actions/checkout@v4
+        with:
+          repository: James3014/repository-intelligence-engine
+          ref: b65fb7a0a38685b69aff6866d56243ed9856f625
+          path: .ci/owners/repository-intelligence-engine
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Create isolated owner integration environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/owner-integration-venv"
+          echo "OWNER_INTEGRATION_VENV=$RUNNER_TEMP/owner-integration-venv" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/owner-integration-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install all canonical owner packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements/standalone-wheel-ci.txt
+          python -m pip install --no-build-isolation "$GITHUB_WORKSPACE/.ci/owners/nexus-core"
+          python -m pip install --no-build-isolation --no-deps "$GITHUB_WORKSPACE/.ci/owners/nexus-learning"
+          python -m pip install --no-build-isolation "$GITHUB_WORKSPACE/.ci/owners/nexus-open-swe-runtime"
+          python -m pip install --no-build-isolation --no-deps "$GITHUB_WORKSPACE/.ci/owners/repository-intelligence-engine"
+          python -m pip install --no-build-isolation --no-deps "$GITHUB_WORKSPACE"
+
+      - name: Record actual revisions and import locations
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity_dir="$RUNNER_TEMP/owner-integration"
+          mkdir -p "$identity_dir"
+          {
+            runtime_actual=$(git rev-parse HEAD)
+            echo "runtime expected=$RUNTIME_REF actual=$runtime_actual"
+            test "$runtime_actual" = "$RUNTIME_REF"
+            for owner_ref in \
+              "nexus-core:$CORE_REF" \
+              "nexus-learning:$LEARNING_REF" \
+              "nexus-open-swe-runtime:$OPENSWE_REF" \
+              "repository-intelligence-engine:$RIE_REF"; do
+              owner="${owner_ref%%:*}"
+              expected="${owner_ref#*:}"
+              actual=$(git -C "$GITHUB_WORKSPACE/.ci/owners/$owner" rev-parse HEAD)
+              echo "owner=$owner expected=$expected actual=$actual"
+              test "$actual" = "$expected"
+            done
+            python - <<'PY'
+          import importlib.util
+
+          modules = (
+              "nexus_runtime_support_candidate",
+              "product",
+              "nexus_learning",
+              "nexus_open_swe_runtime",
+              "repository_intelligence",
+          )
+          for module_name in modules:
+              spec = importlib.util.find_spec(module_name)
+              if spec is None or spec.origin is None:
+                  raise RuntimeError(f"required import location unavailable: {module_name}")
+              print(f"import={module_name} location={spec.origin}")
+          PY
+          } | tee "$identity_dir/identity.txt"
+          cat "$identity_dir/identity.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run required owner integration
+        shell: bash
+        env:
+          NEXUS_RUNTIME_OWNER_INTEGRATION_STRICT: "1"
+          PYTHONNOUSERSITE: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/owner-integration"
+          python -m pytest -q tests/integration/test_owner_workflow.py --junitxml="$RUNNER_TEMP/owner-integration/junit.xml"
+
+      - name: Upload owner integration evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: owner-integration-evidence
+          path: ${{ runner.temp }}/owner-integration
+          if-no-files-found: error
