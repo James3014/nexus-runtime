@@ -10,6 +10,9 @@ from pathlib import Path
 
 CANONICAL_REPOSITORY = "James3014/Nexus-new"
 CANONICAL_REMOTE = "https://github.com/James3014/Nexus-new.git"
+RUNTIME_REPOSITORY = "James3014/nexus-runtime"
+RUNTIME_REMOTE = "https://github.com/James3014/nexus-runtime.git"
+POLICY_REL = "src/nexus_planning_candidate/config/model_workforce.yaml"
 
 
 def _source_root() -> Path:
@@ -57,13 +60,27 @@ def _raw_source_set_digest(root: Path, paths: set[str]) -> str:
     return digest.hexdigest()
 
 
-def _coverage_paths(runtime_root: Path) -> set[str]:
-    coverage_root = runtime_root / "src" / "nexus_planning_candidate"
+def _tracked_nonempty_paths(root: Path, scopes: list[str]) -> set[str]:
+    tracked = _git(root, "ls-files", "--", *scopes).splitlines()
     return {
-        path.relative_to(runtime_root).as_posix()
-        for path in coverage_root.rglob("*.py")
-        if path.read_text(encoding="utf-8").strip()
+        relative
+        for relative in tracked
+        if relative and (root / relative).read_bytes().strip()
     }
+
+
+def _init_runtime_repo(
+    root: Path,
+    *,
+    branch: str = "codex/issue-20-planner-source-convergence",
+) -> str:
+    subprocess.run(["git", "init", "-q", "-b", branch, str(root)], check=True)
+    _git(root, "config", "user.name", "Planner parity fixture")
+    _git(root, "config", "user.email", "planner-parity@example.invalid")
+    _git(root, "add", ".")
+    _git(root, "commit", "-q", "-m", "runtime fixture")
+    _git(root, "remote", "add", "origin", RUNTIME_REMOTE)
+    return _git(root, "rev-parse", "HEAD")
 
 
 def _write_manifest(
@@ -74,12 +91,21 @@ def _write_manifest(
     canonical_path: str,
     packaged_path: str,
     snapshot_revision: str,
+    baseline_revision: str,
 ) -> None:
     canonical_paths = {canonical_path}
     packaged_paths = {packaged_path}
-    coverage_paths = _coverage_paths(runtime_root)
+    canonical_semantic_roots = ["nexus/engine"]
+    canonical_semantic_paths = [canonical_path]
+    canonical_coverage_paths = _tracked_nonempty_paths(
+        canonical_root, canonical_semantic_roots + canonical_semantic_paths
+    )
+    packaged_semantic_roots = ["src/nexus_planning_candidate"]
+    packaged_coverage_paths = _tracked_nonempty_paths(
+        runtime_root, packaged_semantic_roots
+    )
     payload = {
-        "schema": "nexus.runtime.planner_source_lineage.v2",
+        "schema": "nexus.runtime.planner_source_lineage.v3",
         "canonical": {
             "repository": CANONICAL_REPOSITORY,
             "ref": "main",
@@ -87,12 +113,12 @@ def _write_manifest(
             "role": "CANONICAL_ALGORITHM_SOURCE",
         },
         "packaged": {
-            "repository": "James3014/nexus-runtime",
-            "baseline_revision": "1" * 40,
+            "repository": RUNTIME_REPOSITORY,
+            "baseline_revision": baseline_revision,
             "role": "STANDALONE_QUALIFICATION_COPY",
         },
         "comparison": {
-            "schema": "nexus.runtime.planner_source_binding.v2",
+            "schema": "nexus.runtime.planner_source_binding.v3",
             "normalized_structure": {
                 "schema": "python_ast_planner_structure.v2",
                 "strip_docstrings": True,
@@ -107,11 +133,14 @@ def _write_manifest(
                 "canonical_pair_source_set_sha256": _raw_source_set_digest(
                     canonical_root, canonical_paths
                 ),
+                "canonical_coverage_source_set_sha256": _raw_source_set_digest(
+                    canonical_root, canonical_coverage_paths
+                ),
                 "packaged_pair_source_set_sha256": _raw_source_set_digest(
                     runtime_root, packaged_paths
                 ),
                 "packaged_coverage_source_set_sha256": _raw_source_set_digest(
-                    runtime_root, coverage_paths
+                    runtime_root, packaged_coverage_paths
                 ),
             },
         },
@@ -122,8 +151,15 @@ def _write_manifest(
             "raw_source_change_requires_explicit_rebind": True,
         },
         "coverage": {
-            "packaged_semantic_roots": ["src/nexus_planning_candidate"],
-            "excluded_paths": [],
+            "canonical_semantic_roots": canonical_semantic_roots,
+            "canonical_semantic_paths": canonical_semantic_paths,
+            "packaged_semantic_roots": packaged_semantic_roots,
+            "excluded_paths": [
+                {
+                    "path": POLICY_REL,
+                    "reason": "runtime_policy_resource_bound_by_raw_coverage_not_structural_pair",
+                }
+            ],
         },
         "pairs": [
             {
@@ -154,9 +190,16 @@ def _fixture(
     packaged_file = runtime_root / packaged_rel
     packaged_file.parent.mkdir(parents=True)
     packaged_file.write_text(packaged_source, encoding="utf-8")
+    policy_file = runtime_root / POLICY_REL
+    policy_file.parent.mkdir(parents=True)
+    policy_file.write_text(
+        "route_authority: CapabilityPlanner\nunknown_provider_behavior: FAIL_CLOSED\n",
+        encoding="utf-8",
+    )
 
     snapshot_revision = _init_canonical_repo(canonical_root)
     _init_canonical_repo(canonical_ref_root)
+    baseline_revision = _init_runtime_repo(runtime_root)
     manifest = tmp_path / "manifest.json"
     _write_manifest(
         manifest,
@@ -165,6 +208,7 @@ def _fixture(
         canonical_path=canonical_rel,
         packaged_path=packaged_rel,
         snapshot_revision=snapshot_revision,
+        baseline_revision=baseline_revision,
     )
     return (
         canonical_root,
@@ -181,7 +225,10 @@ def _run_guard(
     canonical_ref_root: Path,
     runtime_root: Path,
     manifest: Path,
+    *,
+    expected_runtime_head: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    expected_head = expected_runtime_head or _git(runtime_root, "rev-parse", "HEAD")
     return subprocess.run(
         [
             sys.executable,
@@ -192,6 +239,8 @@ def _run_guard(
             str(canonical_ref_root),
             "--runtime-root",
             str(runtime_root),
+            "--expected-runtime-head",
+            expected_head,
             "--manifest",
             str(manifest),
         ],
@@ -224,8 +273,13 @@ def test_guard_accepts_explicitly_bound_extraction_differences(tmp_path: Path) -
 
     assert completed.returncode == 0, completed.stderr
     assert receipt["status"] == "PASS"
+    assert receipt["schema"] == "nexus.runtime.planner_source_binding_receipt.v3"
     assert receipt["pair_count"] == 1
     assert receipt["pairs"][0]["structural_match"] is True
+    assert receipt["runtime_identity"]["repository_observed"] == RUNTIME_REPOSITORY
+    assert receipt["runtime_identity"]["baseline_is_ancestor_of_head"] is True
+    assert receipt["runtime_identity"]["clean"] is True
+    assert POLICY_REL in receipt["coverage"]["packaged"]["observed_paths"]
     assert receipt["runtime_is_planner_authority"] is False
     assert receipt["structural_claim"] == (
         "STRUCTURAL_PARITY_MODULO_EXPLICIT_EXTRACTION_DIFFERENCES"
@@ -261,13 +315,15 @@ def test_guard_rejects_unaccounted_packaged_semantic_source(tmp_path: Path) -> N
         "def policy(value: int) -> int:\n    return value * 2\n",
         encoding="utf-8",
     )
+    _git(runtime_root, "add", unaccounted_rel)
+    _git(runtime_root, "commit", "-q", "-m", "add unaccounted semantic source")
 
     completed = _run_guard(canonical_root, canonical_ref_root, runtime_root, manifest)
     receipt = json.loads(completed.stdout)
 
     assert completed.returncode == 1
     assert receipt["status"] == "FAIL"
-    assert receipt["coverage"]["uncovered_paths"] == [unaccounted_rel]
+    assert receipt["coverage"]["packaged"]["uncovered_paths"] == [unaccounted_rel]
     assert (
         f"planner_source_lineage_uncovered_packaged_source:{unaccounted_rel}"
         in receipt["errors"]
@@ -415,5 +471,108 @@ def test_guard_rejects_current_canonical_ref_source_drift(tmp_path: Path) -> Non
     assert completed.returncode == 1
     assert any(
         error.startswith("canonical_ref_raw_binding_mismatch:")
+        for error in receipt["errors"]
+    )
+
+
+def test_guard_rejects_packaged_policy_resource_drift_after_binding(tmp_path: Path) -> None:
+    fixture = _fixture(
+        tmp_path,
+        canonical_source="def choose() -> int:\n    return 1\n",
+        packaged_source="def choose() -> int:\n    return 1\n",
+    )
+    canonical_root, canonical_ref_root, runtime_root, manifest = fixture[:4]
+    policy_file = runtime_root / POLICY_REL
+    policy_file.write_text(
+        "route_authority: Runtime\nunknown_provider_behavior: ALLOW\n",
+        encoding="utf-8",
+    )
+    _git(runtime_root, "add", POLICY_REL)
+    _git(runtime_root, "commit", "-q", "-m", "drift packaged workforce policy")
+
+    completed = _run_guard(canonical_root, canonical_ref_root, runtime_root, manifest)
+    receipt = json.loads(completed.stdout)
+
+    assert completed.returncode == 1
+    assert POLICY_REL in receipt["coverage"]["packaged"]["observed_paths"]
+    assert any(
+        error.startswith("packaged_coverage_raw_binding_mismatch:")
+        for error in receipt["errors"]
+    )
+
+
+def test_guard_rejects_new_canonical_semantic_source_after_binding(tmp_path: Path) -> None:
+    fixture = _fixture(
+        tmp_path,
+        canonical_source="def choose() -> int:\n    return 1\n",
+        packaged_source="def choose() -> int:\n    return 1\n",
+    )
+    canonical_root, canonical_ref_root, runtime_root, manifest = fixture[:4]
+    new_rel = "nexus/engine/planner/new_algorithm.py"
+    new_file = canonical_ref_root / new_rel
+    new_file.parent.mkdir(parents=True)
+    new_file.write_text("def new_algorithm() -> int:\n    return 7\n", encoding="utf-8")
+    _git(canonical_ref_root, "add", new_rel)
+    _git(canonical_ref_root, "commit", "-q", "-m", "add canonical planner source")
+
+    completed = _run_guard(canonical_root, canonical_ref_root, runtime_root, manifest)
+    receipt = json.loads(completed.stdout)
+
+    assert completed.returncode == 1
+    assert new_rel in receipt["coverage"]["canonical_ref"]["observed_paths"]
+    assert any(
+        error.startswith("canonical_ref_coverage_raw_binding_mismatch:")
+        for error in receipt["errors"]
+    )
+
+
+def test_guard_rejects_runtime_repository_base_head_and_dirty_substitution(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(
+        tmp_path,
+        canonical_source="def choose() -> int:\n    return 1\n",
+        packaged_source="def choose() -> int:\n    return 1\n",
+    )
+    canonical_root, canonical_ref_root, runtime_root, manifest, _, packaged_rel = fixture
+    _git(
+        runtime_root,
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/James3014/not-nexus-runtime.git",
+    )
+    runtime_tree = _git(runtime_root, "rev-parse", "HEAD^{tree}")
+    unrelated_baseline = _git(
+        runtime_root,
+        "commit-tree",
+        runtime_tree,
+        "-m",
+        "unrelated baseline",
+    )
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["packaged"]["baseline_revision"] = unrelated_baseline
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    packaged_file = runtime_root / packaged_rel
+    packaged_file.write_text(
+        packaged_file.read_text(encoding="utf-8") + "\n# dirty\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_guard(
+        canonical_root,
+        canonical_ref_root,
+        runtime_root,
+        manifest,
+        expected_runtime_head="f" * 40,
+    )
+    receipt = json.loads(completed.stdout)
+
+    assert completed.returncode == 1
+    assert any(error.startswith("runtime_repository_mismatch:") for error in receipt["errors"])
+    assert any(error.startswith("runtime_head_mismatch:") for error in receipt["errors"])
+    assert "runtime_checkout_not_clean" in receipt["errors"]
+    assert any(
+        error.startswith("runtime_baseline_not_ancestor_of_head:")
         for error in receipt["errors"]
     )
