@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "ci" / "verify_planner_source_parity.py"
+def _source_root() -> Path:
+    local_root = Path(__file__).resolve().parents[1]
+    local_script = local_root / "scripts" / "ci" / "verify_planner_source_parity.py"
+    if local_script.is_file():
+        return local_root
+    github_workspace = os.environ.get("GITHUB_WORKSPACE")
+    if github_workspace:
+        return Path(github_workspace).resolve()
+    return local_root
+
+
+SCRIPT = _source_root() / "scripts" / "ci" / "verify_planner_source_parity.py"
 
 
 def _write_manifest(path: Path, canonical_path: str, packaged_path: str) -> None:
