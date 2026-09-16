@@ -512,10 +512,15 @@ def test_launch_uses_explicit_standalone_worker_command():
     assert state.events == []
 
 
+_RECORDING_PREP_UNSET = object()
+
+
 class RecordingPreparation:
-    def __init__(self, result=None, fail_with=None):
+    def __init__(self, result=_RECORDING_PREP_UNSET, fail_with=None):
         self.invocations = []
-        self.result = result if result is not None else {"binding_id": "bind-01"}
+        self.result = (
+            {"binding_id": "bind-01"} if result is _RECORDING_PREP_UNSET else result
+        )
         self.fail_with = fail_with
 
     def prepare_host(self, contract, request, lease, state, *, active_provider=None):
@@ -647,3 +652,58 @@ def test_public_context_aware_coordinator_forwards_preparation_port():
     coordinator.execute_attempt("task", "att")
     assert len(prep.invocations) == 1
     assert state.snapshot.get("host_preparation") == {"binding_id": "bind-public-wrapper"}
+
+
+def test_required_preparation_returning_none_fails_closed_zero_worker_invocations():
+    prep = RecordingPreparation(result=None)
+    coordinator, state, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        preparation=prep,
+    )
+    state.snapshot["request"]["requires_host_preparation"] = True
+    with pytest.raises(RuntimeError) as exc:
+        coordinator.execute_attempt("task", "att")
+    assert "HOST_PREPARATION_FAILED" in str(exc.value)
+    assert len(prep.invocations) == 1
+    assert len(worker.invocations) == 0
+
+
+def test_recovered_worker_running_with_required_prep_and_no_durable_prep_fails_closed():
+    prep = RecordingPreparation({"binding_id": "bind-mint-attempt"})
+    coordinator, state, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        status="WORKER_RUNNING",
+        preparation=prep,
+    )
+    state.snapshot["request"]["requires_host_preparation"] = True
+    with pytest.raises(RuntimeError) as exc:
+        coordinator.execute_attempt("task", "att")
+    assert "HOST_PREPARATION_MISSING_ON_RECOVERY" in str(exc.value)
+    assert len(prep.invocations) == 0
+    assert len(worker.invocations) == 0
+
+
+def test_same_binding_id_with_changed_binding_hash_rejected_before_worker_invocation():
+    prep = RecordingPreparation({
+        "binding_id": "bind-1",
+        "binding_hash": "hash-mutated",
+    })
+    coordinator, state, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        status="WORKER_RUNNING",
+        preparation=prep,
+    )
+    state.snapshot["host_preparation"] = {
+        "binding_id": "bind-1",
+        "binding_hash": "hash-initial",
+    }
+    with pytest.raises(RuntimeError) as exc:
+        coordinator.execute_attempt("task", "att")
+    assert "HOST_PREPARATION_IDENTITY_MUTATED" in str(exc.value)
+    assert len(worker.invocations) == 0
