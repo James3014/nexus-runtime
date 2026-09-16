@@ -20,6 +20,7 @@ from .ports import (
     ExecutionContractPort,
     ExecutionFinalizationPort,
     ExecutionStatePort,
+    HostPreparationPort,
     MissingExecutionBindingError,
     ProcessOwnershipPort,
     TargetExecutionPort,
@@ -112,6 +113,20 @@ class WorkerEscalationPolicy:
         )
 
 
+def _extract_prep_identity(val: Any) -> Any:
+    if val is None:
+        return None
+    if isinstance(val, Mapping):
+        for key in ("binding_id", "binding_hash", "operation_id", "preparation_id", "id"):
+            if key in val:
+                return val[key]
+        return val
+    for attr in ("binding_id", "binding_hash", "operation_id", "preparation_id", "id"):
+        if hasattr(val, attr):
+            return getattr(val, attr)
+    return val
+
+
 @dataclass(frozen=True)
 class ExecutionCoordinator:
     state: ExecutionStatePort
@@ -120,6 +135,7 @@ class ExecutionCoordinator:
     target: TargetExecutionPort
     processes: ProcessOwnershipPort
     finalization: ExecutionFinalizationPort
+    preparation: HostPreparationPort | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -375,6 +391,38 @@ class ExecutionCoordinator:
                 )
                 if remaining_timeout <= 0:
                     raise RuntimeError("WALL_TIME_BUDGET_EXHAUSTED")
+                requires_prep = bool(
+                    request.get("requires_host_preparation")
+                    or getattr(contract, "requires_host_preparation", False)
+                )
+                if self.preparation is None:
+                    if requires_prep:
+                        raise MissingExecutionBindingError(
+                            "explicit preparation port is required for host-prepared execution"
+                        )
+                else:
+                    existing_prep = state.get("host_preparation")
+                    prep_result = self.preparation.prepare_host(
+                        contract,
+                        request,
+                        lease,
+                        state,
+                        active_provider=provider,
+                    )
+                    if existing_prep is not None:
+                        existing_id = _extract_prep_identity(existing_prep)
+                        new_id = _extract_prep_identity(prep_result)
+                        if (
+                            existing_id is not None
+                            and new_id is not None
+                            and existing_id != new_id
+                        ):
+                            raise RuntimeError(
+                                f"HOST_PREPARATION_IDENTITY_MUTATED: existing={existing_id} new={new_id}"
+                            )
+                    elif prep_result is not None:
+                        update("WORKER_RUNNING", {"host_preparation": prep_result})
+                        state = self.state.read_snapshot(task_id) or {}
                 execution_receipt = self.worker.invoke(
                     provider,
                     invoke_contract,

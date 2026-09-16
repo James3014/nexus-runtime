@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from nexus_runtime.execution_coordination import ExecutionCoordinator, WorkerOutcome
+from nexus_runtime.execution_coordination import (
+    ExecutionCoordinator,
+    MissingExecutionBindingError,
+    WorkerOutcome,
+)
 
 
 @dataclass
@@ -189,7 +193,7 @@ class Finalization:
         self.failures.append(str(error))
 
 
-def build(receipts, *, status="SUBMITTED", contract=None):
+def build(receipts, *, status="SUBMITTED", contract=None, preparation=None):
     state = State(status)
     if contract is None:
         contract = Contract()
@@ -197,7 +201,7 @@ def build(receipts, *, status="SUBMITTED", contract=None):
     target = Target()
     finalization = Finalization()
     coordinator = ExecutionCoordinator(
-        state, contract, worker, target, Processes(), finalization
+        state, contract, worker, target, Processes(), finalization, preparation=preparation
     )
     return coordinator, state, worker, target, finalization
 
@@ -506,3 +510,140 @@ def test_launch_uses_explicit_standalone_worker_command():
     ]
     assert result["worker_mode"] == "process"
     assert state.events == []
+
+
+class RecordingPreparation:
+    def __init__(self, result=None, fail_with=None):
+        self.invocations = []
+        self.result = result if result is not None else {"binding_id": "bind-01"}
+        self.fail_with = fail_with
+
+    def prepare_host(self, contract, request, lease, state, *, active_provider=None):
+        self.invocations.append({
+            "provider": active_provider,
+            "contract": contract,
+            "lease": lease,
+        })
+        if self.fail_with:
+            raise self.fail_with
+        return self.result if not callable(self.result) else self.result()
+
+
+def test_preparation_executes_before_worker_invocation():
+    prep = RecordingPreparation({"binding_id": "bind-canonical"})
+    coordinator, state, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        preparation=prep,
+    )
+    coordinator.execute_attempt("task", "att")
+    assert len(prep.invocations) == 1
+    assert prep.invocations[0]["provider"] == "codex"
+    assert worker.invocations == ["codex"]
+    assert state.snapshot.get("host_preparation") == {"binding_id": "bind-canonical"}
+
+
+def test_preparation_failure_fails_closed_zero_worker_invocations():
+    prep = RecordingPreparation(fail_with=RuntimeError("HOST_PREPARATION_FAILED"))
+    coordinator, _, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        preparation=prep,
+    )
+    with pytest.raises(RuntimeError) as exc:
+        coordinator.execute_attempt("task", "att")
+    assert "HOST_PREPARATION_FAILED" in str(exc.value)
+    assert len(worker.invocations) == 0
+
+
+def test_missing_required_preparation_fails_closed_zero_worker_invocations():
+    coordinator, state, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        preparation=None,
+    )
+    state.snapshot["request"]["requires_host_preparation"] = True
+    with pytest.raises(MissingExecutionBindingError):
+        coordinator.execute_attempt("task", "att")
+    assert len(worker.invocations) == 0
+
+
+def test_provider_fallback_preserves_same_preparation_lineage():
+    prep = RecordingPreparation({"binding_id": "bind-canonical"})
+    coordinator, state, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, timed_out=True),
+            Receipt("opencode", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        preparation=prep,
+    )
+    coordinator.execute_attempt("task", "att")
+    assert worker.invocations == ["codex", "opencode"]
+    assert state.snapshot.get("host_preparation") == {"binding_id": "bind-canonical"}
+
+
+def test_provider_fallback_rejects_second_minted_preparation_identity():
+    counter = 0
+
+    def dynamic_prep():
+        nonlocal counter
+        counter += 1
+        return {"binding_id": f"bind-{counter}"}
+
+    prep = RecordingPreparation(result=dynamic_prep)
+    coordinator, _, _, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, timed_out=True),
+            Receipt("opencode", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        preparation=prep,
+    )
+    with pytest.raises(RuntimeError) as exc:
+        coordinator.execute_attempt("task", "att")
+    assert "HOST_PREPARATION_IDENTITY_MUTATED" in str(exc.value)
+
+
+def test_continuation_after_possible_effect_rejects_identity_replacement():
+    prep = RecordingPreparation({"binding_id": "bind-mutated"})
+    coordinator, state, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        status="WORKER_RUNNING",
+        preparation=prep,
+    )
+    state.snapshot["host_preparation"] = {"binding_id": "bind-initial"}
+    state.snapshot["executions"] = [Receipt("codex", WorkerOutcome.INCOMPLETE.value, False)]
+    with pytest.raises(RuntimeError) as exc:
+        coordinator.execute_attempt("task", "att")
+    assert "HOST_PREPARATION_IDENTITY_MUTATED" in str(exc.value)
+    assert len(worker.invocations) == 0
+
+
+def test_readonly_path_does_not_require_fake_preparation():
+    coordinator, state, worker, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        preparation=None,
+    )
+    state.snapshot["request"]["requires_host_preparation"] = False
+    coordinator.execute_attempt("task", "att")
+    assert worker.invocations == ["codex"]
+    assert "host_preparation" not in state.snapshot
+
+
+def test_public_context_aware_coordinator_forwards_preparation_port():
+    prep = RecordingPreparation({"binding_id": "bind-public-wrapper"})
+    coordinator, state, _, _, _ = build(
+        [
+            Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ],
+        preparation=prep,
+    )
+    coordinator.execute_attempt("task", "att")
+    assert len(prep.invocations) == 1
+    assert state.snapshot.get("host_preparation") == {"binding_id": "bind-public-wrapper"}
