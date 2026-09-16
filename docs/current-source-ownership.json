@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "67a37c61561d3608ff622f33bdfbd4c0c7423ecb",
+  "source_head": "676f1481d2aaafc6fd0d8019c7ffd184a62800e3",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -803,7 +803,7 @@
     },
     {
       "path": "nexus_runtime/execution_coordination/coordinator.py",
-      "sha256": "ba4d03ae5095d147c1db5e74d4f900c221d06315b37ba208feefc549220fe045",
+      "sha256": "c615f6df266d827ced74d926e7c7ae76cd3655d17eeae30c244d70aa732fac25",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
