@@ -147,5 +147,19 @@ class ExecutionFinalizationPort(Protocol):
     ) -> None: ...
 
 
+class HostPreparationPort(Protocol):
+    """Explicit pre-mutation host preparation boundary invoked before worker.invoke()."""
+
+    def prepare_host(
+        self,
+        contract: Any,
+        request: Mapping[str, Any],
+        lease: Any,
+        state: Mapping[str, Any],
+        *,
+        active_provider: str | None = None,
+    ) -> Mapping[str, Any] | None: ...
+
+
 class MissingExecutionBindingError(RuntimeError):
     """Raised when coordination would otherwise fall back to donor behavior."""
