@@ -62,7 +62,37 @@ class ExecutionContractPort(Protocol):
 
     def with_provider_call_budget(self, contract: Any, remaining_calls: int) -> Any: ...
 
+    def host_preparation_required(
+        self, contract: Any, request: Mapping[str, Any]
+    ) -> bool: ...
+
     def materialize_worker_context(self, **kwargs: Any) -> tuple[str, Mapping[str, Any]] | None: ...
+
+
+class ExecutionPreparationPort(Protocol):
+    def prepare_before_worker(
+        self,
+        contract: Any,
+        request: Mapping[str, Any],
+        lease: Any,
+        state: Mapping[str, Any],
+        *,
+        task_id: str,
+        attempt_id: str,
+    ) -> Mapping[str, Any]: ...
+
+    def revalidate_before_worker(
+        self,
+        preparation: Mapping[str, Any],
+        contract: Any,
+        request: Mapping[str, Any],
+        lease: Any,
+        state: Mapping[str, Any],
+        *,
+        task_id: str,
+        attempt_id: str,
+        active_provider: str,
+    ) -> None: ...
 
 
 class WorkerAdapterPort(Protocol):

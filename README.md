@@ -18,7 +18,7 @@ intentionally not hard-coded here; read Git/GitHub when current revision identit
 matters.
 
 The current Python source-ownership snapshot is bound to
-`1fc22650f3d4f268df9e68ae16903751a042abfe`. That SHA is a source-scope anchor for
+`8b043cb215474fbed84c164e6f2177996da88e1a`. That SHA is a source-scope anchor for
 the `src/**/*.py` hashes in `docs/current-source-ownership.json`, not a standing
 claim about the live repository HEAD. Later non-`src` commits do not invalidate
 the snapshot; any `src` mutation requires refreshing the ownership map.

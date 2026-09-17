@@ -19,6 +19,7 @@ from typing import Any, Callable, Optional
 from .ports import (
     ExecutionContractPort,
     ExecutionFinalizationPort,
+    ExecutionPreparationPort,
     ExecutionStatePort,
     MissingExecutionBindingError,
     ProcessOwnershipPort,
@@ -120,6 +121,7 @@ class ExecutionCoordinator:
     target: TargetExecutionPort
     processes: ProcessOwnershipPort
     finalization: ExecutionFinalizationPort
+    preparation: ExecutionPreparationPort | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -137,6 +139,69 @@ class ExecutionCoordinator:
         self, task_id: str, attempt_id: str, status: str, values: Mapping[str, Any]
     ) -> Mapping[str, Any]:
         return self.state.checkpoint(task_id, status, values, attempt_id)
+
+    def _host_preparation_required(
+        self, contract: Any, request: Mapping[str, Any]
+    ) -> bool:
+        required = getattr(self.contract, "host_preparation_required", None)
+        return bool(required(contract, request)) if callable(required) else False
+
+    def _ensure_host_prepared(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        contract: Any,
+        request: Mapping[str, Any],
+        lease: Any,
+        state: Mapping[str, Any],
+        active_provider: str,
+        allow_create: bool,
+    ) -> Mapping[str, Any]:
+        if not self._host_preparation_required(contract, request):
+            return state
+        if self.preparation is None:
+            raise MissingExecutionBindingError(
+                "explicit preparation port is required for host-prepared execution"
+            )
+
+        preparation = state.get("host_preparation")
+        if preparation is None:
+            if not allow_create:
+                raise MissingExecutionBindingError(
+                    "durable host preparation is missing after execution may have started"
+                )
+            prepared = self.preparation.prepare_before_worker(
+                contract,
+                request,
+                lease,
+                state,
+                task_id=task_id,
+                attempt_id=attempt_id,
+            )
+            if not isinstance(prepared, Mapping) or not prepared:
+                raise MissingExecutionBindingError(
+                    "host preparation must return durable non-empty identity evidence"
+                )
+            self.state.mutate_metadata(task_id, {"host_preparation": dict(prepared)})
+            state = self.state.read_snapshot(task_id) or {}
+            preparation = state.get("host_preparation")
+
+        if not isinstance(preparation, Mapping) or not preparation:
+            raise MissingExecutionBindingError(
+                "durable host preparation evidence is malformed"
+            )
+        self.preparation.revalidate_before_worker(
+            preparation,
+            contract,
+            request,
+            lease,
+            state,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            active_provider=active_provider,
+        )
+        return state
 
     def execute_attempt(
         self, task_id: str, attempt_id: str, *, contract=None, request=None
@@ -285,6 +350,7 @@ class ExecutionCoordinator:
         self.contract.validate_static_contract(contract, lease.target_worktree)
 
         execution = state.get("execution")
+        recovered_worker_completed = status == "WORKER_COMPLETED"
         while status in {"WORKER_RUNNING", "WORKER_COMPLETED"}:
             if status == "WORKER_RUNNING":
 
@@ -375,6 +441,27 @@ class ExecutionCoordinator:
                 )
                 if remaining_timeout <= 0:
                     raise RuntimeError("WALL_TIME_BUDGET_EXHAUSTED")
+                host_preparation_required = self._host_preparation_required(
+                    contract, request
+                )
+                state = self._ensure_host_prepared(
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    contract=contract,
+                    request=request,
+                    lease=lease,
+                    state=state,
+                    active_provider=provider,
+                    allow_create=(
+                        fresh_submission
+                        and not attempts
+                        and state.get("execution") is None
+                    ),
+                )
+                if host_preparation_required and deadline is not None:
+                    remaining_timeout = max(0.0, deadline - time.time())
+                    if remaining_timeout <= 0:
+                        raise RuntimeError("WALL_TIME_BUDGET_EXHAUSTED")
                 execution_receipt = self.worker.invoke(
                     provider,
                     invoke_contract,
@@ -427,6 +514,23 @@ class ExecutionCoordinator:
                 latest.outcome == WorkerOutcome.EXECUTION_COMPLETED.value
                 and latest.evidence_complete
             ):
+                if recovered_worker_completed:
+                    provider = str(
+                        state.get("active_provider")
+                        or getattr(latest, "provider", None)
+                        or contract.preferred_provider
+                        or "codex"
+                    )
+                    state = self._ensure_host_prepared(
+                        task_id=task_id,
+                        attempt_id=attempt_id,
+                        contract=contract,
+                        request=request,
+                        lease=lease,
+                        state=state,
+                        active_provider=provider,
+                        allow_create=False,
+                    )
                 break
 
             if is_fast_lane:

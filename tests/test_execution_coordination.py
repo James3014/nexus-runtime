@@ -101,6 +101,33 @@ class Contract:
     def with_provider_call_budget(self, contract, remaining_calls):
         return contract
 
+    def host_preparation_required(self, contract, request):
+        return False
+
+
+class Preparation:
+    def __init__(self, *, fail=False, events=None):
+        self.fail = fail
+        self.events = events if events is not None else []
+        self.prepared = []
+        self.revalidated = []
+
+    def prepare_before_worker(
+        self, contract, request, lease, state, *, task_id, attempt_id
+    ):
+        self.events.append("prepare")
+        if self.fail:
+            raise RuntimeError("host preparation failed")
+        evidence = {"preparation_id": "prep-1", "binding_hash": "sha256:" + "1" * 64}
+        self.prepared.append(evidence)
+        return evidence
+
+    def revalidate_before_worker(
+        self, preparation, contract, request, lease, state, *, task_id, attempt_id, active_provider
+    ):
+        self.events.append(f"revalidate:{active_provider}")
+        self.revalidated.append((dict(preparation), active_provider, lease.target_worktree))
+
 
 class Worker:
     def __init__(self, receipts):
@@ -189,7 +216,7 @@ class Finalization:
         self.failures.append(str(error))
 
 
-def build(receipts, *, status="SUBMITTED", contract=None):
+def build(receipts, *, status="SUBMITTED", contract=None, preparation=None):
     state = State(status)
     if contract is None:
         contract = Contract()
@@ -197,9 +224,144 @@ def build(receipts, *, status="SUBMITTED", contract=None):
     target = Target()
     finalization = Finalization()
     coordinator = ExecutionCoordinator(
-        state, contract, worker, target, Processes(), finalization
+        state, contract, worker, target, Processes(), finalization, preparation
     )
     return coordinator, state, worker, target, finalization
+
+
+def test_required_host_preparation_happens_before_first_worker_invoke():
+    events = []
+
+    class PreparedContract(Contract):
+        def host_preparation_required(self, contract, request):
+            return True
+
+    class OrderedWorker(Worker):
+        def invoke(self, provider, contract, lease, **kwargs):
+            events.append(f"invoke:{provider}")
+            return super().invoke(provider, contract, lease, **kwargs)
+
+    state = State()
+    contract = PreparedContract()
+    worker = OrderedWorker([Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)])
+    preparation = Preparation(events=events)
+    coordinator = ExecutionCoordinator(
+        state, contract, worker, Target(), Processes(), Finalization(), preparation
+    )
+
+    coordinator.execute_attempt("task", "att")
+
+    assert events == ["prepare", "revalidate:codex", "invoke:codex"]
+    assert state.snapshot["host_preparation"]["preparation_id"] == "prep-1"
+    assert len(preparation.prepared) == 1
+
+
+def test_required_host_preparation_failure_denies_worker_invocation():
+    class PreparedContract(Contract):
+        def host_preparation_required(self, contract, request):
+            return True
+
+    preparation = Preparation(fail=True)
+    coordinator, _state, worker, _target, _finalization = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)],
+        contract=PreparedContract(), preparation=preparation,
+    )
+    with pytest.raises(RuntimeError, match="host preparation failed"):
+        coordinator.execute_attempt("task", "att")
+    assert worker.invocations == []
+
+
+def test_required_host_preparation_missing_port_denies_worker_invocation():
+    class PreparedContract(Contract):
+        def host_preparation_required(self, contract, request):
+            return True
+
+    coordinator, _state, worker, _target, _finalization = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)],
+        contract=PreparedContract(),
+    )
+    with pytest.raises(RuntimeError, match="explicit preparation port"):
+        coordinator.execute_attempt("task", "att")
+    assert worker.invocations == []
+
+
+def test_provider_fallback_revalidates_same_host_preparation_without_reminting():
+    class PreparedContract(Contract):
+        def host_preparation_required(self, contract, request):
+            return True
+
+    preparation = Preparation()
+    coordinator, state, worker, target, _finalization = build(
+        [
+            Receipt("codex", WorkerOutcome.INCOMPLETE.value, False, timed_out=True, failure_reason="timeout"),
+            Receipt("opencode", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ], contract=PreparedContract(), preparation=preparation,
+    )
+    coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == ["codex", "opencode"]
+    assert target.replacements == 1
+    assert len(preparation.prepared) == 1
+    assert [provider for _, provider, _ in preparation.revalidated] == ["codex", "opencode"]
+    assert preparation.revalidated[0][0] == preparation.revalidated[1][0]
+    assert state.snapshot["host_preparation"]["preparation_id"] == "prep-1"
+
+
+def test_restart_after_possible_execution_cannot_mint_missing_host_preparation():
+    class PreparedContract(Contract):
+        def host_preparation_required(self, contract, request):
+            return True
+
+    preparation = Preparation()
+    coordinator, state, worker, _target, _finalization = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)],
+        status="WORKER_RUNNING", contract=PreparedContract(), preparation=preparation,
+    )
+    state.snapshot.update({"lease": "lease-1", "active_provider": "codex"})
+
+    with pytest.raises(RuntimeError, match="missing after execution may have started"):
+        coordinator.execute_attempt("task", "att")
+    assert preparation.prepared == []
+    assert worker.invocations == []
+
+
+def test_recovered_worker_completed_revalidates_durable_host_preparation_before_finalization():
+    class PreparedContract(Contract):
+        def host_preparation_required(self, contract, request):
+            return True
+
+    receipt = Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)
+    preparation = Preparation()
+    coordinator, state, worker, _target, _finalization = build(
+        [], status="WORKER_COMPLETED", contract=PreparedContract(), preparation=preparation
+    )
+    state.snapshot.update(
+        {
+            "lease": "lease-1",
+            "active_provider": "codex",
+            "execution": receipt,
+            "executions": [receipt],
+            "host_preparation": {
+                "preparation_id": "prep-1",
+                "binding_hash": "sha256:" + "1" * 64,
+            },
+        }
+    )
+
+    coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == []
+    assert preparation.prepared == []
+    assert [provider for _, provider, _ in preparation.revalidated] == ["codex"]
+
+
+def test_unprepared_contract_does_not_require_host_preparation():
+    coordinator, state, worker, _target, _finalization = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    coordinator.execute_attempt("task", "att")
+    assert "host_preparation" not in state.snapshot
+    assert worker.invocations == ["codex"]
 
 
 def test_runtime_owns_execution_and_transient_escalation():
@@ -458,6 +620,32 @@ def test_deadline_crossing_after_provider_work_is_fail_closed(monkeypatch):
         coordinator.execute_attempt("task", "att")
 
     assert worker.invocations == ["codex"]
+
+
+def test_host_preparation_consuming_deadline_denies_worker_before_invoke(monkeypatch):
+    class ExpiredPreparedContract(Contract):
+        def deadline(self, contract, submitted_at):
+            return 1.0
+
+        def host_preparation_required(self, contract, request):
+            return True
+
+    preparation = Preparation()
+    coordinator, _state, worker, _target, _finalization = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)],
+        contract=ExpiredPreparedContract(), preparation=preparation,
+    )
+    clock = iter((0.0, 0.0, 0.0, 2.0))
+    monkeypatch.setattr(
+        "nexus_runtime.execution_coordination.coordinator.time.time",
+        lambda: next(clock),
+    )
+
+    with pytest.raises(RuntimeError, match="WALL_TIME_BUDGET_EXHAUSTED"):
+        coordinator.execute_attempt("task", "att")
+
+    assert len(preparation.prepared) == 1
+    assert worker.invocations == []
 
 
 def test_binding_model_is_preserved_without_envelope():
