@@ -16,6 +16,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Optional
 
+from .effect_authorization import (
+    EffectAuthorization,
+    EffectAuthorizationError,
+    ToolProjectionManifest,
+)
 from .ports import (
     ExecutionContractPort,
     ExecutionFinalizationPort,
@@ -146,6 +151,156 @@ class ExecutionCoordinator:
         required = getattr(self.contract, "host_preparation_required", None)
         return bool(required(contract, request)) if callable(required) else False
 
+    @staticmethod
+    def _effect_authorization_requested(
+        request: Mapping[str, Any], state: Mapping[str, Any]
+    ) -> bool:
+        return bool(
+            request.get("effect_authorization_required")
+            or "effect_authorization" in request
+            or "tool_projection_requests" in request
+            or "effect_authorization" in state
+        )
+
+    @staticmethod
+    def _request_identity_value(
+        request: Mapping[str, Any], key: str
+    ) -> str | None:
+        value = request.get(key)
+        return str(value).strip() if isinstance(value, str) and value.strip() else None
+
+    def _ensure_effect_authorization(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        request: Mapping[str, Any],
+        state: Mapping[str, Any],
+        allow_create: bool,
+    ) -> tuple[Mapping[str, Any], EffectAuthorization | None]:
+        if not self._effect_authorization_requested(request, state):
+            return state, None
+        raw_request = request.get("effect_authorization")
+        if not isinstance(raw_request, Mapping):
+            raise MissingExecutionBindingError(
+                "effect authorization is required before runtime side effects"
+            )
+        operation_id = self._request_identity_value(request, "operation_id")
+        repository = self._request_identity_value(request, "repository")
+        if operation_id is None or repository is None:
+            raise MissingExecutionBindingError(
+                "effect authorization requires request operation_id and repository identity"
+            )
+        try:
+            requested = EffectAuthorization.from_mapping(raw_request)
+            requested.assert_fresh()
+            requested.assert_identity(
+                attempt_id=attempt_id,
+                operation_id=operation_id,
+                repository=repository,
+                source_revision=self._request_identity_value(request, "source_revision"),
+                base_revision=self._request_identity_value(request, "base_revision"),
+                workspace_id=self._request_identity_value(request, "workspace_id"),
+                target_id=self._request_identity_value(request, "target_id"),
+            )
+        except EffectAuthorizationError as exc:
+            raise MissingExecutionBindingError(str(exc)) from exc
+
+        raw_durable = state.get("effect_authorization")
+        if raw_durable is None:
+            if not allow_create:
+                raise MissingExecutionBindingError(
+                    "durable effect authorization is missing after execution may have started"
+                )
+            self.state.mutate_metadata(
+                task_id,
+                {
+                    "effect_authorization": requested.to_dict(),
+                    "effect_authorization_hash": requested.authorization_hash,
+                },
+            )
+            state = self.state.read_snapshot(task_id) or {}
+            raw_durable = state.get("effect_authorization")
+        if not isinstance(raw_durable, Mapping):
+            raise MissingExecutionBindingError("durable effect authorization is malformed")
+        try:
+            durable = EffectAuthorization.from_mapping(raw_durable)
+            durable.assert_fresh()
+        except EffectAuthorizationError as exc:
+            raise MissingExecutionBindingError(str(exc)) from exc
+        if durable.authorization_hash != requested.authorization_hash:
+            raise MissingExecutionBindingError(
+                "effect authorization substitution or widening detected"
+            )
+        observed_hash = state.get("effect_authorization_hash")
+        if observed_hash != durable.authorization_hash:
+            raise MissingExecutionBindingError(
+                "durable effect authorization hash binding mismatch"
+            )
+        return state, durable
+
+    def _ensure_tool_projection(
+        self,
+        *,
+        task_id: str,
+        request: Mapping[str, Any],
+        state: Mapping[str, Any],
+        authorization: EffectAuthorization | None,
+        provider: str,
+        allow_create: bool,
+    ) -> tuple[Mapping[str, Any], ToolProjectionManifest | None]:
+        if authorization is None:
+            return state, None
+        try:
+            authorization.assert_fresh()
+        except EffectAuthorizationError as exc:
+            raise MissingExecutionBindingError(str(exc)) from exc
+        raw_requests = request.get("tool_projection_requests")
+        if not isinstance(raw_requests, Mapping):
+            raise MissingExecutionBindingError(
+                "tool_projection_requests are required for effect-authorized worker execution"
+            )
+        raw_projection = raw_requests.get(provider)
+        if not isinstance(raw_projection, Mapping):
+            raise MissingExecutionBindingError(
+                f"tool projection request missing for provider: {provider}"
+            )
+        try:
+            projection = ToolProjectionManifest.build(
+                authorization,
+                provider=provider,
+                backend_id=raw_projection.get("backend_id"),
+                selected_tools=raw_projection.get("selected_tools"),
+                selected_effects=raw_projection.get("selected_effects"),
+            )
+        except EffectAuthorizationError as exc:
+            raise MissingExecutionBindingError(str(exc)) from exc
+        durable_manifests = state.get("tool_projection_manifests")
+        manifests = dict(durable_manifests) if isinstance(durable_manifests, Mapping) else {}
+        existing = manifests.get(provider)
+        if existing is not None:
+            if not isinstance(existing, Mapping):
+                raise MissingExecutionBindingError("durable tool projection is malformed")
+            try:
+                durable_projection = ToolProjectionManifest.from_mapping(
+                    existing, authorization
+                )
+            except EffectAuthorizationError as exc:
+                raise MissingExecutionBindingError(str(exc)) from exc
+            if durable_projection.projection_hash != projection.projection_hash:
+                raise MissingExecutionBindingError(
+                    "tool projection substitution or widening detected"
+                )
+            return state, durable_projection
+        if not allow_create:
+            raise MissingExecutionBindingError(
+                "durable tool projection is missing after execution may have started"
+            )
+        manifests[provider] = projection.to_dict()
+        self.state.mutate_metadata(task_id, {"tool_projection_manifests": manifests})
+        state = self.state.read_snapshot(task_id) or {}
+        return state, projection
+
     def _ensure_host_prepared(
         self,
         *,
@@ -225,6 +380,18 @@ class ExecutionCoordinator:
             raise RuntimeError("WALL_TIME_BUDGET_EXHAUSTED")
         status = str(state.get("status"))
         fresh_submission = status == "SUBMITTED"
+        effect_envelope_create_allowed = (
+            fresh_submission
+            and not state.get("executions")
+            and state.get("execution") is None
+        )
+        state, effect_authorization = self._ensure_effect_authorization(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            request=request,
+            state=state,
+            allow_create=effect_envelope_create_allowed,
+        )
         dispatch_binding = self.contract.provider_binding(request, state)
         self.contract.assert_persisted_dispatch(state, request, dispatch_binding)
         self.contract.revalidate_task_card(
@@ -462,6 +629,14 @@ class ExecutionCoordinator:
                     remaining_timeout = max(0.0, deadline - time.time())
                     if remaining_timeout <= 0:
                         raise RuntimeError("WALL_TIME_BUDGET_EXHAUSTED")
+                state, tool_projection = self._ensure_tool_projection(
+                    task_id=task_id,
+                    request=request,
+                    state=state,
+                    authorization=effect_authorization,
+                    provider=provider,
+                    allow_create=effect_envelope_create_allowed,
+                )
                 execution_receipt = self.worker.invoke(
                     provider,
                     invoke_contract,
@@ -470,6 +645,14 @@ class ExecutionCoordinator:
                     model=model,
                     timeout_seconds=min(configured_timeout, remaining_timeout),
                     on_process_group=on_process_group,
+                    effect_authorization=(
+                        effect_authorization.to_dict()
+                        if effect_authorization is not None
+                        else None
+                    ),
+                    tool_projection_manifest=(
+                        tool_projection.to_dict() if tool_projection is not None else None
+                    ),
                 )
                 if deadline is not None and time.time() >= deadline:
                     raise RuntimeError("WALL_TIME_BUDGET_EXHAUSTED")

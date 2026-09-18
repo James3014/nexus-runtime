@@ -115,6 +115,27 @@ selection. `ExecutionCoordinator` accepts explicit state, contract, worker,
 target, process-ownership, and finalization effect ports; host code owns provider
 calls, worktrees, and candidate finalization.
 
+### Durable effect authorization and tool projection
+
+Wave 1 effect hardening is exposed from `nexus_runtime.execution_coordination` as
+`EffectAuthorization` and `ToolProjectionManifest`. Runtime does not select these
+privileges. A host supplies a complete, hash-bound `effect_authorization` together
+with exact request operation/repository identity and provider-specific
+`tool_projection_requests`. Runtime persists the exact authorization before the
+first target lease, derives only subset projections, and passes the durable
+authorization plus projection to the worker adapter.
+
+The projection is explicitly `DERIVED_PROJECTION_ONLY`: it is evidence of how an
+external ceiling was narrowed for one provider/backend, not a second Planner or
+permission authority. Missing, expired, tampered, substituted, or widening
+authorization/projection data fails closed. After execution may have started, a
+missing durable authorization or projection cannot be freshly minted during
+restart/reconciliation.
+
+This source contract does not prove downstream physical tool enforcement. Open SWE,
+DevSpace, and other effect backends must separately consume and hard-enforce the
+projected envelope before any end-to-end enforcement claim is valid.
+
 For a deterministic end-to-end run/retry/readback example, execute:
 
 ```console
