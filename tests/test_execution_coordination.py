@@ -4,7 +4,13 @@ from dataclasses import dataclass
 
 import pytest
 
-from nexus_runtime.execution_coordination import ExecutionCoordinator, WorkerOutcome
+from nexus_runtime.execution_coordination import (
+    EffectAuthorization,
+    ExecutionCoordinator,
+    MissingExecutionBindingError,
+    ToolProjectionManifest,
+    WorkerOutcome,
+)
 
 
 @dataclass
@@ -136,6 +142,8 @@ class Worker:
         self.invocations = []
         self.models = []
         self.contracts = []
+        self.effect_authorizations = []
+        self.tool_projection_manifests = []
 
     def preflight(self, provider):
         self.preflights.append(provider)
@@ -145,14 +153,18 @@ class Worker:
         self.invocations.append(provider)
         self.contracts.append(contract)
         self.models.append(kwargs.get("model"))
+        self.effect_authorizations.append(kwargs.get("effect_authorization"))
+        self.tool_projection_manifests.append(kwargs.get("tool_projection_manifest"))
         return next(self.receipts)
 
 
 class Target:
     def __init__(self):
         self.replacements = 0
+        self.initial_leases = 0
 
     def initial_lease(self, contract, state):
+        self.initial_leases += 1
         return type("Lease", (), {"target_worktree": "lease-1"})()
 
     def lease_from_state(self, state):
@@ -694,3 +706,386 @@ def test_launch_uses_explicit_standalone_worker_command():
     ]
     assert result["worker_mode"] == "process"
     assert state.events == []
+
+
+_EFFECT_SOURCE_REVISION = "d004bb0ec1e8ff72a5a5c93e0e2232ee38eb384f"
+
+
+def _effect_authorized_request(*, effects=None, projections=None):
+    authorized_effects = effects or {
+        "filesystem": {"write_paths": ["src/a.py", "tests/test_a.py"]},
+        "process": {"commands": ["pytest"]},
+        "network": {"hosts": ["api.example.com"]},
+        "git": {"operations": ["status", "diff"]},
+        "external": {"effects": ["semantic_call"]},
+    }
+    authorization = EffectAuthorization.build(
+        authority_id="owner-grant-29",
+        authority_ref="James3014/nexus-runtime#29",
+        operation_id="op-wave1",
+        attempt_id="att",
+        repository="James3014/nexus-runtime",
+        source_revision=_EFFECT_SOURCE_REVISION,
+        base_revision=_EFFECT_SOURCE_REVISION,
+        workspace_id="workspace-wave1",
+        target_id="target-wave1",
+        effects=authorized_effects,
+    )
+    projection_requests = projections or {
+        "codex": {
+            "backend_id": "codex-cli",
+            "selected_tools": ["edit", "test"],
+            "selected_effects": {
+                "filesystem": {"write_paths": ["src/a.py"]},
+                "process": {"commands": ["pytest"]},
+            },
+        },
+        "opencode": {
+            "backend_id": "opencode-cli",
+            "selected_tools": ["edit"],
+            "selected_effects": {
+                "filesystem": {"write_paths": ["src/a.py"]},
+            },
+        },
+    }
+    return {
+        "timeout_seconds": 10,
+        "effect_authorization_required": True,
+        "operation_id": "op-wave1",
+        "repository": "James3014/nexus-runtime",
+        "source_revision": _EFFECT_SOURCE_REVISION,
+        "base_revision": _EFFECT_SOURCE_REVISION,
+        "workspace_id": "workspace-wave1",
+        "target_id": "target-wave1",
+        "effect_authorization": authorization.to_dict(),
+        "tool_projection_requests": projection_requests,
+    }
+
+
+def _durable_projection(request, provider="codex"):
+    authorization = EffectAuthorization.from_mapping(request["effect_authorization"])
+    projection = request["tool_projection_requests"][provider]
+    return ToolProjectionManifest.build(
+        authorization,
+        provider=provider,
+        backend_id=projection["backend_id"],
+        selected_tools=projection["selected_tools"],
+        selected_effects=projection["selected_effects"],
+    ).to_dict()
+
+
+def test_effect_authorization_is_persisted_before_first_runtime_side_effect():
+    coordinator, state, worker, target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    state.snapshot["request"] = _effect_authorized_request()
+
+    coordinator.execute_attempt("task", "att")
+
+    assert target.initial_leases == 1
+    assert state.snapshot["effect_authorization"]["authority_ref"] == (
+        "James3014/nexus-runtime#29"
+    )
+    assert state.snapshot["effect_authorization_hash"] == (
+        state.snapshot["effect_authorization"]["authorization_hash"]
+    )
+    assert worker.effect_authorizations[0]["authorization_hash"] == (
+        state.snapshot["effect_authorization_hash"]
+    )
+    manifest = worker.tool_projection_manifests[0]
+    assert manifest["authority_kind"] == "DERIVED_PROJECTION_ONLY"
+    assert manifest["authorization_hash"] == state.snapshot["effect_authorization_hash"]
+    assert manifest["provider"] == "codex"
+    assert manifest["backend_id"] == "codex-cli"
+
+
+def test_missing_required_effect_authorization_blocks_before_target_lease():
+    coordinator, state, worker, target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    state.snapshot["request"] = {
+        "timeout_seconds": 10,
+        "effect_authorization_required": True,
+        "operation_id": "op-wave1",
+        "repository": "James3014/nexus-runtime",
+    }
+
+    with pytest.raises(
+        MissingExecutionBindingError,
+        match="effect authorization is required before runtime side effects",
+    ):
+        coordinator.execute_attempt("task", "att")
+
+    assert target.initial_leases == 0
+    assert worker.invocations == []
+
+
+def test_tampered_effect_authorization_blocks_before_target_lease():
+    coordinator, state, worker, target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    request = _effect_authorized_request()
+    request["effect_authorization"]["effects"]["filesystem"]["write_paths"].append(
+        "src/escape.py"
+    )
+    state.snapshot["request"] = request
+
+    with pytest.raises(MissingExecutionBindingError, match="hash mismatch"):
+        coordinator.execute_attempt("task", "att")
+
+    assert target.initial_leases == 0
+    assert worker.invocations == []
+
+
+def test_tool_projection_outside_ceiling_blocks_before_worker_invocation():
+    projections = {
+        "codex": {
+            "backend_id": "codex-cli",
+            "selected_tools": ["edit"],
+            "selected_effects": {
+                "filesystem": {"write_paths": ["src/escape.py"]},
+            },
+        },
+        "opencode": {
+            "backend_id": "opencode-cli",
+            "selected_tools": ["edit"],
+            "selected_effects": {
+                "filesystem": {"write_paths": ["src/a.py"]},
+            },
+        },
+    }
+    coordinator, state, worker, _target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    state.snapshot["request"] = _effect_authorized_request(projections=projections)
+
+    with pytest.raises(MissingExecutionBindingError, match="widens authorized effects"):
+        coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == []
+
+
+def test_restart_preserves_exact_durable_effect_ceiling_and_projection():
+    coordinator, state, worker, _target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)],
+        status="WORKER_RUNNING",
+    )
+    request = _effect_authorized_request()
+    authorization = request["effect_authorization"]
+    state.snapshot.update(
+        {
+            "request": request,
+            "lease": "lease-1",
+            "active_provider": "codex",
+            "effect_authorization": authorization,
+            "effect_authorization_hash": authorization["authorization_hash"],
+            "tool_projection_manifests": {"codex": _durable_projection(request)},
+        }
+    )
+
+    coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == ["codex"]
+    assert worker.effect_authorizations[0]["authorization_hash"] == (
+        authorization["authorization_hash"]
+    )
+    assert state.snapshot["effect_authorization_hash"] == authorization["authorization_hash"]
+
+
+def test_restart_rejects_substituted_or_wider_authorization_family():
+    coordinator, state, worker, _target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)],
+        status="WORKER_RUNNING",
+    )
+    original_request = _effect_authorized_request()
+    original = original_request["effect_authorization"]
+    wider_request = _effect_authorized_request(
+        effects={
+            **original["effects"],
+            "filesystem": {
+                "write_paths": ["src/a.py", "tests/test_a.py", "src/escape.py"]
+            },
+        }
+    )
+    state.snapshot.update(
+        {
+            "request": wider_request,
+            "lease": "lease-1",
+            "active_provider": "codex",
+            "effect_authorization": original,
+            "effect_authorization_hash": original["authorization_hash"],
+        }
+    )
+
+    with pytest.raises(
+        MissingExecutionBindingError,
+        match="substitution or widening detected",
+    ):
+        coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == []
+
+
+def test_repository_workspace_identity_mismatch_fails_closed():
+    coordinator, state, worker, target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    request = _effect_authorized_request()
+    request["workspace_id"] = "other-workspace"
+    state.snapshot["request"] = request
+
+    with pytest.raises(
+        MissingExecutionBindingError,
+        match="identity mismatch: workspace_id",
+    ):
+        coordinator.execute_attempt("task", "att")
+
+    assert target.initial_leases == 0
+    assert worker.invocations == []
+
+
+def test_provider_fallback_projection_cannot_widen_authorized_effects():
+    projections = {
+        "codex": {
+            "backend_id": "codex-cli",
+            "selected_tools": ["edit"],
+            "selected_effects": {
+                "filesystem": {"write_paths": ["src/a.py"]},
+            },
+        },
+        "opencode": {
+            "backend_id": "opencode-cli",
+            "selected_tools": ["edit"],
+            "selected_effects": {
+                "filesystem": {"write_paths": ["src/escape.py"]},
+            },
+        },
+    }
+    coordinator, state, worker, _target, _ = build(
+        [
+            Receipt(
+                "codex",
+                WorkerOutcome.INCOMPLETE.value,
+                False,
+                timed_out=True,
+                failure_reason="timeout",
+            ),
+            Receipt("opencode", WorkerOutcome.EXECUTION_COMPLETED.value, True),
+        ]
+    )
+    state.snapshot["request"] = _effect_authorized_request(projections=projections)
+
+    with pytest.raises(MissingExecutionBindingError, match="widens authorized effects"):
+        coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == ["codex"]
+    assert worker.tool_projection_manifests[0]["provider"] == "codex"
+
+
+def test_lost_ack_state_cannot_mint_new_effect_authorization():
+    coordinator, state, worker, target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)],
+        status="TARGET_LEASED",
+    )
+    state.snapshot.update(
+        {
+            "request": _effect_authorized_request(),
+            "lease": "lease-1",
+            "active_provider": "codex",
+        }
+    )
+
+    with pytest.raises(
+        MissingExecutionBindingError,
+        match="durable effect authorization is missing after execution may have started",
+    ):
+        coordinator.execute_attempt("task", "att")
+
+    assert target.initial_leases == 0
+    assert worker.invocations == []
+
+
+def test_restart_rejects_partial_tool_projection_override():
+    coordinator, state, worker, _target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)],
+        status="WORKER_RUNNING",
+    )
+    request = _effect_authorized_request()
+    authorization = request["effect_authorization"]
+    original_manifest = {
+        "schema": "nexus.runtime.tool_projection_manifest.v1",
+        "authorization_hash": authorization["authorization_hash"],
+        "operation_id": "op-wave1",
+        "attempt_id": "att",
+        "provider": "codex",
+        "backend_id": "codex-cli",
+        "selected_tools": ["edit", "test"],
+        "selected_effects": {
+            "filesystem": {"write_paths": ["src/a.py"]},
+            "process": {"commands": ["pytest"]},
+        },
+        "authority_kind": "DERIVED_PROJECTION_ONLY",
+    }
+    rebuilt = ToolProjectionManifest.build(
+        EffectAuthorization.from_mapping(authorization),
+        provider="codex",
+        backend_id="codex-cli",
+        selected_tools=original_manifest["selected_tools"],
+        selected_effects=original_manifest["selected_effects"],
+    ).to_dict()
+    state.snapshot.update(
+        {
+            "request": {
+                **request,
+                "tool_projection_requests": {
+                    **request["tool_projection_requests"],
+                    "codex": {
+                        "backend_id": "codex-cli",
+                        "selected_tools": ["edit"],
+                        "selected_effects": {
+                            "filesystem": {"write_paths": ["src/a.py"]},
+                        },
+                    },
+                },
+            },
+            "lease": "lease-1",
+            "active_provider": "codex",
+            "effect_authorization": authorization,
+            "effect_authorization_hash": authorization["authorization_hash"],
+            "tool_projection_manifests": {"codex": rebuilt},
+        }
+    )
+
+    with pytest.raises(
+        MissingExecutionBindingError,
+        match="tool projection substitution or widening detected",
+    ):
+        coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == []
+
+
+def test_restart_with_missing_durable_tool_projection_fails_closed():
+    coordinator, state, worker, _target, _ = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)],
+        status="WORKER_RUNNING",
+    )
+    request = _effect_authorized_request()
+    authorization = request["effect_authorization"]
+    state.snapshot.update(
+        {
+            "request": request,
+            "lease": "lease-1",
+            "active_provider": "codex",
+            "effect_authorization": authorization,
+            "effect_authorization_hash": authorization["authorization_hash"],
+        }
+    )
+
+    with pytest.raises(
+        MissingExecutionBindingError,
+        match="durable tool projection is missing after execution may have started",
+    ):
+        coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == []

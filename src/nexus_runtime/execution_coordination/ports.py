@@ -108,6 +108,8 @@ class WorkerAdapterPort(Protocol):
         model: str | None,
         timeout_seconds: float,
         on_process_group: Callable[[int | None], None],
+        effect_authorization: Mapping[str, Any] | None = None,
+        tool_projection_manifest: Mapping[str, Any] | None = None,
     ) -> Any: ...
 
 
