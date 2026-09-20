@@ -66,7 +66,9 @@ class ExecutionContractPort(Protocol):
         self, contract: Any, request: Mapping[str, Any]
     ) -> bool: ...
 
-    def materialize_worker_context(self, **kwargs: Any) -> tuple[str, Mapping[str, Any]] | None: ...
+    def materialize_worker_context(
+        self, **kwargs: Any
+    ) -> tuple[str, Mapping[str, Any]] | None: ...
 
 
 class ExecutionPreparationPort(Protocol):
@@ -111,6 +113,25 @@ class WorkerAdapterPort(Protocol):
         effect_authorization: Mapping[str, Any] | None = None,
         tool_projection_manifest: Mapping[str, Any] | None = None,
     ) -> Any: ...
+
+
+class ModelCallGatePort(Protocol):
+    """Host-supplied deterministic MODEL_CALL_NEEDED resolver.
+
+    The resolver answers only *whether* a model call is necessary, using
+    runtime structured state. It never selects a model, route, capability,
+    provider, or authorization. A non-mapping return, an unknown status, or
+    any authorization-sounding content fails safe to the existing model path.
+    """
+
+    resolver_id: str
+
+    def resolve_model_call_need(
+        self,
+        structured_state: Mapping[str, Any],
+        *,
+        seam: str,
+    ) -> Mapping[str, Any] | Any | None: ...
 
 
 class TargetExecutionPort(Protocol):
