@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -209,6 +210,57 @@ def test_public_payload_record_requires_nonempty_mapping_fields(fields):
             selected_capability_ids=["memory"], materialized_evidence_ids=["evidence:memory"],
             consumer_payload_records=[{"capability": "memory", "evidence_ids": ["evidence:memory"], "payload": payload}],
             consumer_role="online", consumer_channel="online_provider",
+        )
+
+
+
+
+def test_public_builder_rejects_context_admission_projection_injection():
+    bundle = _sealed_bundle("t", "s", payload_capabilities=("memory",))
+    payload = dict(bundle["entries"][0]["consumer_payload"])
+    source_hash = payload["payload_hash"]
+    projection = {
+        "schema": payload["schema"],
+        "capability": "memory",
+        "public_claim_allowed": False,
+        "projection_kind": "CONTEXT_ADMISSION",
+        "source_payload_hash": source_hash,
+        "fields": {
+            "context_admission": {
+                "visible_text": "caller supplied projection",
+                "hidden_segment_ids": ["seg:0000:deadbeefdeadbeefdeadbeef"],
+                "recall_refs": ["admission://seg:0000:deadbeefdeadbeefdeadbeef"],
+            }
+        },
+    }
+    encoded = json.dumps(
+        projection,
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    projection["payload_chars"] = len(encoded)
+    projection["payload_hash"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    with pytest.raises(ValueError, match="consumer_payload_projection_not_allowed"):
+        build_planner_consumer_context_package(
+            task_id="t",
+            attempt_id="a",
+            planner_decision_id=DECISION_HASH,
+            planner_plan_hash=PLAN_HASH,
+            task_statement="s",
+            selected_capability_ids=["memory"],
+            materialized_evidence_ids=["evidence:memory"],
+            consumer_payloads=[projection],
+            consumer_payload_records=[
+                {
+                    "capability": "memory",
+                    "evidence_ids": ["evidence:memory"],
+                    "payload": payload,
+                }
+            ],
+            consumer_role="worker",
+            consumer_channel="worker_registry",
         )
 
 

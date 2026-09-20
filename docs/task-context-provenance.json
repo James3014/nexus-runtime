@@ -31,8 +31,27 @@
     "build_context_assembly_contract",
     "validate_context_assembly_contract",
     "StatelessContextCoordinator",
-    "build_runtime_context_payload"
+    "build_runtime_context_payload",
+    "AdmissionDecision",
+    "ContextAdmissionError",
+    "ContextAdmissionReceipt",
+    "ContextAdmissionTelemetry",
+    "ContextSegment",
+    "admit_artifact",
+    "build_admission_receipt",
+    "build_admission_telemetry",
+    "decide_visibility",
+    "recall_hidden_segments",
+    "restore_visible_text",
+    "segment_artifact"
   ],
   "package": "nexus_runtime.task_context",
-  "schema": "nexus.runtime.task_context.provenance.v1"
+  "schema": "nexus.runtime.task_context.provenance.v1",
+  "local_extensions": {
+    "context_admission": {
+      "issue": "James3014/nexus-runtime#32",
+      "owner": "runtime context",
+      "claim_boundary": "deterministic recoverable visibility projection only; no model/provider selection, permanent deletion, dispatch, verification, or production authority"
+    }
+  }
 }

@@ -19,10 +19,14 @@ from nexus_runtime.task_context import (
     build_worker_consumption_receipt,
     build_worker_context_package,
     extract_model_context_from_prompt,
+    recall_hidden_segments,
     validate_consumption_receipt,
     wrap_online_invoker,
 )
-from nexus_runtime.task_context.consumer_projection import _final_online_input
+from nexus_runtime.task_context.consumer_projection import (
+    _final_online_input,
+    build_worker_context_package_with_admission,
+)
 
 D = "a" * 64
 P = "b" * 64
@@ -378,3 +382,129 @@ def test_worker_prompt_package_substitution_is_rejected():
     with pytest.raises(ValueError, match="package_substitution"):
         build_worker_consumption_receipt(package, prompt=f"WHAT\n\n{MODEL_CONTEXT_MARKER}\n{{}}",
             provider="agy", model="gemini-3.6-flash-high", execution_receipt=Receipt("agy"))
+
+
+def worker_request_with_context_admission(debug_repeat=1200):
+    request = worker_request()
+    debug_value = "verbose internal diagnostic " + ("z" * debug_repeat)
+    bundle = build_capability_evidence_bundle(
+        task_id="task-1",
+        workspace_revision="r" * 40,
+        task_statement="repair parser",
+        plan_payload={"selected_capabilities": ["memory", "codeintel"]},
+        plan_hash=P,
+        planner_decision_id=D,
+        capability_results={
+            name: {
+                "status": "SUCCEEDED",
+                "invoked": True,
+                "evidence_refs": [f"ev:{name}"],
+                "response": {
+                    "consumer_payload": {
+                        "fields": {
+                            "summary": f"bounded {name} result",
+                            "evidence_id": f"ev:{name}",
+                            **({"debug_blob": debug_value} if name == "memory" else {}),
+                        }
+                    }
+                },
+            }
+            for name in ("memory", "codeintel")
+        },
+        selected_capabilities=["memory", "codeintel"],
+    )
+    request["planner_output"]["plan_payload"]["signal_snapshot"][
+        "capability_evidence_bundle"
+    ] = bundle
+    memory_entry = next(entry for entry in bundle["entries"] if entry["name"] == "memory")
+    payload = memory_entry["consumer_payload"]
+    sorted_keys = sorted(payload["fields"])
+    debug_index = sorted_keys.index("debug_blob")
+    debug_value = str(payload["fields"]["debug_blob"])
+    debug_block = f"debug_blob: {debug_value}"
+    request["context_admission"] = {
+        "hide_hints": {
+            payload["payload_hash"]: {str(debug_index): ["verbose_debug"]}
+        },
+        "seen_content_digests": [
+            hashlib.sha256(debug_block.encode("utf-8")).hexdigest()
+        ],
+    }
+    return request, debug_value, payload["payload_hash"]
+
+
+def test_worker_context_admission_hides_only_model_visible_projection() -> None:
+    request, debug_value, source_hash = worker_request_with_context_admission()
+    package, report = build_worker_context_package_with_admission(request)
+
+    serialized = str(package)
+    assert debug_value not in serialized
+    records = package["receipt"]["kept_sources"][1]["metadata"][
+        "consumer_payload_records"
+    ]
+    projected = next(
+        record["payload"]
+        for record in records
+        if record["payload"].get("source_payload_hash") == source_hash
+    )
+    assert projected["projection_kind"] == "CONTEXT_ADMISSION"
+    assert projected["source_payload_hash"] == source_hash
+    assert "hidden_payloads" not in str(projected)
+    assert projected["fields"]["context_admission"]["hidden_segment_ids"]
+
+    recovery = report["admission_receipts"][source_hash]
+    assert debug_value in str(recovery["hidden_payloads"])
+    segment_id = recovery["hidden_segment_ids"][0]
+    recalled = recall_hidden_segments(recovery, [segment_id])
+    assert recalled[0]["found"] is True
+    assert debug_value in recalled[0]["text"]
+
+
+def test_worker_context_admission_report_is_persisted_outside_prompt() -> None:
+    request, debug_value, source_hash = worker_request_with_context_admission()
+    coordinator, state, worker = make_coordinator(request)
+    coordinator.execute_attempt("task-1", "attempt-1")
+
+    assert debug_value not in worker.prompts[0]
+    report = state.completed["context_admission_report"]
+    assert report["hidden_content_deleted"] is False
+    assert debug_value in str(
+        report["admission_receipts"][source_hash]["hidden_payloads"]
+    )
+
+
+def test_invalid_context_admission_policy_preserves_baseline_package() -> None:
+    baseline = build_worker_context_package(worker_request())
+    request = worker_request()
+    request["context_admission"] = {"unexpected_policy_key": True}
+
+    package, report = build_worker_context_package_with_admission(request)
+
+    assert package["package_hash"] == baseline["package_hash"]
+    assert package["consumer_projection_hash"] == baseline["consumer_projection_hash"]
+    assert report["admission_failure"] == "ValueError"
+    assert report["hidden_content_deleted"] is False
+    assert report["tokens_saved_now"] == 0
+
+
+def test_context_admission_preserves_canonical_payload_when_projection_has_no_size_benefit() -> None:
+    request, debug_value, source_hash = worker_request_with_context_admission(
+        debug_repeat=20
+    )
+    package, report = build_worker_context_package_with_admission(request)
+
+    records = package["receipt"]["kept_sources"][1]["metadata"][
+        "consumer_payload_records"
+    ]
+    memory_payload = next(
+        record["payload"] for record in records if record["capability"] == "memory"
+    )
+    assert memory_payload.get("source_payload_hash") is None
+    assert debug_value in str(memory_payload)
+
+    telemetry = next(
+        row for row in report["per_payload"] if row["payload_id"] == source_hash
+    )
+    assert telemetry["admission_failure"] == "context_admission_no_size_benefit"
+    assert telemetry["tokens_saved_now"] == 0
+    assert source_hash not in report["admission_receipts"]

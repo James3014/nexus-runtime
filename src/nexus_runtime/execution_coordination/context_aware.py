@@ -5,7 +5,7 @@ from typing import Any
 
 from nexus_runtime.task_context.consumer_projection import (
     append_model_context_to_prompt,
-    build_worker_context_package,
+    build_worker_context_package_with_admission,
 )
 from nexus_runtime.task_context.consumption import build_worker_consumption_receipt
 
@@ -17,12 +17,14 @@ class _ConsumptionTracker:
         self.package: dict[str, Any] | None = None
         self.prompt: str | None = None
         self.receipt: dict[str, Any] | None = None
+        self.admission_report: dict[str, Any] | None = None
         self.host_materialized = False
 
     def reset(self) -> None:
         self.package = None
         self.prompt = None
         self.receipt = None
+        self.admission_report = None
         self.host_materialized = False
 
 
@@ -44,6 +46,8 @@ class _ContextAwareStatePort:
         attempt_id: str,
     ) -> Mapping[str, Any]:
         payload = dict(values)
+        if status == "WORKER_COMPLETED" and self._tracker.admission_report:
+            payload["context_admission_report"] = dict(self._tracker.admission_report)
         if status == "WORKER_COMPLETED" and self._tracker.receipt is not None:
             receipt = dict(self._tracker.receipt)
             if str(receipt.get("task_id") or "") != str(task_id):
@@ -89,9 +93,10 @@ class _ContextAwareContractPort:
         if not (has_planner and has_envelope):
             raise ValueError("worker_model_context_binding_incomplete")
 
-        package = build_worker_context_package(request)
+        package, admission_report = build_worker_context_package_with_admission(request)
         serialized_prompt = append_model_context_to_prompt(prompt, package)
         self._tracker.package = package
+        self._tracker.admission_report = admission_report or None
         self._tracker.prompt = serialized_prompt
         return serialized_prompt
 
