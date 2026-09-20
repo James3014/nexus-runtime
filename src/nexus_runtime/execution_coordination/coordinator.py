@@ -7,6 +7,7 @@ the ordering, denial, budget, and escalation algorithm lives here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -20,6 +21,18 @@ from .effect_authorization import (
     EffectAuthorization,
     EffectAuthorizationError,
     ToolProjectionManifest,
+)
+from .model_call_resolution import (
+    DETERMINISTIC_RESOLVED,
+    INSUFFICIENT_STRUCTURED_STATE,
+    MODEL_AVOIDED,
+    MODEL_INVOKED,
+    MODEL_REQUIRED,
+    RESOLVED_DETERMINISTICALLY,
+    WORKER_INVOCATION_SEAM,
+    ModelCallNeedVerdict,
+    ModelCallTelemetryRecord,
+    resolve_model_call_need,
 )
 from .ports import (
     ExecutionContractPort,
@@ -127,6 +140,7 @@ class ExecutionCoordinator:
     processes: ProcessOwnershipPort
     finalization: ExecutionFinalizationPort
     preparation: ExecutionPreparationPort | None = None
+    model_call_gate: Any | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -144,6 +158,245 @@ class ExecutionCoordinator:
         self, task_id: str, attempt_id: str, status: str, values: Mapping[str, Any]
     ) -> Mapping[str, Any]:
         return self.state.checkpoint(task_id, status, values, attempt_id)
+
+    def _model_call_prompt_facts(
+        self, state: Mapping[str, Any]
+    ) -> tuple[Mapping[str, Any] | None, str, int]:
+        dispatch_binding = state.get("dispatch_binding")
+        binding = (
+            dict(dispatch_binding) if isinstance(dispatch_binding, Mapping) else None
+        )
+        prompt_value = state.get("prompt")
+        if not isinstance(prompt_value, str):
+            return binding, "", 0
+        digest = hashlib.sha256(prompt_value.encode("utf-8")).hexdigest()
+        return binding, digest, len(prompt_value)
+
+    def _model_call_structured_state(
+        self,
+        *,
+        request: Mapping[str, Any],
+        state: Mapping[str, Any],
+        task_id: str,
+        attempt_id: str,
+        provider: str,
+        model: str | None,
+        remaining_calls: int,
+        remaining_attempts: int,
+        execution_lane: str,
+    ) -> dict[str, Any]:
+        attempts_evidence = state.get("executions")
+        durable_execution = state.get("execution")
+        dispatch_binding, prompt_digest, prompt_length = self._model_call_prompt_facts(
+            state
+        )
+        candidates = request.get("deterministic_candidates")
+        return {
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "provider": str(provider),
+            "model": str(model or ""),
+            "remaining_provider_calls": int(remaining_calls),
+            "remaining_attempts": int(remaining_attempts),
+            "execution_lane": str(execution_lane),
+            "prior_attempt_count": (
+                len(attempts_evidence) if isinstance(attempts_evidence, list) else 0
+            ),
+            "prior_execution_present": durable_execution is not None,
+            "prior_execution_complete": bool(
+                isinstance(durable_execution, Mapping)
+                and str(durable_execution.get("outcome") or "")
+                == WorkerOutcome.EXECUTION_COMPLETED.value
+                and bool(durable_execution.get("evidence_complete"))
+            ),
+            "prompt_digest": prompt_digest,
+            "prompt_length": prompt_length,
+            "dispatch_provider": (
+                str(dispatch_binding.get("provider") or "")
+                if isinstance(dispatch_binding, Mapping)
+                else ""
+            ),
+            "dispatch_model": (
+                str(dispatch_binding.get("model") or "")
+                if isinstance(dispatch_binding, Mapping)
+                else ""
+            ),
+            "request_model": str(request.get("model") or ""),
+            "deterministic_candidates": (
+                list(candidates) if isinstance(candidates, list) else []
+            ),
+        }
+
+    def _consume_model_call_verdict(
+        self,
+        *,
+        verdict: ModelCallNeedVerdict,
+        task_id: str,
+        attempt_id: str,
+        provider: str,
+        state: Mapping[str, Any],
+    ) -> tuple[Mapping[str, Any], Any | None]:
+        """Consume a MODEL_CALL_NEEDED verdict immediately before invocation.
+
+        Returns ``(state, deterministic_receipt)``. The receipt is only
+        non-None when the verdict is consumable: it validates through the
+        existing ``contract.receipt_from_state`` structure with a completed,
+        evidence-complete outcome and zero claimed provider calls. Every other
+        case preserves the existing model path and records explicit telemetry.
+        """
+        resolved = verdict.resolution == RESOLVED_DETERMINISTICALLY
+        state = self._record_model_call_outcome(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            verdict=verdict,
+            provider=provider,
+            outcome=DETERMINISTIC_RESOLVED if resolved else MODEL_REQUIRED,
+            model_calls_required=0 if resolved else 1,
+            model_calls_avoided=1 if resolved else 0,
+        )
+        if not resolved:
+            return state, None
+        raw_receipt = verdict.deterministic_receipt
+        if not isinstance(raw_receipt, Mapping) or not raw_receipt:
+            self._record_model_call_outcome(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                verdict=verdict,
+                provider=provider,
+                outcome=MODEL_REQUIRED,
+                model_calls_required=1,
+                resolution_override=INSUFFICIENT_STRUCTURED_STATE,
+                reason_override=(
+                    "deterministic_receipt_missing:existing model path preserved"
+                ),
+            )
+            return self.state.read_snapshot(task_id) or {}, None
+        try:
+            receipt = self.contract.receipt_from_state(dict(raw_receipt))
+        except Exception:  # noqa: BLE001 - unusable evidence keeps model path
+            receipt = None
+        if (
+            receipt is None
+            or getattr(receipt, "outcome", None)
+            != WorkerOutcome.EXECUTION_COMPLETED.value
+            or not bool(getattr(receipt, "evidence_complete", False))
+        ):
+            self._record_model_call_outcome(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                verdict=verdict,
+                provider=provider,
+                outcome=MODEL_REQUIRED,
+                model_calls_required=1,
+                resolution_override=INSUFFICIENT_STRUCTURED_STATE,
+                reason_override=(
+                    "deterministic_receipt_unusable:existing model path preserved"
+                ),
+            )
+            return self.state.read_snapshot(task_id) or {}, None
+        raw_reported_calls = getattr(receipt, "provider_calls", 0)
+        raw_reported_attempts = getattr(receipt, "provider_attempt_count", 0)
+        try:
+            reported_calls = int(raw_reported_calls or 0)
+        except (TypeError, ValueError):
+            reported_calls = 1
+        try:
+            reported_attempts = (
+                None
+                if raw_reported_attempts is None
+                else int(raw_reported_attempts or 0)
+            )
+        except (TypeError, ValueError):
+            reported_attempts = 1
+        if reported_calls != 0 or (
+            reported_attempts is not None and reported_attempts != 0
+        ):
+            self._record_model_call_outcome(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                verdict=verdict,
+                provider=provider,
+                outcome=MODEL_REQUIRED,
+                model_calls_required=1,
+                resolution_override=INSUFFICIENT_STRUCTURED_STATE,
+                reason_override=(
+                    "deterministic_receipt_claims_provider_calls:"
+                    "existing model path preserved"
+                ),
+            )
+            return self.state.read_snapshot(task_id) or {}, None
+        self._record_model_call_outcome(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            verdict=verdict,
+            provider=provider,
+            outcome=MODEL_AVOIDED,
+            model_avoided=True,
+            model_calls_avoided=1,
+        )
+        return self.state.read_snapshot(task_id) or {}, receipt
+
+    def _record_model_call_outcome(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        verdict: ModelCallNeedVerdict,
+        provider: str,
+        outcome: str,
+        model_calls_required: int = 0,
+        model_calls_invoked: int = 0,
+        model_calls_avoided: int = 0,
+        model_avoided: bool = False,
+        resolution_override: str | None = None,
+        reason_override: str | None = None,
+    ) -> Mapping[str, Any]:
+        record = ModelCallTelemetryRecord(
+            outcome=outcome,
+            resolution=resolution_override or verdict.resolution,
+            reason=reason_override or verdict.reason,
+            resolver_id=verdict.resolver_id,
+            seam=verdict.seam,
+            structured_state_digest=verdict.structured_state_digest,
+            model_avoided=model_avoided,
+            resolver_failure=verdict.resolver_failure,
+            model_calls_required=int(model_calls_required),
+            model_calls_invoked=int(model_calls_invoked),
+            model_calls_avoided=int(model_calls_avoided),
+        )
+        payload = record.to_dict()
+        state = self.state.read_snapshot(task_id) or {}
+        history = state.get("model_call_resolutions")
+        entries = list(history) if isinstance(history, list) else []
+        entries.append(
+            {
+                **payload,
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "provider": str(provider),
+                "seam": WORKER_INVOCATION_SEAM,
+            }
+        )
+        aggregate = state.get("model_call_avoidance")
+        totals = dict(aggregate) if isinstance(aggregate, Mapping) else {}
+        for key in (
+            "model_calls_required",
+            "model_calls_invoked",
+            "model_calls_avoided",
+        ):
+            totals[key] = int(totals.get(key) or 0) + int(payload[key])
+        totals["model_calls_not_eliminated"] = bool(
+            totals.get("model_calls_invoked", 0) > 0
+            or payload["model_calls_not_eliminated"]
+        )
+        durable_proof = {
+            "model_call_resolutions": entries,
+            "model_call_avoidance": totals,
+        }
+        if self.model_call_gate is None:
+            return {**state, **durable_proof}
+        self.state.mutate_metadata(task_id, durable_proof)
+        return self.state.read_snapshot(task_id) or {}
 
     def _host_preparation_required(
         self, contract: Any, request: Mapping[str, Any]
@@ -163,9 +416,7 @@ class ExecutionCoordinator:
         )
 
     @staticmethod
-    def _request_identity_value(
-        request: Mapping[str, Any], key: str
-    ) -> str | None:
+    def _request_identity_value(request: Mapping[str, Any], key: str) -> str | None:
         value = request.get(key)
         return str(value).strip() if isinstance(value, str) and value.strip() else None
 
@@ -198,7 +449,9 @@ class ExecutionCoordinator:
                 attempt_id=attempt_id,
                 operation_id=operation_id,
                 repository=repository,
-                source_revision=self._request_identity_value(request, "source_revision"),
+                source_revision=self._request_identity_value(
+                    request, "source_revision"
+                ),
                 base_revision=self._request_identity_value(request, "base_revision"),
                 workspace_id=self._request_identity_value(request, "workspace_id"),
                 target_id=self._request_identity_value(request, "target_id"),
@@ -222,7 +475,9 @@ class ExecutionCoordinator:
             state = self.state.read_snapshot(task_id) or {}
             raw_durable = state.get("effect_authorization")
         if not isinstance(raw_durable, Mapping):
-            raise MissingExecutionBindingError("durable effect authorization is malformed")
+            raise MissingExecutionBindingError(
+                "durable effect authorization is malformed"
+            )
         try:
             durable = EffectAuthorization.from_mapping(raw_durable)
             durable.assert_fresh()
@@ -276,11 +531,15 @@ class ExecutionCoordinator:
         except EffectAuthorizationError as exc:
             raise MissingExecutionBindingError(str(exc)) from exc
         durable_manifests = state.get("tool_projection_manifests")
-        manifests = dict(durable_manifests) if isinstance(durable_manifests, Mapping) else {}
+        manifests = (
+            dict(durable_manifests) if isinstance(durable_manifests, Mapping) else {}
+        )
         existing = manifests.get(provider)
         if existing is not None:
             if not isinstance(existing, Mapping):
-                raise MissingExecutionBindingError("durable tool projection is malformed")
+                raise MissingExecutionBindingError(
+                    "durable tool projection is malformed"
+                )
             try:
                 durable_projection = ToolProjectionManifest.from_mapping(
                     existing, authorization
@@ -579,24 +838,47 @@ class ExecutionCoordinator:
                     active_provider=provider,
                 )
                 base_prompt = getattr(self.contract, "base_prompt", None)
-                prompt = base_prompt(contract) if callable(base_prompt) else self.contract.prompt(contract)
+                prompt = (
+                    base_prompt(contract)
+                    if callable(base_prompt)
+                    else self.contract.prompt(contract)
+                )
                 model = (
-                    str(((dispatch_binding.get("canonical_dispatch_envelope") or {}).get("model", dispatch_binding["model"])))
-                    if dispatch_binding is not None else str(request.get("model") or "").strip() or None
+                    str(
+                        (
+                            (
+                                dispatch_binding.get("canonical_dispatch_envelope")
+                                or {}
+                            ).get("model", dispatch_binding["model"])
+                        )
+                    )
+                    if dispatch_binding is not None
+                    else str(request.get("model") or "").strip() or None
                 )
                 materialize = getattr(self.contract, "materialize_worker_context", None)
                 package = None
                 result = None
                 if callable(materialize):
                     result = materialize(
-                        request=request, state=state, task_id=task_id, attempt_id=attempt_id,
-                        fresh_submission=fresh_submission, contract=contract, lease=lease,
-                        base_prompt=prompt, actual_provider=provider, actual_model=model,
+                        request=request,
+                        state=state,
+                        task_id=task_id,
+                        attempt_id=attempt_id,
+                        fresh_submission=fresh_submission,
+                        contract=contract,
+                        lease=lease,
+                        base_prompt=prompt,
+                        actual_provider=provider,
+                        actual_model=model,
                     )
                     if result is not None:
                         prompt, package = result
                 self.contract.revalidate_provider_boundary(
-                    contract, request, task_id, dispatch_binding, active_provider=provider
+                    contract,
+                    request,
+                    task_id,
+                    dispatch_binding,
+                    active_provider=provider,
                 )
                 if not callable(materialize) or result is None:
                     prompt = self.contract.prompt(contract)
@@ -637,25 +919,71 @@ class ExecutionCoordinator:
                     provider=provider,
                     allow_create=effect_envelope_create_allowed,
                 )
-                execution_receipt = self.worker.invoke(
-                    provider,
-                    invoke_contract,
-                    lease,
-                    prompt=prompt,
-                    model=model,
-                    timeout_seconds=min(configured_timeout, remaining_timeout),
-                    on_process_group=on_process_group,
-                    effect_authorization=(
-                        effect_authorization.to_dict()
-                        if effect_authorization is not None
-                        else None
-                    ),
-                    tool_projection_manifest=(
-                        tool_projection.to_dict() if tool_projection is not None else None
-                    ),
-                )
+                execution_receipt = None
+                deterministic_receipt = None
+                if self.model_call_gate is not None:
+                    structured_state = self._model_call_structured_state(
+                        request=request,
+                        state=state,
+                        task_id=task_id,
+                        attempt_id=attempt_id,
+                        provider=provider,
+                        model=model,
+                        remaining_calls=remaining_calls,
+                        remaining_attempts=remaining_attempts,
+                        execution_lane=str(fast_lane_values["execution_lane"]),
+                    )
+                    model_call_verdict = resolve_model_call_need(
+                        self.model_call_gate,
+                        structured_state,
+                        seam=WORKER_INVOCATION_SEAM,
+                    )
+                    state, deterministic_receipt = self._consume_model_call_verdict(
+                        verdict=model_call_verdict,
+                        task_id=task_id,
+                        attempt_id=attempt_id,
+                        provider=provider,
+                        state=state,
+                    )
+                if deterministic_receipt is not None:
+                    execution_receipt = deterministic_receipt
+                else:
+                    execution_receipt = self.worker.invoke(
+                        provider,
+                        invoke_contract,
+                        lease,
+                        prompt=prompt,
+                        model=model,
+                        timeout_seconds=min(configured_timeout, remaining_timeout),
+                        on_process_group=on_process_group,
+                        effect_authorization=(
+                            effect_authorization.to_dict()
+                            if effect_authorization is not None
+                            else None
+                        ),
+                        tool_projection_manifest=(
+                            tool_projection.to_dict()
+                            if tool_projection is not None
+                            else None
+                        ),
+                    )
+                    if self.model_call_gate is not None:
+                        self._record_model_call_outcome(
+                            task_id=task_id,
+                            attempt_id=attempt_id,
+                            verdict=model_call_verdict,
+                            provider=provider,
+                            outcome=MODEL_INVOKED,
+                            model_calls_required=1,
+                            model_calls_invoked=1,
+                        )
+                        state = self.state.read_snapshot(task_id) or {}
                 if deadline is not None and time.time() >= deadline:
                     raise RuntimeError("WALL_TIME_BUDGET_EXHAUSTED")
+                if execution_receipt is None:
+                    raise RuntimeError(
+                        "worker invocation produced no execution receipt"
+                    )
                 reported_calls = int(execution_receipt.provider_calls)
                 reported_attempts = execution_receipt.provider_attempt_count
                 if reported_calls < 0 or reported_calls > remaining_calls:
