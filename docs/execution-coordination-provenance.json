@@ -15,7 +15,8 @@
     "src/nexus_runtime/execution_coordination/ports.py",
     "src/nexus_runtime/execution_coordination/coordinator.py",
     "src/nexus_runtime/execution_coordination/__init__.py",
-    "tests/test_execution_coordination.py"
+    "tests/test_execution_coordination.py",
+    "src/nexus_runtime/execution_coordination/context_aware.py"
   ],
   "ownership_boundary": {
     "runtime_owns": [
@@ -55,5 +56,11 @@
     ],
     "compatibility_witness": "tests/nexus/orchestrator/test_runtime_coordination_real_path.py",
     "claim_ceiling": "source extraction candidate; no integration or deployment acceptance"
+  },
+  "local_extensions": {
+    "context_admission_persistence": {
+      "issue": "James3014/nexus-runtime#32",
+      "claim_boundary": "persists non-model-visible recovery evidence with worker completion; does not grant provider, routing, verification, or completion authority"
+    }
   }
 }

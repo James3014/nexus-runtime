@@ -355,10 +355,10 @@
     },
     {
       "path": "nexus_runtime/task_context/__init__.py",
-      "sha256": "38746eabce9d839d931d425922c0647a25c0f915681498657a14ced38c685149",
+      "sha256": "7eac1a20ef8cc7428b8f2b213cc2d019da46e74363e54e0026a7d37f14078a43",
       "canonical_owner": "runtime context",
-      "donor": "accepted context-hub/task-context candidate",
-      "lineage_status": "known"
+      "donor": "docs/task-context-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/task_context/assembly.py",
@@ -376,10 +376,17 @@
     },
     {
       "path": "nexus_runtime/task_context/consumer_projection.py",
-      "sha256": "77de8f3c2dbe3458f5720e7e7394a7055de2fd2cda87aa234bb6c4494c391def",
+      "sha256": "32bf4decf3b62c17d47ba6216028209f8efb743a5a617c738cdaddf2f8670998",
       "canonical_owner": "runtime context",
-      "donor": "accepted context-hub/task-context candidate",
-      "lineage_status": "known"
+      "donor": "docs/task-context-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
+    },
+    {
+      "path": "nexus_runtime/task_context/context_admission.py",
+      "sha256": "39bead5bbf100fd538d1297518aaad9d726325bfeae5d6e824bf61e6dfe0d2b4",
+      "canonical_owner": "runtime context",
+      "donor": "docs/task-context-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/task_context/consumption.py",
@@ -796,7 +803,7 @@
     },
     {
       "path": "nexus_runtime/execution_coordination/context_aware.py",
-      "sha256": "32b04e13c1245f0ad39b8b6624f257c75c92f321ea191a30c4eee449ff40cbc3",
+      "sha256": "39623d5ab27812ab3087c826edb9c1dba928f03f1c5418e4bcf1188bcc18dadf",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"

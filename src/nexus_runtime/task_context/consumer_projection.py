@@ -3,8 +3,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
-from typing import Any, Callable
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 from nexus_planning_candidate.services.capability_evidence_bundle import (
     CONSUMER_PAYLOAD_SCHEMA,
@@ -13,8 +13,15 @@ from nexus_planning_candidate.services.capability_evidence_bundle import (
 )
 
 from .assembly import build_context_assembly_contract
+from .context_admission import (
+    ContextAdmissionReceipt,
+    admit_artifact,
+    build_admission_receipt,
+    build_admission_telemetry,
+)
 
 MODEL_CONTEXT_MARKER = "[NEXUS MODEL CONTEXT]"
+_CONTEXT_ADMISSION_PROJECTION_TOKEN = object()
 
 
 def _estimate_tokens(value: Any) -> int:
@@ -54,6 +61,82 @@ def _strict_json_copy(value: Any) -> Any:
         raise ValueError("consumer_payload_json_invalid") from exc
 
 
+def _payload_hash_basis(payload: Mapping[str, Any]) -> tuple[str, int]:
+    encoded = json.dumps(
+        {
+            k: v
+            for k, v in payload.items()
+            if k not in {"payload_hash", "payload_chars"}
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest(), len(encoded)
+
+
+def _render_payload_fields(fields: Mapping[str, Any]) -> str:
+    """Render consumer fields into deterministic blank-line blocks."""
+    blocks: list[str] = []
+    for key in sorted(fields):
+        value = fields[key]
+        if isinstance(value, str):
+            rendered = value
+        else:
+            rendered = json.dumps(
+                _strict_json_copy(value),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        blocks.append(f"{key}: {rendered}")
+    return "\n\n".join(blocks)
+
+
+def _serialized_payload_metrics(payload: Mapping[str, Any]) -> dict[str, int]:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    chars = len(encoded)
+    return {
+        "chars": chars,
+        "bytes": len(encoded.encode("utf-8")),
+        "tokens": max(1, (chars + 3) // 4),
+    }
+
+
+def _context_admitted_payload(
+    source_payload: Mapping[str, Any],
+    receipt: ContextAdmissionReceipt,
+) -> dict[str, Any]:
+    """Create a model-visible projection that cannot contain hidden payload text."""
+    source_hash = str(source_payload.get("payload_hash") or "").strip()
+    capability = str(source_payload.get("capability") or "").strip()
+    projected: dict[str, Any] = {
+        "schema": str(source_payload.get("schema") or CONSUMER_PAYLOAD_SCHEMA),
+        "capability": capability,
+        "public_claim_allowed": False,
+        "projection_kind": "CONTEXT_ADMISSION",
+        "source_payload_hash": source_hash,
+        "fields": {
+            "context_admission": {
+                "visible_text": receipt.visible_text,
+                "hidden_segment_ids": list(receipt.hidden_segment_ids),
+                "recall_refs": list(receipt.recall_refs.values()),
+            }
+        },
+    }
+    payload_hash, payload_chars = _payload_hash_basis(projected)
+    projected["payload_chars"] = payload_chars
+    projected["payload_hash"] = payload_hash
+    return projected
+
+
 def _validate_payload_record(
     record: Mapping[str, Any], selected: set[str], materialized: set[str]
 ) -> tuple[str, list[str], dict[str, Any]]:
@@ -75,13 +158,10 @@ def _validate_payload_record(
         raise ValueError("consumer_payload_record_invalid")
     if payload.get("public_claim_allowed") is not False:
         raise ValueError("consumer_payload_record_invalid")
-    encoded = json.dumps(
-        {k: v for k, v in payload.items() if k not in {"payload_hash", "payload_chars"}},
-        sort_keys=True, ensure_ascii=False, allow_nan=False,
-    )
-    if payload.get("payload_chars") != len(encoded) or len(encoded) > MAX_CONSUMER_PAYLOAD_CHARS:
+    payload_hash, payload_chars = _payload_hash_basis(payload)
+    if payload.get("payload_chars") != payload_chars or payload_chars > MAX_CONSUMER_PAYLOAD_CHARS:
         raise ValueError("consumer_payload_record_invalid")
-    if hashlib.sha256(encoded.encode("utf-8")).hexdigest() != payload.get("payload_hash"):
+    if payload_hash != payload.get("payload_hash"):
         raise ValueError("consumer_payload_record_invalid")
     return capability, list(ids), payload
 
@@ -198,6 +278,310 @@ def _evidence_projection(
     return materialized, bundles, tuple(sorted(payloads, key=lambda p: (str(p.get("capability")), str(p.get("payload_hash"))))), _normalized_ids(tuple(payload_evidence_values)), tuple(payload_records)
 
 
+def _admission_request_hints(request: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Read the optional deterministic admission policy from the request.
+
+    The policy is explicit host input, never inferred: ``context_admission``
+    may carry ``hide_hints`` (block-index hints), ``contract_terms``
+    (must-keep terms), ``seen_content_digests``, and ``max_segments``. Any
+    other key fails closed so admission stays a deterministic, reviewable
+    seam rather than a second policy engine.
+    """
+    policy = request.get("context_admission")
+    if policy is None:
+        return None
+    if not isinstance(policy, Mapping):
+        raise TypeError("worker_model_context_admission_policy_invalid")
+    allowed = {"hide_hints", "contract_terms", "seen_content_digests", "max_segments"}
+    unknown = set(policy) - allowed
+    if unknown:
+        raise ValueError(
+            "worker_model_context_admission_policy_invalid:"
+            + ",".join(sorted(str(k) for k in unknown))
+        )
+
+    hide_hints = policy.get("hide_hints")
+    if hide_hints is not None:
+        if not isinstance(hide_hints, Mapping):
+            raise ValueError("worker_model_context_admission_policy_invalid:hide_hints")
+        for payload_id, entries in hide_hints.items():
+            if not isinstance(payload_id, str) or not payload_id.strip():
+                raise ValueError("worker_model_context_admission_policy_invalid:hide_hints")
+            if not isinstance(entries, Mapping):
+                raise TypeError("worker_model_context_admission_policy_invalid:hide_hints")
+            for index, hints in entries.items():
+                if not str(index).isdigit() or not isinstance(hints, (list, tuple)):
+                    raise ValueError("worker_model_context_admission_policy_invalid:hide_hints")
+                if any(not isinstance(hint, str) or not hint.strip() for hint in hints):
+                    raise ValueError("worker_model_context_admission_policy_invalid:hide_hints")
+
+    contract_terms = policy.get("contract_terms")
+    if contract_terms is not None and (
+        not isinstance(contract_terms, (list, tuple))
+        or any(not isinstance(term, str) or not term.strip() for term in contract_terms)
+    ):
+        raise ValueError("worker_model_context_admission_policy_invalid:contract_terms")
+
+    seen = policy.get("seen_content_digests")
+    if seen is not None:
+        if not isinstance(seen, (list, tuple)):
+            raise ValueError(
+                "worker_model_context_admission_policy_invalid:seen_content_digests"
+            )
+        hexdigits = set("0123456789abcdefABCDEF")
+        if any(
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(ch not in hexdigits for ch in digest)
+            for digest in seen
+        ):
+            raise ValueError(
+                "worker_model_context_admission_policy_invalid:seen_content_digests"
+            )
+
+    max_segments = policy.get("max_segments")
+    if max_segments is not None and (
+        isinstance(max_segments, bool)
+        or not isinstance(max_segments, int)
+        or not (1 <= max_segments <= 512)
+    ):
+        raise ValueError("worker_model_context_admission_policy_invalid:max_segments")
+    return policy
+
+
+def _admit_worker_payloads(
+    *,
+    task_id: str,
+    task_statement: str,
+    payloads: Sequence[Mapping[str, Any]],
+    policy: Mapping[str, Any] | None,
+) -> tuple[Sequence[Mapping[str, Any]], dict[str, Any]]:
+    """Project bounded payloads before model context assembly.
+
+    Full hidden payloads stay only in the returned admission_report for durable
+    Runtime storage. The returned model-visible payloads contain only visible
+    text, stable hidden ids, and recall references.
+    """
+    if policy is None:
+        return payloads, {}
+
+    hide_hints = policy.get("hide_hints")
+    contract_terms = policy.get("contract_terms")
+    seen_digests = policy.get("seen_content_digests")
+    max_segments = policy.get("max_segments")
+    hide_map = dict(hide_hints) if isinstance(hide_hints, Mapping) else {}
+    terms = (
+        tuple(str(t) for t in contract_terms)
+        if isinstance(contract_terms, (list, tuple))
+        else ()
+    )
+    seen = (
+        tuple(str(d) for d in seen_digests)
+        if isinstance(seen_digests, (list, tuple))
+        else ()
+    )
+    limit = max_segments if isinstance(max_segments, int) and max_segments > 0 else 64
+
+    admitted: list[Mapping[str, Any]] = []
+    receipts: dict[str, Any] = {}
+    per_payload: list[dict[str, Any]] = []
+    totals = {
+        "visible_chars": 0,
+        "hidden_chars": 0,
+        "visible_bytes": 0,
+        "hidden_bytes": 0,
+        "visible_tokens": 0,
+        "hidden_tokens": 0,
+        "recalls": 0,
+        "tokens_saved_now": 0,
+        "source_payload_tokens": 0,
+        "model_visible_payload_tokens": 0,
+    }
+
+    for payload in payloads:
+        payload_id = str(
+            payload.get("payload_hash") or payload.get("capability") or "payload"
+        )
+        fields = payload.get("fields")
+        if not isinstance(fields, Mapping) or not fields:
+            admitted.append(payload)
+            per_payload.append(
+                {
+                    "payload_id": payload_id,
+                    "admission_failure": "consumer_payload_fields_unusable",
+                    "hidden_content_deleted": False,
+                    "tokens_saved_now": 0,
+                }
+            )
+            continue
+
+        rendered = _render_payload_fields(fields)
+        raw_payload_hints = hide_map.get(payload_id)
+        payload_hints = (
+            {
+                str(index): tuple(str(h) for h in hints)
+                for index, hints in raw_payload_hints.items()
+                if isinstance(hints, (list, tuple))
+            }
+            if isinstance(raw_payload_hints, Mapping)
+            else {}
+        )
+        decision = admit_artifact(
+            rendered,
+            artifact_id=f"{task_id}:{payload_id}",
+            task_statement=task_statement,
+            contract_terms=terms,
+            hide_hints=payload_hints,
+            max_segments=limit,
+            seen_content_digests=seen,
+        )
+        receipt = build_admission_receipt(decision)
+        telemetry = build_admission_telemetry(receipt).to_dict()
+
+        projection: Mapping[str, Any] | None = None
+        projection_failure: str | None = None
+        source_metrics = _serialized_payload_metrics(payload)
+        model_metrics = dict(source_metrics)
+        if receipt.hidden_segment_ids and receipt.admission_failure is None:
+            candidate = _context_admitted_payload(payload, receipt)
+            candidate_metrics = _serialized_payload_metrics(candidate)
+            if int(candidate.get("payload_chars") or 0) > MAX_CONSUMER_PAYLOAD_CHARS:
+                projection_failure = "context_admission_projection_oversize"
+            elif candidate_metrics["tokens"] >= source_metrics["tokens"]:
+                projection_failure = "context_admission_no_size_benefit"
+            else:
+                projection = candidate
+                model_metrics = candidate_metrics
+
+        actual_metrics = {
+            "source_payload_chars": source_metrics["chars"],
+            "source_payload_bytes": source_metrics["bytes"],
+            "source_payload_tokens": source_metrics["tokens"],
+            "model_visible_payload_chars": model_metrics["chars"],
+            "model_visible_payload_bytes": model_metrics["bytes"],
+            "model_visible_payload_tokens": model_metrics["tokens"],
+            "tokens_saved_now": max(
+                0, source_metrics["tokens"] - model_metrics["tokens"]
+            ),
+        }
+
+        if projection is not None:
+            receipts[payload_id] = receipt.to_dict()
+            effective = {**telemetry, **actual_metrics}
+            per_payload.append({"payload_id": payload_id, **effective})
+            for key in totals:
+                if key in actual_metrics:
+                    totals[key] += int(actual_metrics[key])
+                else:
+                    totals[key] += int(telemetry.get(key) or 0)
+            admitted.append(projection)
+        else:
+            # Failure, no reduction, or an oversize projection preserves the
+            # canonical payload. Do not claim token savings that were not
+            # physically removed from the model-visible package.
+            admitted.append(payload)
+            preserved = {
+                **telemetry,
+                **actual_metrics,
+                "tokens_saved_now": 0,
+            }
+            if projection_failure:
+                preserved["admission_failure"] = projection_failure
+            per_payload.append({"payload_id": payload_id, **preserved})
+            for key in (
+                "visible_chars",
+                "visible_bytes",
+                "visible_tokens",
+                "source_payload_tokens",
+                "model_visible_payload_tokens",
+            ):
+                # The canonical payload stays fully visible. Keep these fields
+                # conservative rather than pretending a failed projection hid data.
+                totals[key] += int(preserved.get(key) or 0)
+            if receipt.admission_failure is not None:
+                receipts[payload_id] = receipt.to_dict()
+
+    report = {
+        "schema": "nexus.runtime.context_admission_report.v1",
+        "task_id": task_id,
+        "payload_ids": [
+            str(payload.get("payload_hash") or payload.get("capability") or "payload")
+            for payload in payloads
+        ],
+        "per_payload": per_payload,
+        "admission_receipts": receipts,
+        **totals,
+        "hidden_content_deleted": False,
+    }
+    return admitted, report
+
+
+def _effective_payload_records(
+    *,
+    validated_records: Sequence[Mapping[str, Any]],
+    consumer_payloads: Sequence[Mapping[str, Any]],
+    selected: set[str],
+    materialized: set[str],
+    allow_context_admission_projection: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    canonical_by_hash: dict[str, Mapping[str, Any]] = {}
+    for record in validated_records:
+        payload = record["payload"]
+        canonical_by_hash[str(payload["payload_hash"])] = record
+
+    if not consumer_payloads:
+        records = [copy.deepcopy(dict(record)) for record in validated_records]
+        return [copy.deepcopy(dict(record["payload"])) for record in records], records
+
+    projected_by_source: dict[str, dict[str, Any]] = {}
+    for raw in consumer_payloads:
+        if not isinstance(raw, Mapping):
+            raise TypeError("consumer_payload_projection_invalid")
+        payload = _strict_json_copy(raw)
+        own_hash = str(payload.get("payload_hash") or "").strip()
+        source_hash = str(payload.get("source_payload_hash") or own_hash).strip()
+        canonical = canonical_by_hash.get(source_hash)
+        if canonical is None or source_hash in projected_by_source:
+            raise ValueError("consumer_payload_projection_binding_invalid")
+        if str(payload.get("capability") or "").strip() != str(
+            canonical["capability"]
+        ):
+            raise ValueError("consumer_payload_projection_binding_invalid")
+        if source_hash != own_hash:
+            if not allow_context_admission_projection:
+                raise ValueError("consumer_payload_projection_not_allowed")
+            if payload.get("projection_kind") != "CONTEXT_ADMISSION":
+                raise ValueError("consumer_payload_projection_binding_invalid")
+        _validate_payload_record(
+            {
+                "capability": canonical["capability"],
+                "evidence_ids": list(canonical["evidence_ids"]),
+                "payload": payload,
+            },
+            selected,
+            materialized,
+        )
+        projected_by_source[source_hash] = payload
+
+    if set(projected_by_source) != set(canonical_by_hash):
+        raise ValueError("consumer_payload_projection_binding_invalid")
+
+    effective_records: list[dict[str, Any]] = []
+    effective_payloads: list[dict[str, Any]] = []
+    for record in validated_records:
+        source_hash = str(record["payload"]["payload_hash"])
+        payload = projected_by_source[source_hash]
+        effective_records.append(
+            {
+                "capability": record["capability"],
+                "evidence_ids": list(record["evidence_ids"]),
+                "payload": copy.deepcopy(payload),
+            }
+        )
+        effective_payloads.append(copy.deepcopy(payload))
+    return effective_payloads, effective_records
+
+
 def build_planner_consumer_context_package(
     *,
     task_id: str,
@@ -216,6 +600,7 @@ def build_planner_consumer_context_package(
     consumer_role: str,
     consumer_channel: str,
     worker_binding: Mapping[str, Any] | None = None,
+    _context_admission_token: object | None = None,
 ) -> dict[str, Any]:
     """Project already-selected Planner context into the G1 semantic package.
 
@@ -232,19 +617,46 @@ def build_planner_consumer_context_package(
         raise ValueError("consumer_payload_record_missing")
     if serialized_bundle_ids and not records:
         raise ValueError("consumer_payload_record_missing")
-    payloads = []
-    validated_records = []
+    canonical_records: list[dict[str, Any]] = []
     for record in records:
         if not isinstance(record, Mapping):
             raise ValueError("consumer_payload_record_invalid")
-        capability, ids, payload = _validate_payload_record(record, set(selected), set(materialized))
-        payloads.append(payload)
-        validated_records.append({"capability": capability, "evidence_ids": list(ids), "payload": copy.deepcopy(payload)})
-    payloads.sort(key=lambda p: (str(p.get("capability")), str(p.get("payload_hash"))))
-    payload_caps = _normalized_ids(tuple(str(p.get("capability") or "") for p in payloads))
-    record_caps = _normalized_ids(tuple(str(r.get("capability") or "") for r in records if isinstance(r, Mapping)))
-    record_evidence = _normalized_ids(tuple(str(e) for r in records if isinstance(r, Mapping) for e in (r.get("evidence_ids") or [])))
-    if records and (record_caps != payload_caps):
+        capability, ids, payload = _validate_payload_record(
+            record, set(selected), set(materialized)
+        )
+        canonical_records.append(
+            {
+                "capability": capability,
+                "evidence_ids": list(ids),
+                "payload": copy.deepcopy(payload),
+            }
+        )
+    payloads, validated_records = _effective_payload_records(
+        validated_records=canonical_records,
+        consumer_payloads=consumer_payloads,
+        selected=set(selected),
+        materialized=set(materialized),
+        allow_context_admission_projection=(
+            _context_admission_token is _CONTEXT_ADMISSION_PROJECTION_TOKEN
+        ),
+    )
+    payloads.sort(
+        key=lambda p: (str(p.get("capability")), str(p.get("payload_hash")))
+    )
+    payload_caps = _normalized_ids(
+        tuple(str(p.get("capability") or "") for p in payloads)
+    )
+    record_caps = _normalized_ids(
+        tuple(str(r.get("capability") or "") for r in validated_records)
+    )
+    record_evidence = _normalized_ids(
+        tuple(
+            str(e)
+            for r in validated_records
+            for e in (r.get("evidence_ids") or [])
+        )
+    )
+    if validated_records and record_caps != payload_caps:
         raise ValueError("consumer_payload_record_invalid")
     payload_caps = record_caps
     payload_evidence = record_evidence
@@ -371,8 +783,10 @@ def build_online_context_package(context: Mapping[str, Any]) -> dict[str, Any]:
     return package
 
 
-def build_worker_context_package(request: Mapping[str, Any]) -> dict[str, Any]:
-    """Build the WorkerRegistry projection from canonical Planner/admission input."""
+def build_worker_context_package_with_admission(
+    request: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build WorkerRegistry projection plus non-model-visible recovery evidence."""
 
     planner = _mapping(request.get("planner_output"))
     envelope = _mapping(request.get("canonical_dispatch_envelope"))
@@ -400,14 +814,19 @@ def build_worker_context_package(request: Mapping[str, Any]) -> dict[str, Any]:
     if candidate_plan_hash != planner_plan_hash:
         raise ValueError("worker_model_context_planner_plan_mismatch")
 
+    task_statement = str(
+        request.get("what") or request.get("task_statement") or ""
+    )
     selected = _planner_selected_capabilities(planner)
-    materialized, bundles, payloads, payload_evidence, payload_records = _evidence_projection(
-        planner,
-        expected_selected=selected,
-        expected_task_id=task_id,
-        expected_plan_hash=planner_plan_hash,
-        expected_decision_id=planner_decision_id,
-        expected_statement=str(request.get("what") or request.get("task_statement") or ""),
+    materialized, bundles, payloads, payload_evidence, payload_records = (
+        _evidence_projection(
+            planner,
+            expected_selected=selected,
+            expected_task_id=task_id,
+            expected_plan_hash=planner_plan_hash,
+            expected_decision_id=planner_decision_id,
+            expected_statement=task_statement,
+        )
     )
     worker_binding = {
         "worker_id": str(envelope.get("worker_id") or "").strip(),
@@ -417,27 +836,56 @@ def build_worker_context_package(request: Mapping[str, Any]) -> dict[str, Any]:
     if any(not value for value in worker_binding.values()):
         raise ValueError("worker_model_context_worker_binding_missing")
 
+    admission_report: dict[str, Any] = {}
+    admitted_payloads: Sequence[Mapping[str, Any]] = payloads
+    try:
+        policy = _admission_request_hints(request)
+        admitted_payloads, admission_report = _admit_worker_payloads(
+            task_id=task_id,
+            task_statement=task_statement,
+            payloads=payloads,
+            policy=policy,
+        )
+    except Exception as exc:  # noqa: BLE001 -- optional admission must fail-safe preserve
+        # Admission is optional context reduction. Any defect preserves canonical
+        # context and records a bounded failure outside the model-visible package.
+        admitted_payloads = payloads
+        admission_report = {
+            "schema": "nexus.runtime.context_admission_report.v1",
+            "task_id": task_id,
+            "admission_failure": type(exc).__name__,
+            "hidden_content_deleted": False,
+            "tokens_saved_now": 0,
+        }
+
     package = build_planner_consumer_context_package(
         task_id=task_id,
         attempt_id=attempt_id,
         planner_decision_id=planner_decision_id,
         planner_plan_hash=planner_plan_hash,
-        task_statement=str(request.get("what") or request.get("task_statement") or ""),
+        task_statement=task_statement,
         selected_capability_ids=selected,
         materialized_evidence_ids=materialized,
         evidence_bundle_ids=bundles,
         consumer_role="worker",
         consumer_channel="worker_registry",
         worker_binding=worker_binding,
-        consumer_payloads=payloads,
+        consumer_payloads=admitted_payloads,
         serialized_evidence_ids=payload_evidence,
         consumer_payload_records=payload_records,
+        _context_admission_token=_CONTEXT_ADMISSION_PROJECTION_TOKEN,
     )
     if package.get("status") != "PASS":
         raise ValueError(
             "worker_model_context_package_invalid:"
             + ",".join(package.get("blockers") or ())
         )
+    return package, admission_report
+
+
+def build_worker_context_package(request: Mapping[str, Any]) -> dict[str, Any]:
+    """Build WorkerRegistry projection from canonical Planner/admission input."""
+    package, _ = build_worker_context_package_with_admission(request)
     return package
 
 

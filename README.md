@@ -110,6 +110,30 @@ Learning, Open SWE, Repository Intelligence, and host backends remain explicitly
 injected owners. The runtime does not discover providers, deploy services, or
 create external stores implicitly.
 
+
+### Deterministic recoverable context admission
+
+The WorkerRegistry context path can opt into a deterministic context_admission
+policy before model-context serialization. The feature is disabled by default,
+does not call an LLM or external API, and does not select a provider or model.
+
+Admission first segments bounded consumer payloads, then conservatively protects
+errors/failures, file:line references, summaries, first/last truncation-risk
+blocks, exact task terms, unseen content, truncated/incomplete output,
+receipt/evidence references, and contract-required content. Only previously seen,
+unprotected content with an explicit host hide hint is eligible for
+HIDDEN_RECOVERABLE.
+
+A hidden segment is never deleted. The model-visible package receives only the
+visible projection plus stable hidden segment ids/recall references; the full
+hidden payload remains in a separate durable context_admission_report. If
+admission fails, exceeds its segment bound, or would not reduce the serialized
+model payload, Runtime preserves the canonical payload instead. Telemetry reports
+source/model-visible size, recoverable bytes/tokens, recalls, protection reasons,
+and actual estimated tokens saved now. These metrics do not by themselves prove
+task-quality improvement or production fitness.
+
+
 `ExecutionStateStore` owns durable JSON state reads, atomic writes, and archive
 selection. `ExecutionCoordinator` accepts explicit state, contract, worker,
 target, process-ownership, and finalization effect ports; host code owns provider
