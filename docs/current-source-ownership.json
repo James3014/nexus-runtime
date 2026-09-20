@@ -789,7 +789,7 @@
     },
     {
       "path": "nexus_runtime/execution_coordination/__init__.py",
-      "sha256": "5ba92ed07ab58bd905407692d5619a57d289027f9437a3650fdae6592e31c99e",
+      "sha256": "ef4e7d7eeb6c29a80a70ce90d75fe214223bad6eddf740f84ef4d25023a892dc",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
@@ -803,14 +803,14 @@
     },
     {
       "path": "nexus_runtime/execution_coordination/coordinator.py",
-      "sha256": "fcbcb0c2a31384887d9512f5c9f92e22e1b1e06b438df2135c480a72ab55120f",
+      "sha256": "f6642c179106477c31a81c89f6237686eca2d618e34964742a511f211f9943f5",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/execution_coordination/model_call_resolution.py",
-      "sha256": "d0ba43fd32bee7086250eba6a603cc9499bf903d581f6c79a29462b320d88a39",
+      "sha256": "43de9cb02de8e72918ec7411de3f792b6d32360c2a075a53c8747a4f54c2485f",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
