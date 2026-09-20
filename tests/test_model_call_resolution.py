@@ -418,7 +418,7 @@ def test_structured_state_reuses_existing_execution_representations():
 
 
 def test_public_api_preserves_existing_tool_projection_schema_export():
-    import nexus_runtime.execution_coordination as execution_coordination
+    from nexus_runtime import execution_coordination
 
     assert execution_coordination.TOOL_PROJECTION_SCHEMA
     assert "TOOL_PROJECTION_SCHEMA" in execution_coordination.__all__

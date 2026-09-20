@@ -35,7 +35,6 @@ from .ports import MissingExecutionBindingError, ModelCallGatePort
 __all__ = [
     "DETERMINISTIC_RESOLVED",
     "EFFECT_AUTHORIZATION_SCHEMA",
-    "TOOL_PROJECTION_SCHEMA",
     "INSUFFICIENT_STRUCTURED_STATE",
     "MODEL_AVOIDED",
     "MODEL_CALL_RESOLUTION_SCHEMA",
@@ -44,6 +43,7 @@ __all__ = [
     "MODEL_NEEDED",
     "MODEL_REQUIRED",
     "RESOLVED_DETERMINISTICALLY",
+    "TOOL_PROJECTION_SCHEMA",
     "WORKER_INVOCATION_SEAM",
     "EffectAuthorization",
     "EffectAuthorizationError",
