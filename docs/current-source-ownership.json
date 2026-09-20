@@ -796,28 +796,35 @@
     },
     {
       "path": "nexus_runtime/execution_coordination/__init__.py",
-      "sha256": "b961a29660a3272b25487f785478a715604a86fee6b4ca2528e6222ab3d62c45",
+      "sha256": "968ffa8f5e2274e8c2437c4574f6a71ce73d131f1ba1a85f59d8df7f7100c49b",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/execution_coordination/context_aware.py",
-      "sha256": "b75500291c60688719bf024371862cd2126315382cb6b131f6766cbea9525efe",
+      "sha256": "39623d5ab27812ab3087c826edb9c1dba928f03f1c5418e4bcf1188bcc18dadf",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/execution_coordination/coordinator.py",
-      "sha256": "3cc994804d0c9d61810c8c5e2e8b0ff5f8ba05cb17390e7ee0d7b17e3e90a373",
+      "sha256": "f6642c179106477c31a81c89f6237686eca2d618e34964742a511f211f9943f5",
+      "canonical_owner": "runtime execution coordination",
+      "donor": "docs/execution-coordination-provenance.json",
+      "lineage_status": "integrated_pending_acceptance"
+    },
+    {
+      "path": "nexus_runtime/execution_coordination/model_call_resolution.py",
+      "sha256": "43de9cb02de8e72918ec7411de3f792b6d32360c2a075a53c8747a4f54c2485f",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/execution_coordination/ports.py",
-      "sha256": "15cddfa3e3a463e76c219c6f9fc8586ab7a660c34c8bec33701b2e8b9f315ef3",
+      "sha256": "0475c35d2a7bc0ea73fb6f137c0604f2211b26775cb8cf7fa4e1a6f8729c55d2",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"

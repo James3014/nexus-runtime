@@ -171,6 +171,7 @@ class ExecutionCoordinator(_BaseExecutionCoordinator):
         processes: Any,
         finalization: Any,
         preparation: Any = None,
+        model_call_gate: Any = None,
     ) -> None:
         tracker = _ConsumptionTracker()
         contract_port = _ContextAwareContractPort(contract, tracker)
@@ -182,6 +183,7 @@ class ExecutionCoordinator(_BaseExecutionCoordinator):
             processes,
             finalization,
             preparation,
+            model_call_gate,
         )
 
     def execute_attempt(
