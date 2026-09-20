@@ -252,7 +252,6 @@ class ExecutionCoordinator:
             provider=provider,
             outcome=DETERMINISTIC_RESOLVED if resolved else MODEL_REQUIRED,
             model_calls_required=0 if resolved else 1,
-            model_calls_avoided=1 if resolved else 0,
         )
         if not resolved:
             return state, None
@@ -386,8 +385,9 @@ class ExecutionCoordinator:
         ):
             totals[key] = int(totals.get(key) or 0) + int(payload[key])
         totals["model_calls_not_eliminated"] = bool(
-            totals.get("model_calls_invoked", 0) > 0
-            or payload["model_calls_not_eliminated"]
+            int(totals.get("model_calls_invoked") or 0) > 0
+            or int(totals.get("model_calls_required") or 0)
+            > int(totals.get("model_calls_avoided") or 0)
         )
         durable_proof = {
             "model_call_resolutions": entries,
@@ -974,7 +974,6 @@ class ExecutionCoordinator:
                             verdict=model_call_verdict,
                             provider=provider,
                             outcome=MODEL_INVOKED,
-                            model_calls_required=1,
                             model_calls_invoked=1,
                         )
                         state = self.state.read_snapshot(task_id) or {}

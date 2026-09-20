@@ -243,10 +243,9 @@ def test_model_needed_preserves_existing_invocation_path():
     assert invoked["model_calls_invoked"] == 1
     assert invoked["model_calls_not_eliminated"] is True
     totals = state.snapshot["model_call_avoidance"]
-    # MODEL_REQUIRED records the need (required=1) and MODEL_INVOKED records the
-    # fulfilled call (required=1, invoked=1): avoidance stays 0 and elimination
-    # is never claimed.
-    assert totals["model_calls_required"] == 2
+    # MODEL_REQUIRED records the need once and MODEL_INVOKED records the
+    # fulfillment once: counters represent real calls rather than telemetry events.
+    assert totals["model_calls_required"] == 1
     assert totals["model_calls_invoked"] == 1
     assert totals["model_calls_avoided"] == 0
     assert totals["model_calls_not_eliminated"] is True
@@ -303,11 +302,10 @@ def test_resolved_decision_triggers_zero_model_invocations():
     assert avoided["model_calls_avoided"] == 1
     assert avoided["structured_state_digest"]
     totals = state.snapshot["model_call_avoidance"]
-    # DETERMINISTIC_RESOLVED pre-records the avoidance (avoided=1) and
-    # MODEL_AVOIDED confirms the skip (avoided=1): no invocation happened.
-    assert totals["model_calls_avoided"] == 2
+    # Only MODEL_AVOIDED increments the real avoided-call counter.
+    assert totals["model_calls_avoided"] == 1
     assert totals["model_calls_invoked"] == 0
-    assert totals["model_calls_not_eliminated"] is True
+    assert totals["model_calls_not_eliminated"] is False
 
 
 def test_unusable_deterministic_receipt_preserves_model_path():
@@ -417,3 +415,46 @@ def test_structured_state_reuses_existing_execution_representations():
     assert "remaining_provider_calls" in structured
     assert "remaining_attempts" in structured
     assert "prior_attempt_count" in structured
+
+
+def test_public_api_preserves_existing_tool_projection_schema_export():
+    import nexus_runtime.execution_coordination as execution_coordination
+
+    assert execution_coordination.TOOL_PROJECTION_SCHEMA
+    assert "TOOL_PROJECTION_SCHEMA" in execution_coordination.__all__
+
+
+def test_telemetry_counts_are_event_independent():
+    required = ModelCallTelemetryRecord(
+        outcome=MODEL_REQUIRED,
+        resolution=MODEL_NEEDED,
+        reason="needed",
+        resolver_id="r",
+        seam=WORKER_INVOCATION_SEAM,
+        structured_state_digest="d",
+        model_avoided=False,
+        model_calls_required=1,
+    )
+    invoked = ModelCallTelemetryRecord(
+        outcome=MODEL_INVOKED,
+        resolution=MODEL_NEEDED,
+        reason="invoked",
+        resolver_id="r",
+        seam=WORKER_INVOCATION_SEAM,
+        structured_state_digest="d",
+        model_avoided=False,
+        model_calls_invoked=1,
+    )
+    avoided = ModelCallTelemetryRecord(
+        outcome=MODEL_AVOIDED,
+        resolution=RESOLVED_DETERMINISTICALLY,
+        reason="avoided",
+        resolver_id="r",
+        seam=WORKER_INVOCATION_SEAM,
+        structured_state_digest="d",
+        model_avoided=True,
+        model_calls_avoided=1,
+    )
+    assert required.model_calls_not_eliminated is True
+    assert invoked.model_calls_not_eliminated is True
+    assert avoided.model_calls_not_eliminated is False

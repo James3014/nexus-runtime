@@ -393,7 +393,7 @@ class ModelCallTelemetryRecord:
     model_calls_required: int = 0
     model_calls_invoked: int = 0
     model_calls_avoided: int = 0
-    model_calls_not_eliminated: bool = True
+    model_calls_not_eliminated: bool | None = None
 
     def __post_init__(self) -> None:
         if self.outcome not in _OUTCOME_KINDS:
@@ -421,9 +421,17 @@ class ModelCallTelemetryRecord:
             raise ModelCallResolutionError(
                 "MODEL_INVOKED requires model_calls_invoked >= 1"
             )
-        if self.model_calls_invoked > 0 and not self.model_calls_not_eliminated:
+        expected_not_eliminated = (
+            self.model_calls_invoked > 0
+            or self.model_calls_required > self.model_calls_avoided
+        )
+        if self.model_calls_not_eliminated is None:
+            object.__setattr__(
+                self, "model_calls_not_eliminated", expected_not_eliminated
+            )
+        elif bool(self.model_calls_not_eliminated) != expected_not_eliminated:
             raise ModelCallResolutionError(
-                "model invocations must keep model_calls_not_eliminated=true"
+                "model_calls_not_eliminated must match required/invoked/avoided counts"
             )
 
     def to_dict(self) -> dict[str, Any]:
