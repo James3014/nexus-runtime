@@ -1,16 +1,25 @@
-import hashlib, json, tempfile
+import hashlib, json, os, tempfile
 from pathlib import Path
 import pytest
 
-pytest.importorskip("nexus_learning")
-pytest.importorskip("product")
-pytest.importorskip("repository_intelligence")
-pytest.importorskip("nexus_open_swe_runtime")
-from nexus_runtime_support_candidate import build_runtime_exports
-from nexus_learning.episode_projection import project_learning_entries
-from repository_intelligence.impact import analyze_change_impact, verify_change_impact_report
-from nexus_open_swe_runtime import cli as openswe_cli
-from product import kernel as product_kernel
+OWNER_INTEGRATION_STRICT = os.environ.get("NEXUS_RUNTIME_OWNER_INTEGRATION_STRICT") == "1"
+
+try:
+    from nexus_learning.episode_projection import project_learning_entries
+    from nexus_open_swe_runtime import cli as openswe_cli
+    from nexus_runtime_support_candidate import build_runtime_exports
+    from product import kernel as product_kernel
+    from repository_intelligence.impact import analyze_change_impact, verify_change_impact_report
+except ImportError as exc:
+    if OWNER_INTEGRATION_STRICT:
+        raise RuntimeError(
+            "required owner integration import unavailable in strict mode"
+        ) from exc
+    pytest.skip(
+        "optional standalone owner integration skipped; set "
+        "NEXUS_RUNTIME_OWNER_INTEGRATION_STRICT=1 to require all owners",
+        allow_module_level=True,
+    )
 
 def test_runtime_learning_workflow():
     exports=build_runtime_exports()
