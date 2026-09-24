@@ -54,6 +54,12 @@ from typing import Any
 
 CONTEXT_ADMISSION_SCHEMA = "nexus.runtime.context_admission.v1"
 CONTEXT_ADMISSION_TELEMETRY_SCHEMA = "nexus.runtime.context_admission_telemetry.v1"
+CONTEXT_ADMISSION_EXPLAINABILITY_SCHEMA = (
+    "nexus.runtime.context_admission_explainability.v1"
+)
+CONTEXT_ADMISSION_EXPLAINABILITY_CLAIM_CEILING = (
+    "RUNTIME_CONTEXT_ADMISSION_EXPLAINABILITY_PROJECTION_SOURCE_VERIFIED"
+)
 
 VISIBLE_NOW = "VISIBLE_NOW"
 HIDDEN_RECOVERABLE = "HIDDEN_RECOVERABLE"
@@ -372,6 +378,18 @@ class AdmissionDecision:
         }
 
 
+def _effective_protection_reasons(
+    segment: ContextSegment,
+    seen_content_digests: set[str],
+) -> tuple[str, ...]:
+    """Return the exact protection reasons used by the visibility decision."""
+    reasons = list(segment.protection_reasons)
+    digest = hashlib.sha256(segment.text.encode("utf-8")).hexdigest()
+    if digest not in seen_content_digests:
+        reasons.append("previously_unseen_content")
+    return tuple(dict.fromkeys(reasons))
+
+
 def decide_visibility(
     segments: Sequence[ContextSegment],
     *,
@@ -390,18 +408,22 @@ def decide_visibility(
     hidden: list[ContextSegment] = []
     protections: list[str] = []
     for segment in segments:
-        reasons = list(segment.protection_reasons)
-        digest = hashlib.sha256(segment.text.encode("utf-8")).hexdigest()
-        if digest not in seen:
-            reasons.append("previously_unseen_content")
+        reasons = _effective_protection_reasons(segment, seen)
+        effective_segment = ContextSegment(
+            segment_id=segment.segment_id,
+            kind=segment.kind,
+            text=segment.text,
+            protection_reasons=reasons,
+            hide_hints=segment.hide_hints,
+        )
         if reasons:
-            visible.append(segment)
+            visible.append(effective_segment)
             protections.extend(reasons)
             continue
         if segment.hide_hints:
-            hidden.append(segment)
+            hidden.append(effective_segment)
         else:
-            visible.append(segment)
+            visible.append(effective_segment)
     return AdmissionDecision(
         artifact_id=str(artifact_id or "").strip(),
         visible_segments=tuple(visible),
@@ -810,3 +832,205 @@ def build_admission_telemetry(
         ),
         admission_failure=data.get("admission_failure"),
     )
+
+
+def _projection_segment(
+    raw: ContextSegment | Mapping[str, Any],
+    *,
+    visibility: str,
+    recall_ref: str | None,
+    recalled: bool,
+    admission_failure: str | None,
+) -> dict[str, Any]:
+    if isinstance(raw, ContextSegment):
+        segment_id = raw.segment_id
+        kind = raw.kind
+        text = raw.text
+        reasons = tuple(raw.protection_reasons)
+        hints = tuple(raw.hide_hints)
+    elif isinstance(raw, Mapping):
+        segment_id = _required_text(raw.get("segment_id"), "segment_id")
+        kind = _required_text(raw.get("kind"), "kind")
+        text = str(raw.get("text") or "")
+        raw_reasons = raw.get("protection_reasons") or ()
+        raw_hints = raw.get("hide_hints") or ()
+        if not isinstance(raw_reasons, (list, tuple)) or not isinstance(
+            raw_hints, (list, tuple)
+        ):
+            raise ContextAdmissionError(
+                "projection segment reasons/hints must be sequences"
+            )
+        reasons = tuple(str(item).strip() for item in raw_reasons if str(item).strip())
+        hints = tuple(str(item).strip() for item in raw_hints if str(item).strip())
+    else:
+        raise ContextAdmissionError("projection segment must be a ContextSegment or mapping")
+
+    effective_reasons = list(dict.fromkeys(reasons))
+    if admission_failure and "admission_failure_preserve_all" not in effective_reasons:
+        effective_reasons.append("admission_failure_preserve_all")
+    estimated_tokens = _estimate_tokens(len(text))
+    eligible = not effective_reasons and not admission_failure
+    return {
+        "segment_id": segment_id,
+        "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "kind": kind,
+        "estimated_tokens": estimated_tokens,
+        "protection_reasons": effective_reasons,
+        "eligible_for_hide": eligible,
+        "hide_hints": list(hints),
+        "hinted_for_hide": bool(hints),
+        "visibility": visibility,
+        "recall_ref": recall_ref,
+        "recalled": bool(recalled),
+    }
+
+
+def build_context_admission_explainability_projection(
+    decision: AdmissionDecision | Mapping[str, Any],
+    receipt: ContextAdmissionReceipt | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project deterministic context-admission headroom without changing admission.
+
+    The projection exposes the exact post-protection population to experiments.
+    It is read-only: it never hides content, selects a semantic model, or changes
+    Runtime's existing visibility/recovery decisions.
+    """
+    if isinstance(decision, AdmissionDecision):
+        artifact_id = decision.artifact_id
+        visible_raw: Sequence[ContextSegment | Mapping[str, Any]] = decision.visible_segments
+        hidden_raw: Sequence[ContextSegment | Mapping[str, Any]] = decision.hidden_segments
+        admission_failure = decision.admission_failure
+    elif isinstance(decision, Mapping):
+        if decision.get("schema") != CONTEXT_ADMISSION_SCHEMA:
+            raise ContextAdmissionError("projection decision schema is invalid")
+        artifact_id = _required_text(decision.get("artifact_id"), "artifact_id")
+        visible_value = decision.get("visible_segments") or ()
+        hidden_value = decision.get("hidden_segments") or ()
+        if not isinstance(visible_value, (list, tuple)) or not isinstance(
+            hidden_value, (list, tuple)
+        ):
+            raise ContextAdmissionError("projection decision segments must be sequences")
+        visible_raw = visible_value
+        hidden_raw = hidden_value
+        admission_failure = decision.get("admission_failure")
+    else:
+        raise ContextAdmissionError("projection decision must be an admission decision")
+
+    recall_refs: dict[str, str] = {}
+    recalled_ids: set[str] = set()
+    if isinstance(receipt, ContextAdmissionReceipt):
+        if receipt.artifact_id != artifact_id:
+            raise ContextAdmissionError("projection receipt artifact identity mismatch")
+        recall_refs = dict(receipt.recall_refs)
+        recalled_ids = set(receipt.recalled_segment_ids)
+        if receipt.admission_failure != admission_failure:
+            raise ContextAdmissionError("projection admission failure mismatch")
+    elif isinstance(receipt, Mapping):
+        receipt_artifact_id = _required_text(receipt.get("artifact_id"), "artifact_id")
+        if receipt_artifact_id != artifact_id:
+            raise ContextAdmissionError("projection receipt artifact identity mismatch")
+        raw_refs = receipt.get("recall_refs") or {}
+        if not isinstance(raw_refs, Mapping):
+            raise ContextAdmissionError("projection receipt recall refs must be a mapping")
+        recall_refs = {str(key): str(value) for key, value in raw_refs.items()}
+        raw_recalled = receipt.get("recalled_segment_ids") or ()
+        if not isinstance(raw_recalled, (list, tuple)):
+            raise ContextAdmissionError(
+                "projection receipt recalled segment ids must be a sequence"
+            )
+        recalled_ids = {str(item) for item in raw_recalled if str(item)}
+        if receipt.get("admission_failure") != admission_failure:
+            raise ContextAdmissionError("projection admission failure mismatch")
+    elif receipt is not None:
+        raise ContextAdmissionError("projection receipt must be a receipt or mapping")
+
+    visible = [
+        _projection_segment(
+            segment,
+            visibility=VISIBLE_NOW,
+            recall_ref=None,
+            recalled=False,
+            admission_failure=admission_failure,
+        )
+        for segment in visible_raw
+    ]
+    hidden = []
+    for segment in hidden_raw:
+        segment_id = (
+            segment.segment_id
+            if isinstance(segment, ContextSegment)
+            else _required_text(segment.get("segment_id"), "segment_id")
+        )
+        hidden.append(
+            _projection_segment(
+                segment,
+                visibility=HIDDEN_RECOVERABLE,
+                recall_ref=recall_refs.get(segment_id) or _recall_ref(artifact_id, segment_id),
+                recalled=segment_id in recalled_ids,
+                admission_failure=admission_failure,
+            )
+        )
+
+    segments = sorted(visible + hidden, key=lambda item: item["segment_id"])
+    if len({item["segment_id"] for item in segments}) != len(segments):
+        raise ContextAdmissionError("projection segment identities must be unique")
+
+    protected: dict[str, dict[str, int]] = {}
+    for item in segments:
+        for reason in item["protection_reasons"]:
+            bucket = protected.setdefault(reason, {"segments": 0, "tokens": 0})
+            bucket["segments"] += 1
+            bucket["tokens"] += item["estimated_tokens"]
+
+    initial_visible_tokens = sum(
+        item["estimated_tokens"] for item in segments if item["visibility"] == VISIBLE_NOW
+    )
+    hidden_tokens = sum(
+        item["estimated_tokens"]
+        for item in segments
+        if item["visibility"] == HIDDEN_RECOVERABLE
+    )
+    recalled_tokens = sum(
+        item["estimated_tokens"]
+        for item in segments
+        if item["visibility"] == HIDDEN_RECOVERABLE and item["recalled"]
+    )
+    net_saved_tokens = hidden_tokens - recalled_tokens
+    current_visible_tokens = initial_visible_tokens + recalled_tokens
+    total_tokens = initial_visible_tokens + hidden_tokens
+    eligible_tokens = sum(
+        item["estimated_tokens"] for item in segments if item["eligible_for_hide"]
+    )
+    hinted_tokens = sum(
+        item["estimated_tokens"] for item in segments if item["hinted_for_hide"]
+    )
+
+    return {
+        "schema": CONTEXT_ADMISSION_EXPLAINABILITY_SCHEMA,
+        "artifact_id": artifact_id,
+        "segments": segments,
+        "aggregates": {
+            "total_tokens": total_tokens,
+            "initial_visible_tokens": initial_visible_tokens,
+            "visible_tokens": current_visible_tokens,
+            "protected_tokens_by_reason": {
+                key: protected[key] for key in sorted(protected)
+            },
+            "eligible_segments": sum(item["eligible_for_hide"] for item in segments),
+            "eligible_tokens": eligible_tokens,
+            "hinted_segments": sum(item["hinted_for_hide"] for item in segments),
+            "hinted_tokens": hinted_tokens,
+            "hidden_segments": sum(
+                item["visibility"] == HIDDEN_RECOVERABLE for item in segments
+            ),
+            "hidden_tokens": hidden_tokens,
+            "recalled_segments": sum(item["recalled"] for item in segments),
+            "recalled_tokens": recalled_tokens,
+            "net_saved_tokens": net_saved_tokens,
+            "admission_failure_tokens": total_tokens if admission_failure else 0,
+        },
+        "admission_failure": admission_failure,
+        "observational_only": True,
+        "authority_effect": False,
+        "claim_ceiling": CONTEXT_ADMISSION_EXPLAINABILITY_CLAIM_CEILING,
+    }
