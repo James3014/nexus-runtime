@@ -33,6 +33,8 @@ from .consumption import (
     validate_consumption_receipt,
 )
 from .context_admission import (
+    CONTEXT_ADMISSION_EXPLAINABILITY_CLAIM_CEILING,
+    CONTEXT_ADMISSION_EXPLAINABILITY_SCHEMA,
     CONTEXT_ADMISSION_SCHEMA,
     CONTEXT_ADMISSION_TELEMETRY_SCHEMA,
     HIDDEN_RECOVERABLE,
@@ -52,6 +54,7 @@ from .context_admission import (
     admit_artifact,
     build_admission_receipt,
     build_admission_telemetry,
+    build_context_admission_explainability_projection,
     decide_visibility,
     recall_hidden_segments,
     restore_visible_text,
@@ -84,6 +87,8 @@ from .source_materialization import (
 )
 
 __all__ = [
+    "CONTEXT_ADMISSION_EXPLAINABILITY_CLAIM_CEILING",
+    "CONTEXT_ADMISSION_EXPLAINABILITY_SCHEMA",
     "CONTEXT_ADMISSION_SCHEMA",
     "CONTEXT_ADMISSION_TELEMETRY_SCHEMA",
     "DIRECT_SLICE",
@@ -126,6 +131,7 @@ __all__ = [
     "append_model_context_to_prompt",
     "build_admission_receipt",
     "build_admission_telemetry",
+    "build_context_admission_explainability_projection",
     "build_context_assembly_contract",
     "build_context_budget_receipt",
     "build_online_consumption_receipt",
