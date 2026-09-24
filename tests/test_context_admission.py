@@ -9,11 +9,14 @@ and fail-safe preservation on admission failure. No model dependency.
 from __future__ import annotations
 
 from nexus_runtime.task_context import (
+    CONTEXT_ADMISSION_EXPLAINABILITY_CLAIM_CEILING,
+    CONTEXT_ADMISSION_EXPLAINABILITY_SCHEMA,
     HIDDEN_RECOVERABLE,
     VISIBLE_NOW,
     admit_artifact,
     build_admission_receipt,
     build_admission_telemetry,
+    build_context_admission_explainability_projection,
     recall_hidden_segments,
     restore_visible_text,
     segment_artifact,
@@ -364,3 +367,150 @@ def test_recall_reduces_remaining_token_savings() -> None:
 
     assert initial > partial > final
     assert final == 0
+
+
+
+def test_explainability_projection_identifies_exact_post_protection_eligible_population():
+    protected = "Summary: keep this exact block"
+    eligible = "middle verbose material with no critical markers"
+    hidden = "another verbose material with no critical markers"
+    tail = "final protected by truncation position"
+    text = "\n\n".join([protected, eligible, hidden, tail])
+    decision = admit_artifact(
+        text,
+        artifact_id="tool-headroom",
+        hide_hints={"2": ("verbose",)},
+        seen_content_digests=_digests(protected, eligible, hidden, tail),
+    )
+    receipt = build_admission_receipt(decision)
+    projection = build_context_admission_explainability_projection(decision, receipt)
+
+    assert projection["schema"] == CONTEXT_ADMISSION_EXPLAINABILITY_SCHEMA
+    assert projection["claim_ceiling"] == (
+        CONTEXT_ADMISSION_EXPLAINABILITY_CLAIM_CEILING
+    )
+    assert projection["observational_only"] is True
+    assert projection["authority_effect"] is False
+
+    rows = {item["segment_id"]: item for item in projection["segments"]}
+    eligible_rows = [item for item in rows.values() if item["eligible_for_hide"]]
+    assert len(eligible_rows) == 2
+    assert sum(item["hinted_for_hide"] for item in eligible_rows) == 1
+    assert projection["aggregates"]["eligible_segments"] == 2
+    assert projection["aggregates"]["hinted_segments"] == 1
+    assert projection["aggregates"]["hidden_segments"] == 1
+
+
+def test_explainability_projection_aggregates_mixed_protection_reasons():
+    first = "Summary: src/runtime.py:12 keep this"
+    middle = "contract: must include evidence ids"
+    last = "receipt payload_hash abc123"
+    decision = admit_artifact(
+        "\n\n".join([first, middle, last]),
+        artifact_id="tool-protected-mixed",
+        hide_hints={"0": ("hide",), "1": ("hide",), "2": ("hide",)},
+        contract_terms=["evidence ids"],
+        seen_content_digests=_digests(first, middle, last),
+    )
+    projection = build_context_admission_explainability_projection(
+        decision, build_admission_receipt(decision)
+    )
+    reasons = projection["aggregates"]["protected_tokens_by_reason"]
+
+    assert projection["aggregates"]["eligible_tokens"] == 0
+    assert projection["aggregates"]["hidden_tokens"] == 0
+    assert reasons["summary"]["segments"] == 1
+    assert reasons["file_line_reference"]["segments"] == 1
+    assert reasons["contract_required"]["segments"] == 1
+    assert reasons["receipt_or_evidence_reference"]["segments"] == 1
+
+
+def test_explainability_projection_tracks_recall_and_remaining_net_savings():
+    first = "first hidden payload " + ("a" * 96)
+    second = "second hidden payload " + ("b" * 96)
+    decision = admit_artifact(
+        f"{first}\n\n{second}",
+        artifact_id="tool-headroom-recall",
+        hide_hints={"0": ("verbose",), "1": ("verbose",)},
+        seen_content_digests=_digests(first, second),
+    )
+    receipt = build_admission_receipt(decision)
+    before = build_context_admission_explainability_projection(decision, receipt)
+    _, recalled = restore_visible_text(receipt, [receipt.hidden_segment_ids[0]])
+    after = build_context_admission_explainability_projection(decision, recalled)
+
+    assert before["aggregates"]["recalled_tokens"] == 0
+    assert before["aggregates"]["net_saved_tokens"] == before["aggregates"]["hidden_tokens"]
+    assert after["aggregates"]["recalled_segments"] == 1
+    assert after["aggregates"]["recalled_tokens"] > 0
+    assert 0 < after["aggregates"]["net_saved_tokens"] < after["aggregates"]["hidden_tokens"]
+    assert (
+        after["aggregates"]["visible_tokens"]
+        + after["aggregates"]["net_saved_tokens"]
+        == after["aggregates"]["total_tokens"]
+    )
+
+
+def test_explainability_projection_makes_admission_failure_preservation_explicit():
+    decision = admit_artifact(
+        {"no": "usable text field"},
+        artifact_id="tool-headroom-failure",
+    )
+    receipt = build_admission_receipt(decision)
+    projection = build_context_admission_explainability_projection(decision, receipt)
+
+    assert decision.admission_failure is not None
+    assert projection["aggregates"]["admission_failure_tokens"] == projection["aggregates"][
+        "total_tokens"
+    ]
+    assert projection["aggregates"]["eligible_tokens"] == 0
+    assert projection["aggregates"]["hidden_tokens"] == 0
+    assert (
+        projection["aggregates"]["protected_tokens_by_reason"][
+            "admission_failure_preserve_all"
+        ]["segments"]
+        == len(projection["segments"])
+    )
+
+
+def test_explainability_projection_stable_segment_and_content_identity():
+    text = "stable experiment projection payload"
+    kwargs = {
+        "artifact_id": "tool-headroom-stable",
+        "seen_content_digests": _digests(text),
+    }
+    first_decision = admit_artifact(text, **kwargs)
+    second_decision = admit_artifact(text, **kwargs)
+    first = build_context_admission_explainability_projection(
+        first_decision, build_admission_receipt(first_decision)
+    )
+    second = build_context_admission_explainability_projection(
+        second_decision, build_admission_receipt(second_decision)
+    )
+
+    assert [
+        (item["segment_id"], item["content_hash"]) for item in first["segments"]
+    ] == [
+        (item["segment_id"], item["content_hash"]) for item in second["segments"]
+    ]
+
+
+def test_previously_unseen_reason_is_bound_to_exact_segment_in_projection():
+    known = "known context block"
+    unseen = "brand new context block"
+    decision = admit_artifact(
+        f"{known}\n\n{unseen}",
+        artifact_id="tool-headroom-unseen",
+        hide_hints={"1": ("verbose",)},
+        seen_content_digests=_digests(known),
+    )
+    projection = build_context_admission_explainability_projection(
+        decision, build_admission_receipt(decision)
+    )
+    unseen_row = next(
+        item for item in projection["segments"] if item["content_hash"] == _digests(unseen)[0]
+    )
+
+    assert "previously_unseen_content" in unseen_row["protection_reasons"]
+    assert unseen_row["eligible_for_hide"] is False
+    assert unseen_row["visibility"] == VISIBLE_NOW
