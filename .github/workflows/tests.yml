@@ -3,9 +3,11 @@ name: Runtime tests
 on:
   pull_request:
     branches:
+      - main
       - codex/repo-split
   push:
     branches:
+      - main
       - codex/repo-split
 
 permissions:
