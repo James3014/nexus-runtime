@@ -13,9 +13,10 @@ The historical extraction/source-bound baseline is
 `a3fd8006d61d4eb14637050c7da5a95e5e28d157`. It is preserved as donor/extraction
 provenance, not as the current repository identity.
 
-The repository default branch is `codex/repo-split`. Live repository HEAD is
-intentionally not hard-coded here; read Git/GitHub when current revision identity
-matters.
+The canonical repository default branch is `main` (normalized from post-extraction
+`codex/repo-split` per #37; `codex/repo-split` is retained as a compatibility ref).
+Live repository HEAD is intentionally not hard-coded here; read Git/GitHub when
+current revision identity matters.
 
 The current Python source-ownership snapshot is bound to
 `8b043cb215474fbed84c164e6f2177996da88e1a`. That SHA is a source-scope anchor for
