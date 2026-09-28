@@ -70,6 +70,17 @@ from .continuity import (
     resume,
 )
 from .ports import ContextAssembler, ContextReceiptBuilder, ContinuityEventSource
+from .retrieval_hints import (
+    HINT_ADVISORY,
+    RETRIEVAL_HINT_CLAIM_CEILING,
+    RETRIEVAL_HINT_SCHEMA,
+    RETRIEVAL_HINT_TELEMETRY_SCHEMA,
+    bind_retrieval_hints,
+    build_hint_telemetry,
+    compose_hinted_context,
+    validate_hint_telemetry,
+    validate_retrieval_hint_evidence,
+)
 from .runtime_adapter import (
     StatelessContextCoordinator,
     build_runtime_context_payload,
@@ -131,6 +142,15 @@ __all__ = [
     "append_model_context_to_prompt",
     "build_admission_receipt",
     "build_admission_telemetry",
+    "HINT_ADVISORY",
+    "RETRIEVAL_HINT_CLAIM_CEILING",
+    "RETRIEVAL_HINT_SCHEMA",
+    "RETRIEVAL_HINT_TELEMETRY_SCHEMA",
+    "bind_retrieval_hints",
+    "build_hint_telemetry",
+    "compose_hinted_context",
+    "validate_hint_telemetry",
+    "validate_retrieval_hint_evidence",
     "build_context_admission_explainability_projection",
     "build_context_assembly_contract",
     "build_context_budget_receipt",
