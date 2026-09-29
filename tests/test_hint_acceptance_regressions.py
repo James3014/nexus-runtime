@@ -1,11 +1,5 @@
 """Missing or malformed identity must retain the canonical fallback."""
-import importlib.util
-from pathlib import Path
-
-_SPEC = importlib.util.spec_from_file_location("hint_acceptance", Path(__file__).parents[1] / "src/nexus_runtime/task_context/retrieval_hints.py")
-assert _SPEC is not None and _SPEC.loader is not None
-H = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(H)
+from nexus_runtime.task_context import retrieval_hints as H
 
 
 def _evidence():
