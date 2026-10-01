@@ -14,6 +14,20 @@ from .planner_binding import (
     PlannerBinding,
     build_planner_binding,
 )
+from .placement import (
+    DEVSPACE_HOST_CAPABILITY_SNAPSHOT_SCHEMA,
+    PLACEMENT_DECISION_SCHEMA,
+    PLACEMENT_REQUEST_SCHEMA,
+    SINGLE_HOST_PARITY_WITNESS,
+    InvalidHostSnapshot,
+    MultiHostPlacementNotEnabled,
+    NoEligibleHost,
+    PlacementDecision,
+    PlacementEngine,
+    PlacementError,
+    PlacementRequest,
+    PlacementRequirements,
+)
 from .task_context import ContextAssemblyContract, build_context_assembly_contract
 from .task_context.consumer_projection import project_runtime_exports_with_model_context
 
@@ -86,4 +100,16 @@ __all__ = (
     "PACKAGED_COMPATIBILITY",
     "EXTERNAL_COMPLETE_OVERRIDE",
     "PlannerBinding",
+    "DEVSPACE_HOST_CAPABILITY_SNAPSHOT_SCHEMA",
+    "PLACEMENT_REQUEST_SCHEMA",
+    "PLACEMENT_DECISION_SCHEMA",
+    "SINGLE_HOST_PARITY_WITNESS",
+    "PlacementError",
+    "InvalidHostSnapshot",
+    "NoEligibleHost",
+    "MultiHostPlacementNotEnabled",
+    "PlacementRequirements",
+    "PlacementRequest",
+    "PlacementDecision",
+    "PlacementEngine",
 )
