@@ -62,6 +62,36 @@ def _handoff_text(value: Any, field_name: str) -> str:
     return value.strip()
 
 
+def parse_canonical_fence_ref(ref: str) -> dict[str, Any] | None:
+    """Validate and parse canonical claim/fence evidence reference format."""
+    if not isinstance(ref, str) or not ref.strip():
+        return None
+    ref = ref.strip()
+    canonical_prefixes = (
+        "urn:nexus:fence:",
+        "urn:nexus:claim:",
+        "fence:",
+        "fence-receipt:",
+        "fence-receipt-",
+        "fence_receipt:",
+        "fence-",
+        "claim_fence:",
+        "claim-fence:",
+        "claim:",
+    )
+    matched_prefix = None
+    for prefix in canonical_prefixes:
+        if ref.startswith(prefix):
+            matched_prefix = prefix
+            break
+    if not matched_prefix:
+        return None
+    rest = ref[len(matched_prefix):]
+    if not rest.strip():
+        return None
+    return {"prefix": matched_prefix, "raw": ref, "identifier": rest.strip()}
+
+
 @dataclass(frozen=True)
 class HandoffLineage:
     """Durable record of a single predecessor-to-successor attempt handoff."""
@@ -77,6 +107,7 @@ class HandoffLineage:
     terminal_state: str
     fence_evidence_ref: str
     completed_effect_refs: tuple[str, ...] = ()
+    completed_effect_keys: tuple[str, ...] = ()
     unknown_effect_refs: tuple[str, ...] = ()
     reconcile_disposition: str = DISPOSITION_SAFE
     successor_binding: Mapping[str, Any] = field(default_factory=dict)
@@ -111,14 +142,28 @@ class HandoffLineage:
         _handoff_text(self.terminal_state, "terminal_state")
         _handoff_text(self.fence_evidence_ref, "fence_evidence_ref")
 
-        for key in ("completed_effect_refs", "unknown_effect_refs", "inherited_evidence_refs"):
+        for key in ("completed_effect_refs", "completed_effect_keys", "unknown_effect_refs", "inherited_evidence_refs"):
             values = tuple(getattr(self, key))
             if any(not isinstance(v, str) or not v.strip() for v in values):
                 raise HandoffLineageError(f"{key} must contain non-empty strings")
             object.__setattr__(self, key, tuple(dict.fromkeys(values)))
 
+        # Normalize canonical effect keys and evidence refs
+        keys = self.completed_effect_keys
+        refs = self.completed_effect_refs
+        if not keys and refs:
+            keys = refs
+        elif not refs and keys:
+            refs = keys
+        object.__setattr__(self, "completed_effect_keys", keys)
+        object.__setattr__(self, "completed_effect_refs", refs)
+
         if not isinstance(self.successor_binding, Mapping):
             raise HandoffLineageError("successor_binding must be a Mapping")
+        if "attempt_id" in self.successor_binding:
+            bound_attempt = str(self.successor_binding["attempt_id"]).strip()
+            if bound_attempt and bound_attempt != self.successor_attempt_id:
+                raise HandoffLineageError("successor_binding attempt_id does not match successor_attempt_id")
         object.__setattr__(
             self,
             "successor_binding",
@@ -143,6 +188,7 @@ class HandoffLineage:
             "terminal_state": self.terminal_state,
             "fence_evidence_ref": self.fence_evidence_ref,
             "completed_effect_refs": list(self.completed_effect_refs),
+            "completed_effect_keys": list(self.completed_effect_keys),
             "unknown_effect_refs": list(self.unknown_effect_refs),
             "reconcile_disposition": self.reconcile_disposition,
             "successor_binding": dict(sorted(self.successor_binding.items(), key=lambda kv: str(kv[0]))),
@@ -184,6 +230,7 @@ class HandoffLineage:
             terminal_state=_text(data.get("terminal_state"), "terminal_state"),
             fence_evidence_ref=_text(data.get("fence_evidence_ref"), "fence_evidence_ref"),
             completed_effect_refs=tuple(data.get("completed_effect_refs") or ()),
+            completed_effect_keys=tuple(data.get("completed_effect_keys") or ()),
             unknown_effect_refs=tuple(data.get("unknown_effect_refs") or ()),
             reconcile_disposition=str(data.get("reconcile_disposition") or DISPOSITION_SAFE),
             successor_binding=data.get("successor_binding") or {},
@@ -208,16 +255,18 @@ def evaluate_handoff_lineage(
     *,
     current_identity: IdentityBinding,
     predecessor_checkpoint: WorkflowCheckpoint | None = None,
+    verified_fence_refs: tuple[str, ...] | set[str] | frozenset[str] | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate whether a successor attempt may safely resume or must reconcile/block.
 
     Invariants:
     1. Unknown effects -> RECONCILE_REQUIRED (fail-closed, never SAFE).
-    2. Missing fence/release reference -> RECONCILE_REQUIRED (never SAFE).
-    3. Missing predecessor checkpoint -> RECONCILE_REQUIRED / UNKNOWN.
+    2. Missing or unverified fence/release reference -> RECONCILE_REQUIRED (never SAFE).
+    3. Missing canonical predecessor checkpoint -> RECONCILE_REQUIRED / MISSING_CANONICAL_PREDECESSOR_CHECKPOINT.
     4. Stale checkpoint (hash/revision mismatch) -> RECONCILE_REQUIRED / STALE.
-    5. Identity drift -> RECONCILE_REQUIRED.
-    6. Completed effects are NEVER replayed (replay_completed_effects is always False).
+    5. Terminal-state mismatch -> RECONCILE_REQUIRED / TERMINAL_STATE_MISMATCH.
+    6. Identity drift -> RECONCILE_REQUIRED / IDENTITY_DRIFT.
+    7. Completed effects are NEVER replayed (replay_completed_effects is always False).
     """
     if type(handoff) is not HandoffLineage:
         raise HandoffLineageError("handoff must be a HandoffLineage instance")
@@ -252,7 +301,18 @@ def evaluate_handoff_lineage(
             "lineage_hash": handoff.lineage_hash,
         }
 
-    # Check 3: fence evidence reference required
+    # Check 3: canonical predecessor checkpoint is strictly REQUIRED
+    if predecessor_checkpoint is None:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "MISSING_CANONICAL_PREDECESSOR_CHECKPOINT",
+            "stale_fields": [],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+
+    # Check 4: fence evidence reference required and format validated
     if not handoff.fence_evidence_ref.strip():
         return {
             "disposition": DISPOSITION_RECONCILE,
@@ -262,47 +322,94 @@ def evaluate_handoff_lineage(
             "replay_completed_effects": False,
             "lineage_hash": handoff.lineage_hash,
         }
+    parsed_fence = parse_canonical_fence_ref(handoff.fence_evidence_ref)
+    if parsed_fence is None:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "INVALID_FENCE_EVIDENCE_FORMAT",
+            "stale_fields": [],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
 
-    # Check 4: predecessor checkpoint verification if provided
-    if predecessor_checkpoint is not None:
-        if predecessor_checkpoint.task_id != handoff.task_id:
-            return {
-                "disposition": DISPOSITION_RECONCILE,
-                "reason": "PREDECESSOR_TASK_ID_MISMATCH",
-                "stale_fields": [],
-                "next_gate": handoff.next_gate,
-                "replay_completed_effects": False,
-                "lineage_hash": handoff.lineage_hash,
-            }
-        if predecessor_checkpoint.attempt_id != handoff.predecessor_attempt_id:
-            return {
-                "disposition": DISPOSITION_RECONCILE,
-                "reason": "PREDECESSOR_ATTEMPT_ID_MISMATCH",
-                "stale_fields": [],
-                "next_gate": handoff.next_gate,
-                "replay_completed_effects": False,
-                "lineage_hash": handoff.lineage_hash,
-            }
-        if predecessor_checkpoint.checkpoint_hash != handoff.predecessor_checkpoint_hash:
-            return {
-                "disposition": DISPOSITION_RECONCILE,
-                "reason": "STALE_PREDECESSOR_CHECKPOINT_HASH",
-                "stale_fields": [],
-                "next_gate": handoff.next_gate,
-                "replay_completed_effects": False,
-                "lineage_hash": handoff.lineage_hash,
-            }
-        if predecessor_checkpoint.revision != handoff.predecessor_checkpoint_revision:
-            return {
-                "disposition": DISPOSITION_RECONCILE,
-                "reason": "STALE_PREDECESSOR_CHECKPOINT_REVISION",
-                "stale_fields": [],
-                "next_gate": handoff.next_gate,
-                "replay_completed_effects": False,
-                "lineage_hash": handoff.lineage_hash,
-            }
+    # Check 5: fence evidence reference must be verified/proven
+    fence_verified = False
+    if verified_fence_refs is not None:
+        if isinstance(verified_fence_refs, Mapping):
+            fact = verified_fence_refs.get(handoff.fence_evidence_ref)
+            fence_verified = bool(fact and (fact is True or (isinstance(fact, Mapping) and fact.get("verified") is True)))
+        else:
+            fence_verified = handoff.fence_evidence_ref in verified_fence_refs
+    else:
+        # Cross-bound against predecessor evidence, predecessor leases, or inherited evidence
+        fence_verified = (
+            handoff.fence_evidence_ref in predecessor_checkpoint.evidence_refs
+            or handoff.fence_evidence_ref in predecessor_checkpoint.leases
+            or handoff.fence_evidence_ref in handoff.inherited_evidence_refs
+            or handoff.successor_binding.get("verified_fence_ref") == handoff.fence_evidence_ref
+        )
 
-    # Check 5: explicit non-SAFE reconcile disposition
+    if not fence_verified:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "UNVERIFIED_OLD_WRITER_FENCE_REFERENCE",
+            "stale_fields": [],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+
+    # Check 6: predecessor checkpoint cross-binding
+    if predecessor_checkpoint.task_id != handoff.task_id:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "PREDECESSOR_TASK_ID_MISMATCH",
+            "stale_fields": [],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+    if predecessor_checkpoint.attempt_id != handoff.predecessor_attempt_id:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "PREDECESSOR_ATTEMPT_ID_MISMATCH",
+            "stale_fields": [],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+    if predecessor_checkpoint.checkpoint_hash != handoff.predecessor_checkpoint_hash:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "STALE_PREDECESSOR_CHECKPOINT_HASH",
+            "stale_fields": [],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+    if predecessor_checkpoint.revision != handoff.predecessor_checkpoint_revision:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "STALE_PREDECESSOR_CHECKPOINT_REVISION",
+            "stale_fields": [],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+
+    # Check 7: terminal_state must match predecessor checkpoint's actual status
+    if handoff.terminal_state != predecessor_checkpoint.status:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "TERMINAL_STATE_MISMATCH",
+            "stale_fields": ["terminal_state"],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+
+    # Check 8: explicit non-SAFE reconcile disposition
     if handoff.reconcile_disposition != DISPOSITION_SAFE:
         return {
             "disposition": handoff.reconcile_disposition,

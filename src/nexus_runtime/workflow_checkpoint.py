@@ -616,15 +616,24 @@ class WorkflowCheckpointStore:
         return records
 
     def reconstruct_lineage_chain(self, task_id: str, attempt_id: str) -> list[Any]:
-        """Reconstruct the entire chain of handoffs leading up to attempt_id."""
+        """Reconstruct the entire chain of handoffs leading up to attempt_id.
+
+        Fails closed on self-cycles, A->B->A cycles, or malformed cyclic loops.
+        """
+        from .handoff_lineage import HandoffLineageError
+
         chain = []
         current = attempt_id
         visited = set()
-        while current not in visited:
+        while True:
+            if current in visited:
+                raise HandoffLineageError(f"detected cyclic handoff lineage: attempt {current!r} creates cycle")
             visited.add(current)
             h = self.read_handoff(task_id, current)
             if h is None:
                 break
+            if h.predecessor_attempt_id == h.successor_attempt_id:
+                raise HandoffLineageError(f"detected self-cycle handoff lineage for attempt {current!r}")
             chain.append(h)
             current = h.predecessor_attempt_id
         return list(reversed(chain))
@@ -634,29 +643,47 @@ class WorkflowCheckpointStore:
         handoff: Any,
         *,
         current_identity: IdentityBinding,
+        verified_fence_refs: Any = None,
         initial_status: str = STATUS_RUNNING,
         phase: str = "",
     ) -> WorkflowCheckpoint:
         from .handoff_lineage import HandoffLineageError, evaluate_handoff_lineage
 
         predecessor_cp = self.read(handoff.task_id, handoff.predecessor_attempt_id)
+        if predecessor_cp is None:
+            raise HandoffLineageError(
+                f"cannot bind successor checkpoint: canonical predecessor checkpoint for attempt {handoff.predecessor_attempt_id!r} is missing"
+            )
+
         eval_result = evaluate_handoff_lineage(
             handoff,
             current_identity=current_identity,
             predecessor_checkpoint=predecessor_cp,
+            verified_fence_refs=verified_fence_refs,
         )
         if eval_result["disposition"] != DISPOSITION_SAFE:
             raise HandoffLineageError(
                 f"cannot bind successor checkpoint: disposition is {eval_result['disposition']} ({eval_result['reason']})"
             )
 
-        inherited_effects = tuple(
-            CompletedEffect(
-                effect_key=k,
-                receipt_ref=f"inherited_from_{handoff.predecessor_attempt_id}",
+        # Inherit completed effects using canonical effect identity (effect_key) and durable receipt_ref
+        pred_effects_by_key = {e.effect_key: e for e in predecessor_cp.completed_effects}
+        effect_keys = handoff.completed_effect_keys or handoff.completed_effect_refs
+        inherited_effects = []
+        for k in effect_keys:
+            if k not in pred_effects_by_key:
+                raise HandoffLineageError(
+                    f"cannot inherit completed effect {k!r}: not present in predecessor checkpoint"
+                )
+            pe = pred_effects_by_key[k]
+            inherited_effects.append(
+                CompletedEffect(
+                    effect_key=pe.effect_key,
+                    receipt_ref=pe.receipt_ref,
+                    effect_hash=pe.effect_hash,
+                )
             )
-            for k in handoff.completed_effect_refs
-        )
+
         op_id = str(handoff.successor_binding.get("operation_id") or f"op_{handoff.successor_attempt_id}")
         successor = WorkflowCheckpoint(
             task_id=handoff.task_id,
@@ -669,7 +696,7 @@ class WorkflowCheckpointStore:
             next_gate=handoff.next_gate,
             leases=(),
             evidence_refs=handoff.inherited_evidence_refs,
-            completed_effects=inherited_effects,
+            completed_effects=tuple(inherited_effects),
             pending_steps=(),
             retry_history=(
                 f"handoff:{handoff.predecessor_attempt_id}->{handoff.successor_attempt_id}:{handoff.handoff_reason}",
@@ -721,6 +748,7 @@ def readback_handoff_lineage(
     *,
     store: WorkflowCheckpointStore,
     current_identity: IdentityBinding | None = None,
+    verified_fence_refs: Any = None,
 ) -> dict[str, Any]:
     """Deterministic readback for handoff lineage leading to attempt_id."""
     from .handoff_lineage import (
@@ -740,6 +768,7 @@ def readback_handoff_lineage(
             immediate,
             current_identity=current_identity,
             predecessor_checkpoint=pred_cp,
+            verified_fence_refs=verified_fence_refs,
         )
 
     return {
