@@ -75,6 +75,7 @@ def _planner_output(task_id: str = "task-1") -> dict:
 def _worker_request(task_id: str = "task-1") -> dict:
     return {
         "task_id": task_id,
+        "workspace_revision": "r" * 40,
         "attempt_id": "attempt-1",
         "what": "repair the parser",
         "timeout_seconds": 10,
@@ -82,6 +83,7 @@ def _worker_request(task_id: str = "task-1") -> dict:
         "canonical_dispatch_envelope": {
             "schema": "nexus.canonical_dispatch_envelope.v1",
             "task_id": task_id,
+            "workspace_revision": "r" * 40,
             "attempt_id": "attempt-1",
             "task_card_path": "tasks/task-1.md",
             "task_card_hash": "d" * 64,
@@ -102,6 +104,7 @@ def _online_context() -> dict:
     bundle = _sealed_bundle("online-1", "inspect bounded context")
     return {
         "task_id": "online-1",
+        "workspace_revision": "r" * 40,
         "task_statement": "inspect bounded context",
         "online_prompt": "inspect bounded context",
         "planner_decision_id": DECISION_HASH,
@@ -681,3 +684,288 @@ def test_public_runtime_online_callback_receives_serialized_g1_package() -> None
     assert MODEL_CONTEXT_MARKER in seen["online_prompt"]
     serialized = seen["online_prompt"].split(MODEL_CONTEXT_MARKER + "\n", 1)[1]
     assert json.loads(serialized) == seen["model_context_package"]
+
+
+def test_negative_1_arbitrary_caller_source_hash_cannot_create_valid_typed_bundle():
+    """1. arbitrary caller source_hash cannot create a valid typed bundle if it disagrees with recomputed preimage."""
+    with pytest.raises(ValueError, match="source_hash_does_not_match_workspace_revision_task_statement_v1"):
+        build_capability_evidence_bundle(
+            task_id="t-1",
+            workspace_revision="r" * 40,
+            task_statement="repair the parser",
+            plan_payload={"selected_capabilities": ["memory"]},
+            plan_hash=PLAN_HASH,
+            planner_decision_id=DECISION_HASH,
+            capability_results={},
+            selected_capabilities=["memory"],
+            source_hash="evil_arbitrary_hash_value" * 2,
+        )
+
+
+def test_negative_2_tampering_workspace_revision_or_task_statement_blocks_consumer_verification():
+    """2. tampering workspace_revision or task_statement input at consumer verification blocks."""
+    from nexus_planning_candidate.services.capability_evidence_bundle import (
+        build_source_hash_subject,
+        verify_capability_evidence_bundle,
+    )
+    bundle = _sealed_bundle("task-1", "repair the parser")
+    # Tampered workspace_revision at verification
+    bad_rev_subject = build_source_hash_subject("foreign_rev", "repair the parser")
+    v_rev = verify_capability_evidence_bundle(bundle, source_hash_subject=bad_rev_subject)
+    assert v_rev["ok"] is False
+    assert "source_hash_workspace_revision_mismatch" in v_rev["blockers"]
+    assert "source_hash_content_mismatch" in v_rev["blockers"]
+    assert v_rev["source_hash_verified"] is False
+
+    # Tampered task_statement at verification
+    bad_stmt_subject = build_source_hash_subject("r" * 40, "tampered task statement")
+    v_stmt = verify_capability_evidence_bundle(bundle, source_hash_subject=bad_stmt_subject)
+    assert v_stmt["ok"] is False
+    assert "source_hash_task_statement_mismatch" in v_stmt["blockers"]
+    assert "source_hash_content_mismatch" in v_stmt["blockers"]
+    assert v_stmt["source_hash_verified"] is False
+
+    # Also test at consumer projection level
+    online = _online_context()
+    online["workspace_revision"] = "tampered_rev"
+    with pytest.raises(ValueError, match="consumer_evidence_bundle_(workspace_revision_mismatch|invalid)"):
+        build_online_context_package(online)
+
+    worker = _worker_request()
+    worker["workspace_revision"] = "tampered_rev"
+    worker["canonical_dispatch_envelope"]["workspace_revision"] = "tampered_rev"
+    with pytest.raises(ValueError, match="consumer_evidence_bundle_(workspace_revision_mismatch|invalid)"):
+        build_worker_context_package(worker)
+
+
+def test_negative_3_missing_or_unknown_source_hash_kind_blocks_typed_consumer_use():
+    """3. missing/unknown source_hash_kind blocks typed consumer use."""
+    from nexus_planning_candidate.services.capability_evidence_bundle import (
+        build_source_hash_subject,
+        compute_bundle_hash,
+        verify_capability_evidence_bundle,
+    )
+    bundle = _sealed_bundle("task-1", "repair the parser")
+    subject = build_source_hash_subject("r" * 40, "repair the parser")
+
+    # Missing kind
+    no_kind_bundle = dict(bundle)
+    del no_kind_bundle["source_hash_kind"]
+    no_kind_bundle["bundle_hash"] = compute_bundle_hash(no_kind_bundle)
+    v_missing = verify_capability_evidence_bundle(no_kind_bundle, source_hash_subject=subject)
+    assert v_missing["ok"] is False
+    assert "source_hash_kind_mismatch" in v_missing["blockers"]
+    assert v_missing["source_hash_verified"] is False
+
+    # Unknown kind
+    unknown_kind_bundle = dict(bundle)
+    unknown_kind_bundle["source_hash_kind"] = "unknown_source_kind_v2"
+    unknown_kind_bundle["bundle_hash"] = compute_bundle_hash(unknown_kind_bundle)
+    v_unknown = verify_capability_evidence_bundle(unknown_kind_bundle, source_hash_subject=subject)
+    assert v_unknown["ok"] is False
+    assert "source_hash_kind_mismatch" in v_unknown["blockers"]
+    assert v_unknown["source_hash_verified"] is False
+
+    # Blocked in consumer projection
+    online = _online_context()
+    online["task_id"] = "task-1"
+    online["task_statement"] = "repair the parser"
+    online["online_prompt"] = "repair the parser"
+    online["capability_evidence_bundle"] = unknown_kind_bundle
+    with pytest.raises(ValueError, match="consumer_evidence_bundle_invalid.*source_hash_kind_mismatch"):
+        build_online_context_package(online)
+
+
+def test_negative_4_statement_only_fallback_is_impossible_for_typed_kind():
+    """4. statement-only fallback is impossible for typed kind."""
+    from nexus_planning_candidate.services.capability_evidence_bundle import (
+        build_source_hash_subject,
+        compute_bundle_hash,
+        verify_capability_evidence_bundle,
+    )
+    # Missing workspace_revision cannot fallback to statement-only hash
+    with pytest.raises(ValueError, match="source_hash_subject_requires_workspace_revision_and_task_statement"):
+        build_capability_evidence_bundle(
+            task_id="t-1",
+            workspace_revision="",
+            task_statement="repair the parser",
+            plan_payload={"selected_capabilities": ["memory"]},
+            plan_hash=PLAN_HASH,
+            planner_decision_id=DECISION_HASH,
+            capability_results={},
+            selected_capabilities=["memory"],
+        )
+
+    # Legacy statement-only hash cannot pass verification for typed kind
+    bundle = _sealed_bundle("task-1", "repair the parser")
+    statement_only_bundle = dict(bundle)
+    statement_only_bundle["source_hash"] = hashlib.sha256("repair the parser".encode()).hexdigest()
+    statement_only_bundle["bundle_hash"] = compute_bundle_hash(statement_only_bundle)
+    subject = build_source_hash_subject("r" * 40, "repair the parser")
+    v = verify_capability_evidence_bundle(statement_only_bundle, source_hash_subject=subject)
+    assert v["ok"] is False
+    assert "source_hash_content_mismatch" in v["blockers"]
+    assert v["source_hash_verified"] is False
+
+
+def test_negative_5_resealing_around_substituted_source_hash_fails_closed():
+    """5. re-sealing bundle_hash/baseline_hash around a substituted source_hash does not make it valid."""
+    from nexus_planning_candidate.services.capability_evidence_bundle import (
+        _hash_json,
+        assert_consumer_bundle_intact,
+        build_source_hash_subject,
+        compute_bundle_hash,
+        verify_capability_evidence_bundle,
+    )
+    bundle = _sealed_bundle("task-1", "repair the parser")
+    subject = build_source_hash_subject("r" * 40, "repair the parser")
+
+    # Reseal bundle around substituted source hash
+    tampered_bundle = dict(bundle)
+    substituted_source_hash = hashlib.sha256(b"substituted_source_content").hexdigest()
+    tampered_bundle["source_hash"] = substituted_source_hash
+    # Recompute baseline_hash to fool baseline check
+    tampered_baseline = {
+        "task_id": str(tampered_bundle["task_id"]),
+        "workspace_revision": str(tampered_bundle["workspace_revision"]),
+        "task_statement_hash": str(tampered_bundle["task_statement_hash"]),
+        "source_hash_kind": str(tampered_bundle["source_hash_kind"]),
+        "source_hash": substituted_source_hash,
+        "plan_hash": str(tampered_bundle["plan_hash"]),
+        "planner_decision_id": str(tampered_bundle["planner_decision_id"]),
+        "selected_capabilities": list(tampered_bundle["selected_capabilities"]),
+    }
+    tampered_bundle["baseline_hash"] = _hash_json(tampered_baseline)
+    # Recompute bundle_hash so the hash seal is cryptographically valid
+    tampered_bundle["bundle_hash"] = compute_bundle_hash(tampered_bundle)
+
+    # Cryptographic bundle_hash matches claimed!
+    assert tampered_bundle["bundle_hash"] == compute_bundle_hash(tampered_bundle)
+
+    # Yet verification fails closed on recomputed preimage mismatch
+    verdict = verify_capability_evidence_bundle(tampered_bundle, source_hash_subject=subject)
+    assert verdict["ok"] is False
+    assert "source_hash_content_mismatch" in verdict["blockers"]
+    assert "baseline_hash_mismatch" not in verdict["blockers"]
+    assert verdict["source_hash_verified"] is False
+
+    # Consumer pre-use check fails closed
+    intact = assert_consumer_bundle_intact(tampered_bundle, source_hash_subject=subject)
+    assert intact["ok"] is False
+    assert "source_hash_content_mismatch" in intact["blockers"]
+
+    # Consumer projection fails closed
+    online = _online_context()
+    online["task_id"] = "task-1"
+    online["task_statement"] = "repair the parser"
+    online["online_prompt"] = "repair the parser"
+    online["capability_evidence_bundle"] = tampered_bundle
+    with pytest.raises(ValueError, match="source_hash_content_mismatch"):
+        build_online_context_package(online)
+
+
+def test_negative_6_raw_task_statement_absent_from_bundle_serialization():
+    """6. raw task_statement is absent from bundle serialization."""
+    secret_statement = "SECRET_STATEMENT_DO_NOT_LEAK_INTO_BUNDLE_abc123xyz"
+    bundle = _sealed_bundle("task-leak-check", secret_statement)
+    assert "task_statement" not in bundle
+    assert bundle["task_statement_hash"] == hashlib.sha256(secret_statement.encode("utf-8")).hexdigest()
+    serialized = json.dumps(bundle)
+    assert secret_statement not in serialized
+
+
+def test_negative_7_local_online_worker_preserve_same_root_bundle_identity_while_verifying_typed_hash():
+    """7. Local/Online or Worker consumer paths preserve same root bundle identity while verifying typed source hash."""
+    from nexus_planning_candidate.services.capability_evidence_bundle import (
+        assert_same_root_bundle_hash,
+    )
+    bundle = _sealed_bundle("task-root-id", "repair the parser")
+    root_bundle_hash = bundle["bundle_hash"]
+
+    # Online context
+    online = _online_context()
+    online["task_id"] = "task-root-id"
+    online["task_statement"] = "repair the parser"
+    online["online_prompt"] = "repair the parser"
+    online["capability_evidence_bundle"] = bundle
+    online_pkg = build_online_context_package(online)
+
+    # Worker request
+    worker = _worker_request("task-root-id")
+    worker["planner_output"]["plan_payload"]["signal_snapshot"]["capability_evidence_bundle"] = bundle
+    worker_pkg = build_worker_context_package(worker)
+
+    assert online_pkg["status"] == "PASS"
+    assert worker_pkg["status"] == "PASS"
+    assert online_pkg["evidence_bundle_ids"] == [f"capability-evidence:{root_bundle_hash}"]
+    assert worker_pkg["evidence_bundle_ids"] == [f"capability-evidence:{root_bundle_hash}"]
+
+    # Local/Online comparison preserves root hash
+    match = assert_same_root_bundle_hash(local_bundle=bundle, online_bundle=bundle)
+    assert match["ok"] is True
+    assert match["local_bundle_hash"] == root_bundle_hash
+
+
+def test_online_consumer_missing_independent_workspace_revision_fails_closed():
+    context = _online_context()
+    context.pop("workspace_revision")
+    with pytest.raises(
+        ValueError,
+        match="consumer_evidence_bundle_invalid.*source_hash_subject_preimage_missing",
+    ):
+        build_online_context_package(context)
+
+
+def test_negative_8_untyped_legacy_data_remains_intact_but_not_silently_labeled_verified_typed():
+    """8. existing unaffected legacy paths/tests remain intact where explicitly compatible, but do not silently label untyped legacy data as verified typed source semantics."""
+    from nexus_planning_candidate.services.capability_evidence_bundle import (
+        _hash_json,
+        compute_bundle_hash,
+        record_consumption,
+        verify_capability_evidence_bundle,
+    )
+    # Construct an untyped legacy bundle (no source_hash_kind, arbitrary source_hash)
+    legacy_bundle = _sealed_bundle("legacy-task", "legacy statement")
+    del legacy_bundle["source_hash_kind"]
+    legacy_bundle["source_hash"] = "legacy_untyped_hash"
+    legacy_bundle["baseline_hash"] = _hash_json(
+        {
+            "task_id": str(legacy_bundle["task_id"]),
+            "workspace_revision": str(legacy_bundle["workspace_revision"]),
+            "task_statement_hash": str(legacy_bundle["task_statement_hash"]),
+            "source_hash": str(legacy_bundle["source_hash"]),
+            "plan_hash": str(legacy_bundle["plan_hash"]),
+            "planner_decision_id": str(legacy_bundle["planner_decision_id"]),
+            "selected_capabilities": list(legacy_bundle["selected_capabilities"]),
+        }
+    )
+    legacy_bundle["bundle_hash"] = compute_bundle_hash(legacy_bundle)
+
+    # Generic seal verification remains compatible, but it must never
+    # silently promote untyped legacy data into typed source verification.
+    v_no_subj = verify_capability_evidence_bundle(legacy_bundle)
+    assert v_no_subj["ok"] is True
+    assert v_no_subj["source_hash_verified"] is False
+
+    # A typed consumer still fails closed when the same legacy bundle is used.
+    typed_subject = {
+        "kind": "workspace_revision_task_statement_v1",
+        "workspace_revision": "r" * 40,
+        "task_statement": "legacy statement",
+    }
+    v_typed = verify_capability_evidence_bundle(
+        legacy_bundle, source_hash_subject=typed_subject
+    )
+    assert v_typed["ok"] is False
+    assert v_typed["source_hash_verified"] is False
+    assert "source_hash_kind_mismatch" in v_typed["blockers"]
+
+    # Generic consumption can preserve legacy seal bookkeeping, but carries no
+    # typed source-verification claim.
+    receipt = record_consumption(
+        bundle=legacy_bundle,
+        consumer="online",
+        consumed_evidence_ids=["evidence:memory"],
+    )
+    assert receipt["bundle_intact"] is True
+    assert receipt["source_hash_verified"] is False

@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "35b50408e0723e924adf48eb1f2d15b3fc9f47ef",
+  "source_head": "4bda17d27cd1760b19b60450b538005ddc439bf3",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -264,7 +264,7 @@
     },
     {
       "path": "nexus_planning_candidate/services/capability_evidence_bundle.py",
-      "sha256": "5167fcd94858ef8cc60cd3e154909583a7a38a05e5216440202247d8e25bc952",
+      "sha256": "818c54c59afb273ca95b329914158f0b1b40a9f72d2a8fd7e27f03c814db08f3",
       "canonical_owner": "planner/admission",
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known"
@@ -397,7 +397,7 @@
     },
     {
       "path": "nexus_runtime/task_context/consumer_projection.py",
-      "sha256": "32bf4decf3b62c17d47ba6216028209f8efb743a5a617c738cdaddf2f8670998",
+      "sha256": "3fd9411efab214317670f85fa36b4930ab758c0809e2c6c058bde6226317adbe",
       "canonical_owner": "runtime context",
       "donor": "docs/task-context-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
@@ -649,7 +649,7 @@
     },
     {
       "path": "nexus_runtime_p6c_candidate/runtime.py",
-      "sha256": "108a82f534e6c8745873b8cfe77d1d21f2e4ccbd752eb49fac2238069db7ee84",
+      "sha256": "84272ddc39ed59af157407698f77f21dd948f1d3a3188971f25650c3720a184b",
       "canonical_owner": "runtime",
       "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
       "lineage_status": "known"
