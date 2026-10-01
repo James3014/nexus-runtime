@@ -573,6 +573,112 @@ class WorkflowCheckpointStore:
             )
             return updated
 
+    def _handoffs_dir(self, task_id: str) -> Path:
+        return self.root / _safe_segment(task_id, "task_id") / "handoffs"
+
+    def _handoff_path(self, task_id: str, successor_attempt_id: str) -> Path:
+        return self._handoffs_dir(task_id) / f"{_safe_segment(successor_attempt_id, 'successor_attempt_id')}.json"
+
+    def write_handoff(self, handoff: Any) -> Any:
+        from .handoff_lineage import HandoffLineage, HandoffLineageError
+
+        if type(handoff) is not HandoffLineage:
+            raise HandoffLineageError("handoff must be a HandoffLineage")
+        with self._locked(handoff.task_id, f"handoff_{handoff.successor_attempt_id}"):
+            path = self._handoff_path(handoff.task_id, handoff.successor_attempt_id)
+            if path.exists():
+                existing = HandoffLineage.from_dict(json.loads(path.read_text(encoding="utf-8")))
+                if existing.lineage_hash == handoff.lineage_hash:
+                    return existing
+                raise CheckpointConflict(
+                    f"handoff for successor {handoff.successor_attempt_id} already exists with different payload"
+                )
+            self._atomic_write(path, handoff.to_dict())
+            return handoff
+
+    def read_handoff(self, task_id: str, successor_attempt_id: str) -> Any | None:
+        from .handoff_lineage import HandoffLineage
+
+        path = self._handoff_path(task_id, successor_attempt_id)
+        if not path.exists():
+            return None
+        return HandoffLineage.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
+    def list_handoffs(self, task_id: str) -> list[Any]:
+        from .handoff_lineage import HandoffLineage
+
+        directory = self._handoffs_dir(task_id)
+        if not directory.is_dir():
+            return []
+        records = []
+        for path in sorted(directory.glob("*.json")):
+            records.append(HandoffLineage.from_dict(json.loads(path.read_text(encoding="utf-8"))))
+        return records
+
+    def reconstruct_lineage_chain(self, task_id: str, attempt_id: str) -> list[Any]:
+        """Reconstruct the entire chain of handoffs leading up to attempt_id."""
+        chain = []
+        current = attempt_id
+        visited = set()
+        while current not in visited:
+            visited.add(current)
+            h = self.read_handoff(task_id, current)
+            if h is None:
+                break
+            chain.append(h)
+            current = h.predecessor_attempt_id
+        return list(reversed(chain))
+
+    def bind_successor_checkpoint(
+        self,
+        handoff: Any,
+        *,
+        current_identity: IdentityBinding,
+        initial_status: str = STATUS_RUNNING,
+        phase: str = "",
+    ) -> WorkflowCheckpoint:
+        from .handoff_lineage import HandoffLineageError, evaluate_handoff_lineage
+
+        predecessor_cp = self.read(handoff.task_id, handoff.predecessor_attempt_id)
+        eval_result = evaluate_handoff_lineage(
+            handoff,
+            current_identity=current_identity,
+            predecessor_checkpoint=predecessor_cp,
+        )
+        if eval_result["disposition"] != DISPOSITION_SAFE:
+            raise HandoffLineageError(
+                f"cannot bind successor checkpoint: disposition is {eval_result['disposition']} ({eval_result['reason']})"
+            )
+
+        inherited_effects = tuple(
+            CompletedEffect(
+                effect_key=k,
+                receipt_ref=f"inherited_from_{handoff.predecessor_attempt_id}",
+            )
+            for k in handoff.completed_effect_refs
+        )
+        op_id = str(handoff.successor_binding.get("operation_id") or f"op_{handoff.successor_attempt_id}")
+        successor = WorkflowCheckpoint(
+            task_id=handoff.task_id,
+            operation_id=op_id,
+            attempt_id=handoff.successor_attempt_id,
+            identity=current_identity,
+            revision=1,
+            status=initial_status,
+            phase=phase,
+            next_gate=handoff.next_gate,
+            leases=(),
+            evidence_refs=handoff.inherited_evidence_refs,
+            completed_effects=inherited_effects,
+            pending_steps=(),
+            retry_history=(
+                f"handoff:{handoff.predecessor_attempt_id}->{handoff.successor_attempt_id}:{handoff.handoff_reason}",
+            ),
+        )
+        self.write_handoff(handoff)
+        self.write(successor)
+        return successor
+
 
 def readback(task_id: str, attempt_id: str, *, store: WorkflowCheckpointStore) -> dict[str, Any]:
     """Deterministic read API so a different session can pick up the workflow."""
@@ -609,6 +715,48 @@ def readback(task_id: str, attempt_id: str, *, store: WorkflowCheckpointStore) -
     }
 
 
+def readback_handoff_lineage(
+    task_id: str,
+    attempt_id: str,
+    *,
+    store: WorkflowCheckpointStore,
+    current_identity: IdentityBinding | None = None,
+) -> dict[str, Any]:
+    """Deterministic readback for handoff lineage leading to attempt_id."""
+    from .handoff_lineage import (
+        HANDOFF_LINEAGE_CLAIM_CEILING,
+        HANDOFF_LINEAGE_SCHEMA,
+        evaluate_handoff_lineage,
+    )
+
+    chain = store.reconstruct_lineage_chain(task_id, attempt_id)
+    immediate = store.read_handoff(task_id, attempt_id)
+    checkpoint = store.read(task_id, attempt_id)
+
+    eval_result = None
+    if immediate is not None and current_identity is not None:
+        pred_cp = store.read(task_id, immediate.predecessor_attempt_id)
+        eval_result = evaluate_handoff_lineage(
+            immediate,
+            current_identity=current_identity,
+            predecessor_checkpoint=pred_cp,
+        )
+
+    return {
+        "schema": HANDOFF_LINEAGE_SCHEMA,
+        "claim_ceiling": HANDOFF_LINEAGE_CLAIM_CEILING,
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "found": immediate is not None,
+        "chain_length": len(chain),
+        "chain": [h.to_dict() for h in chain],
+        "immediate_handoff": immediate.to_dict() if immediate is not None else None,
+        "evaluation": eval_result,
+        "completed_effect_keys": [e.effect_key for e in checkpoint.completed_effects] if checkpoint else [],
+        "next_gate": checkpoint.next_gate if checkpoint else (immediate.next_gate if immediate else ""),
+    }
+
+
 __all__ = [
     "CHECKPOINT_STATUSES",
     "DISPOSITION_BLOCKED",
@@ -632,5 +780,6 @@ __all__ = [
     "WorkflowCheckpoint",
     "WorkflowCheckpointStore",
     "readback",
+    "readback_handoff_lineage",
     "resume_disposition",
 ]
