@@ -25,7 +25,6 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
 
     import contextlib
     import hashlib
-    import inspect
     import json
     import os
     import shlex
@@ -3767,18 +3766,14 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             plan_payload = dict(plan_payload)
             _evidence_consumer_view = _nexus_generated_bindings._evidence_consumer_view
             _verify_evidence_bundle = _nexus_generated_bindings._verify_evidence_bundle
-            verifier_parameters = inspect.signature(_verify_evidence_bundle).parameters
-            if "source_hash_subject" in verifier_parameters:
-                sealed_verdict = _verify_evidence_bundle(
-                    evidence_bundle,
-                    source_hash_subject={
-                        "kind": "workspace_revision_task_statement_v1",
-                        "workspace_revision": str(request.workspace_revision or ""),
-                        "task_statement": str(request.task_statement or ""),
-                    },
-                )
-            else:
-                sealed_verdict = _verify_evidence_bundle(evidence_bundle)
+            source_hash_subject = {
+                "kind": "workspace_revision_task_statement_v1",
+                "workspace_revision": str(request.workspace_revision or ""),
+                "task_statement": str(request.task_statement or ""),
+            }
+            sealed_verdict = _verify_evidence_bundle(
+                evidence_bundle, source_hash_subject=source_hash_subject
+            )
             if not sealed_verdict.get("ok"):
                 # Fail closed: do NOT mutate sealed bundle with seal_verify;
                 # do NOT call Local/Online; terminal BLOCKED.

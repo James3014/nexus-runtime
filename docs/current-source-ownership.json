@@ -264,7 +264,7 @@
     },
     {
       "path": "nexus_planning_candidate/services/capability_evidence_bundle.py",
-      "sha256": "5167fcd94858ef8cc60cd3e154909583a7a38a05e5216440202247d8e25bc952",
+      "sha256": "818c54c59afb273ca95b329914158f0b1b40a9f72d2a8fd7e27f03c814db08f3",
       "canonical_owner": "planner/admission",
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known"
@@ -397,7 +397,7 @@
     },
     {
       "path": "nexus_runtime/task_context/consumer_projection.py",
-      "sha256": "fdd7dcaf57c9a8c2d1405080649e0053f32873be873f39b27d7489343af2948e",
+      "sha256": "974776253d9320e7a3df10a4f1b92f321cd63421004fd8af7230513bddd080c4"
       "canonical_owner": "runtime context",
       "donor": "docs/task-context-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
@@ -649,7 +649,7 @@
     },
     {
       "path": "nexus_runtime_p6c_candidate/runtime.py",
-      "sha256": "bc00702ab8ddddf3bc080330c1474d2e81f381b5182609a35e617b56d46d5b44",
+      "sha256": "84272ddc39ed59af157407698f77f21dd948f1d3a3188971f25650c3720a184b"
       "canonical_owner": "runtime",
       "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
       "lineage_status": "known"
