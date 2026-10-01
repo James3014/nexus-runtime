@@ -14,22 +14,16 @@ merge, release, or deploy.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from .workflow_checkpoint import (
     CheckpointError,
-    CompletedEffect,
-    DISPOSITION_BLOCKED,
     DISPOSITION_RECONCILE,
     DISPOSITION_SAFE,
-    DISPOSITION_WAIT,
     IdentityBinding,
     WorkflowCheckpoint,
-    _canonical,
     _sha256,
     _text,
 )
@@ -270,7 +264,7 @@ def evaluate_handoff_lineage(
     # Check 1: identity drift
     stale_fields = [
         name
-        for name in ("repository", "source_revision", "runtime_identity")
+        for name in ("repository", "source_revision", "runtime_identity", "target_revision")
         if getattr(handoff.source_identity, name) != getattr(current_identity, name)
     ]
     if stale_fields:
@@ -332,17 +326,15 @@ def evaluate_handoff_lineage(
     if verified_fence_refs is not None:
         if isinstance(verified_fence_refs, Mapping):
             fact = verified_fence_refs.get(handoff.fence_evidence_ref)
-            fence_verified = bool(fact and (fact is True or (isinstance(fact, Mapping) and fact.get("verified") is True)))
+            fence_verified = bool(
+                fact is True
+                or (isinstance(fact, Mapping) and fact.get("verified") is True)
+            )
         else:
             fence_verified = handoff.fence_evidence_ref in verified_fence_refs
-    else:
-        # Only predecessor-owned canonical state may verify a fence implicitly.
-        # Handoff-owned inherited_evidence_refs / successor_binding are caller
-        # assertions and therefore cannot verify themselves.
-        fence_verified = (
-            handoff.fence_evidence_ref in predecessor_checkpoint.evidence_refs
-            or handoff.fence_evidence_ref in predecessor_checkpoint.leases
-        )
+    # Runtime never infers fence authority from generic checkpoint evidence,
+    # leases, inherited evidence, or successor metadata. SAFE requires a fresh
+    # externally verified fence fact from the canonical claim/fence owner.
 
     if not fence_verified:
         return {
@@ -369,6 +361,29 @@ def evaluate_handoff_lineage(
             "disposition": DISPOSITION_RECONCILE,
             "reason": "PREDECESSOR_ATTEMPT_ID_MISMATCH",
             "stale_fields": [],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+    if predecessor_checkpoint.operation_id != handoff.predecessor_operation_id:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "PREDECESSOR_OPERATION_ID_MISMATCH",
+            "stale_fields": [],
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+    if predecessor_checkpoint.identity != handoff.source_identity:
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "PREDECESSOR_IDENTITY_MISMATCH",
+            "stale_fields": [
+                name
+                for name in ("repository", "source_revision", "runtime_identity", "target_revision")
+                if getattr(predecessor_checkpoint.identity, name)
+                != getattr(handoff.source_identity, name)
+            ],
             "next_gate": handoff.next_gate,
             "replay_completed_effects": False,
             "lineage_hash": handoff.lineage_hash,

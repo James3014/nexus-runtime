@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,6 @@ import pytest
 from nexus_runtime.handoff_lineage import (
     HANDOFF_LINEAGE_CLAIM_CEILING,
     HANDOFF_LINEAGE_SCHEMA,
-    RECOGNIZED_TRANSITIONS,
     TRANSITION_LOCAL_TO_ONLINE,
     TRANSITION_MAIN_GPT_TO_DELEGATED,
     TRANSITION_ONLINE_A_TO_ONLINE_B,
@@ -21,7 +19,6 @@ from nexus_runtime.handoff_lineage import (
 )
 from nexus_runtime.workflow_checkpoint import (
     CompletedEffect,
-    DISPOSITION_BLOCKED,
     DISPOSITION_RECONCILE,
     DISPOSITION_SAFE,
     IdentityBinding,
@@ -198,7 +195,7 @@ def test_reconstruct_chain_after_process_restart(tmp_path: Path):
         next_gate="G04_MERGE_READY",
         transition_type=TRANSITION_RDC_TO_MAIN_GPT,
     )
-    cp_c = store.bind_successor_checkpoint(
+    store.bind_successor_checkpoint(
         handoff_bc,
         current_identity=ident,
         verified_fence_refs=("fence-receipt-B-superseded",),
@@ -653,7 +650,7 @@ def test_negative_control_completed_effect_not_in_predecessor_fails_closed(tmp_p
         inherited_evidence_refs=("fence-ok",),
     )
 
-    with pytest.raises(HandoffLineageError, match="cannot inherit completed effect 'step_unperformed': not present in predecessor"):
+    with pytest.raises(HandoffLineageError, match="completed_effect_keys must exactly match canonical predecessor completed effects"):
         store.bind_successor_checkpoint(
             handoff,
             current_identity=ident,
@@ -720,10 +717,245 @@ def test_negative_control_effect_refs_cannot_substitute_for_keys(tmp_path: Path)
 
     with pytest.raises(
         HandoffLineageError,
-        match="completed_effect_refs cannot substitute",
+        match="completed_effect_refs must exactly match canonical predecessor effect receipts",
     ):
         store.bind_successor_checkpoint(
             handoff,
             current_identity=ident,
             verified_fence_refs=("fence:verified",),
+        )
+
+
+def test_completed_effects_are_inherited_even_when_handoff_omits_effect_lists(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    effect = CompletedEffect(effect_key="write_patch", receipt_ref="receipt-original", effect_hash="hash-1")
+    cp = _seed_checkpoint(
+        store,
+        task_id="task-omit-effect-list",
+        attempt_id="attempt-A",
+        completed_effects=(effect,),
+    )
+    handoff = HandoffLineage(
+        task_id="task-omit-effect-list",
+        predecessor_attempt_id="attempt-A",
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id=cp.operation_id,
+        predecessor_checkpoint_hash=cp.checkpoint_hash,
+        predecessor_checkpoint_revision=cp.revision,
+        handoff_reason="RETRY",
+        source_identity=ident,
+        terminal_state=cp.status,
+        fence_evidence_ref="fence:external-A",
+    )
+
+    successor = store.bind_successor_checkpoint(
+        handoff,
+        current_identity=ident,
+        verified_fence_refs=("fence:external-A",),
+    )
+    assert successor.has_effect("write_patch")
+    assert successor.completed_effects == (effect,)
+
+    replay = store.record_effect(
+        "task-omit-effect-list",
+        "attempt-B",
+        CompletedEffect(effect_key="write_patch", receipt_ref="receipt-replay"),
+        expected_revision=successor.revision,
+    )
+    assert replay.revision == successor.revision
+    assert replay.completed_effects == (effect,)
+
+
+def test_two_hop_inherited_evidence_cannot_launder_fence_authority(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    cp_a = _seed_checkpoint(store, task_id="task-two-hop", attempt_id="attempt-A", operation_id="op-A")
+
+    handoff_ab = HandoffLineage(
+        task_id="task-two-hop",
+        predecessor_attempt_id="attempt-A",
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id=cp_a.operation_id,
+        predecessor_checkpoint_hash=cp_a.checkpoint_hash,
+        predecessor_checkpoint_revision=cp_a.revision,
+        handoff_reason="A_TO_B",
+        source_identity=ident,
+        terminal_state=cp_a.status,
+        fence_evidence_ref="fence:external-A",
+        inherited_evidence_refs=("fence:forged-B",),
+    )
+    cp_b = store.bind_successor_checkpoint(
+        handoff_ab,
+        current_identity=ident,
+        verified_fence_refs=("fence:external-A",),
+    )
+    assert "fence:forged-B" in cp_b.evidence_refs
+
+    handoff_bc = HandoffLineage(
+        task_id="task-two-hop",
+        predecessor_attempt_id="attempt-B",
+        successor_attempt_id="attempt-C",
+        predecessor_operation_id=cp_b.operation_id,
+        predecessor_checkpoint_hash=cp_b.checkpoint_hash,
+        predecessor_checkpoint_revision=cp_b.revision,
+        handoff_reason="B_TO_C",
+        source_identity=ident,
+        terminal_state=cp_b.status,
+        fence_evidence_ref="fence:forged-B",
+    )
+    res = evaluate_handoff_lineage(
+        handoff_bc,
+        current_identity=ident,
+        predecessor_checkpoint=cp_b,
+    )
+    assert res["disposition"] == DISPOSITION_RECONCILE
+    assert res["reason"] == "UNVERIFIED_OLD_WRITER_FENCE_REFERENCE"
+    with pytest.raises(HandoffLineageError, match="UNVERIFIED_OLD_WRITER_FENCE_REFERENCE"):
+        store.bind_successor_checkpoint(handoff_bc, current_identity=ident)
+
+
+def test_wrong_predecessor_operation_id_fails_closed(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    cp = _seed_checkpoint(store, task_id="task-op-bind", attempt_id="attempt-A", operation_id="op-real")
+    handoff = HandoffLineage(
+        task_id="task-op-bind",
+        predecessor_attempt_id="attempt-A",
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id="op-forged",
+        predecessor_checkpoint_hash=cp.checkpoint_hash,
+        predecessor_checkpoint_revision=cp.revision,
+        handoff_reason="RETRY",
+        source_identity=ident,
+        terminal_state=cp.status,
+        fence_evidence_ref="fence:external",
+    )
+    res = evaluate_handoff_lineage(
+        handoff,
+        current_identity=ident,
+        predecessor_checkpoint=cp,
+        verified_fence_refs=("fence:external",),
+    )
+    assert res["disposition"] == DISPOSITION_RECONCILE
+    assert res["reason"] == "PREDECESSOR_OPERATION_ID_MISMATCH"
+
+
+def test_predecessor_checkpoint_identity_must_match_handoff_identity(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    current = _identity(repository="repo-current", source_revision="a" * 40, runtime_identity="runtime-current")
+    foreign = _identity(repository="repo-foreign", source_revision="b" * 40, runtime_identity="runtime-foreign")
+    cp = _seed_checkpoint(
+        store,
+        task_id="task-identity-bind",
+        attempt_id="attempt-A",
+        operation_id="op-A",
+        identity=foreign,
+    )
+    handoff = HandoffLineage(
+        task_id="task-identity-bind",
+        predecessor_attempt_id="attempt-A",
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id=cp.operation_id,
+        predecessor_checkpoint_hash=cp.checkpoint_hash,
+        predecessor_checkpoint_revision=cp.revision,
+        handoff_reason="RETRY",
+        source_identity=current,
+        terminal_state=cp.status,
+        fence_evidence_ref="fence:external",
+    )
+    res = evaluate_handoff_lineage(
+        handoff,
+        current_identity=current,
+        predecessor_checkpoint=cp,
+        verified_fence_refs=("fence:external",),
+    )
+    assert res["disposition"] == DISPOSITION_RECONCILE
+    assert res["reason"] == "PREDECESSOR_IDENTITY_MISMATCH"
+
+
+def test_target_revision_drift_fails_closed():
+    source = _identity(target_revision="target-A")
+    current = _identity(target_revision="target-B")
+    cp = WorkflowCheckpoint(
+        task_id="task-target-drift",
+        operation_id="op-A",
+        attempt_id="attempt-A",
+        identity=source,
+    )
+    handoff = HandoffLineage(
+        task_id="task-target-drift",
+        predecessor_attempt_id="attempt-A",
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id=cp.operation_id,
+        predecessor_checkpoint_hash=cp.checkpoint_hash,
+        predecessor_checkpoint_revision=cp.revision,
+        handoff_reason="RETRY",
+        source_identity=source,
+        terminal_state=cp.status,
+        fence_evidence_ref="fence:external",
+    )
+    res = evaluate_handoff_lineage(
+        handoff,
+        current_identity=current,
+        predecessor_checkpoint=cp,
+        verified_fence_refs=("fence:external",),
+    )
+    assert res["disposition"] == DISPOSITION_RECONCILE
+    assert res["reason"] == "IDENTITY_DRIFT"
+    assert "target_revision" in res["stale_fields"]
+
+
+def test_bind_rejects_preexisting_cyclic_ancestry(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    cp_a = _seed_checkpoint(store, task_id="task-bind-cycle", attempt_id="attempt-A", operation_id="op-A")
+    cp_b = _seed_checkpoint(store, task_id="task-bind-cycle", attempt_id="attempt-B", operation_id="op-B")
+
+    store.write_handoff(
+        HandoffLineage(
+            task_id="task-bind-cycle",
+            predecessor_attempt_id="attempt-A",
+            successor_attempt_id="attempt-B",
+            predecessor_operation_id=cp_a.operation_id,
+            predecessor_checkpoint_hash=cp_a.checkpoint_hash,
+            predecessor_checkpoint_revision=cp_a.revision,
+            handoff_reason="A_TO_B",
+            source_identity=ident,
+            terminal_state=cp_a.status,
+            fence_evidence_ref="fence:A",
+        )
+    )
+    store.write_handoff(
+        HandoffLineage(
+            task_id="task-bind-cycle",
+            predecessor_attempt_id="attempt-B",
+            successor_attempt_id="attempt-A",
+            predecessor_operation_id=cp_b.operation_id,
+            predecessor_checkpoint_hash=cp_b.checkpoint_hash,
+            predecessor_checkpoint_revision=cp_b.revision,
+            handoff_reason="B_TO_A",
+            source_identity=ident,
+            terminal_state=cp_b.status,
+            fence_evidence_ref="fence:B",
+        )
+    )
+
+    handoff_bc = HandoffLineage(
+        task_id="task-bind-cycle",
+        predecessor_attempt_id="attempt-B",
+        successor_attempt_id="attempt-C",
+        predecessor_operation_id=cp_b.operation_id,
+        predecessor_checkpoint_hash=cp_b.checkpoint_hash,
+        predecessor_checkpoint_revision=cp_b.revision,
+        handoff_reason="B_TO_C",
+        source_identity=ident,
+        terminal_state=cp_b.status,
+        fence_evidence_ref="fence:C",
+    )
+    with pytest.raises(HandoffLineageError, match="detected cyclic handoff lineage"):
+        store.bind_successor_checkpoint(
+            handoff_bc,
+            current_identity=ident,
+            verified_fence_refs=("fence:C",),
         )

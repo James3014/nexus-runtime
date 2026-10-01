@@ -632,6 +632,14 @@ class WorkflowCheckpointStore:
             h = self.read_handoff(task_id, current)
             if h is None:
                 break
+            if h.task_id != task_id:
+                raise HandoffLineageError(
+                    f"malformed handoff lineage: expected task {task_id!r}, found {h.task_id!r}"
+                )
+            if h.successor_attempt_id != current:
+                raise HandoffLineageError(
+                    f"malformed handoff lineage: expected successor {current!r}, found {h.successor_attempt_id!r}"
+                )
             if h.predecessor_attempt_id == h.successor_attempt_id:
                 raise HandoffLineageError(f"detected self-cycle handoff lineage for attempt {current!r}")
             chain.append(h)
@@ -655,6 +663,22 @@ class WorkflowCheckpointStore:
                 f"cannot bind successor checkpoint: canonical predecessor checkpoint for attempt {handoff.predecessor_attempt_id!r} is missing"
             )
 
+        # Existing ancestry must already be well-formed, and the successor may
+        # not point back into that ancestry. This prevents binding a new edge on
+        # top of a latent A->B->A cycle that would only be discovered later.
+        ancestry = self.reconstruct_lineage_chain(
+            handoff.task_id,
+            handoff.predecessor_attempt_id,
+        )
+        ancestry_attempts = {handoff.predecessor_attempt_id}
+        for edge in ancestry:
+            ancestry_attempts.add(edge.predecessor_attempt_id)
+            ancestry_attempts.add(edge.successor_attempt_id)
+        if handoff.successor_attempt_id in ancestry_attempts:
+            raise HandoffLineageError(
+                f"cannot bind successor checkpoint: successor {handoff.successor_attempt_id!r} creates a lineage cycle"
+            )
+
         eval_result = evaluate_handoff_lineage(
             handoff,
             current_identity=current_identity,
@@ -666,27 +690,31 @@ class WorkflowCheckpointStore:
                 f"cannot bind successor checkpoint: disposition is {eval_result['disposition']} ({eval_result['reason']})"
             )
 
-        # Inherit completed effects using canonical effect identity (effect_key) and durable receipt_ref
-        pred_effects_by_key = {e.effect_key: e for e in predecessor_cp.completed_effects}
-        if handoff.completed_effect_refs and not handoff.completed_effect_keys:
-            raise HandoffLineageError(
-                "completed_effect_refs cannot substitute for canonical completed_effect_keys"
-            )
-        effect_keys = handoff.completed_effect_keys
-        inherited_effects = []
-        for k in effect_keys:
-            if k not in pred_effects_by_key:
+        # All canonical predecessor effects must carry forward so omission from
+        # handoff metadata can never make a completed side effect replayable.
+        predecessor_effects = tuple(predecessor_cp.completed_effects)
+        predecessor_keys = tuple(effect.effect_key for effect in predecessor_effects)
+        predecessor_refs = tuple(effect.receipt_ref for effect in predecessor_effects)
+
+        if handoff.completed_effect_keys:
+            if set(handoff.completed_effect_keys) != set(predecessor_keys):
                 raise HandoffLineageError(
-                    f"cannot inherit completed effect {k!r}: not present in predecessor checkpoint"
+                    "completed_effect_keys must exactly match canonical predecessor completed effects"
                 )
-            pe = pred_effects_by_key[k]
-            inherited_effects.append(
-                CompletedEffect(
-                    effect_key=pe.effect_key,
-                    receipt_ref=pe.receipt_ref,
-                    effect_hash=pe.effect_hash,
+        if handoff.completed_effect_refs:
+            if set(handoff.completed_effect_refs) != set(predecessor_refs):
+                raise HandoffLineageError(
+                    "completed_effect_refs must exactly match canonical predecessor effect receipts"
                 )
+
+        inherited_effects = [
+            CompletedEffect(
+                effect_key=effect.effect_key,
+                receipt_ref=effect.receipt_ref,
+                effect_hash=effect.effect_hash,
             )
+            for effect in predecessor_effects
+        ]
 
         op_id = str(handoff.successor_binding.get("operation_id") or f"op_{handoff.successor_attempt_id}")
         successor = WorkflowCheckpoint(
