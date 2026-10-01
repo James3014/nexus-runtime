@@ -8,11 +8,15 @@ import pytest
 
 from nexus_runtime.placement import (
     DEVSPACE_HOST_CAPABILITY_SNAPSHOT_SCHEMA,
+    HOST_PLACEMENT_LEASE_SCHEMA,
+    PREFER_HOST_ORDER,
+    PREFER_LOWER_NORMALIZED_LOAD,
+    PREFER_MORE_AVAILABLE_MEMORY,
     SINGLE_HOST_PARITY_WITNESS,
     InvalidHostSnapshot,
-    MultiHostPlacementNotEnabled,
     NoEligibleHost,
     PlacementEngine,
+    PlacementPreferences,
     PlacementRequest,
     PlacementRequirements,
 )
@@ -34,11 +38,14 @@ def snapshot(
     capabilities: list[str] | None = None,
     missing: list[str] | None = None,
     connectivity: str = "LOCAL_OBSERVED",
+    available_memory_bytes: int = 40 * 1024**3,
+    load_average_1m: float = 1.5,
+    normalized_load_1m: float = 0.125,
 ):
     dynamic = {
-        "availableMemoryBytes": 40 * 1024**3,
-        "loadAverage1m": 1.5,
-        "normalizedLoad1m": 0.125,
+        "availableMemoryBytes": available_memory_bytes,
+        "loadAverage1m": load_average_1m,
+        "normalizedLoad1m": normalized_load_1m,
         "connectivityState": connectivity,
     }
     core = {
@@ -100,6 +107,17 @@ def test_singleton_selects_sole_eligible_host_without_fabric_configuration():
     )
     assert decision.runtime_is_planner_authority is False
     assert SINGLE_HOST_PARITY_WITNESS == "NEXUS_COMPUTE_FABRIC_SINGLE_HOST_PARITY_PASS"
+
+
+def test_placement_request_preserves_g2_third_positional_schema_compatibility():
+    request = PlacementRequest(
+        "task-g2-positional-schema",
+        PlacementRequirements(),
+        "nexus.runtime.placement_request.v1",
+    )
+
+    assert request.schema == "nexus.runtime.placement_request.v1"
+    assert request.preferences == PlacementPreferences()
 
 
 def test_singleton_decision_is_deterministic_and_binds_request_and_snapshot_identity():
@@ -165,15 +183,272 @@ def test_zero_hosts_fails_closed_instead_of_implicitly_selecting_local_machine()
         PlacementEngine().place(PlacementRequest("task-5/placement-1"), [])
 
 
-def test_multiple_hosts_require_g3_instead_of_ranking_or_choosing_one():
-    with pytest.raises(MultiHostPlacementNotEnabled, match="G3_NOT_ENABLED"):
+def test_multiple_hosts_without_preferences_use_stable_host_id_tie_break():
+    request = PlacementRequest("task-6/placement-1")
+    engine = PlacementEngine()
+    first = engine.place(
+        request,
+        [
+            snapshot(host_id="host-b"),
+            snapshot(host_id="host-a"),
+        ],
+    )
+    second = engine.place(
+        request,
+        [
+            snapshot(host_id="host-a"),
+            snapshot(host_id="host-b"),
+        ],
+    )
+
+    assert first == second
+    assert first.host_id == "host-a"
+    assert first.reason_code == "DETERMINISTIC_TIE_BREAK"
+    assert "soft_preference_criteria=none" in first.reason_details
+    assert "score[host-a]=[]" in first.reason_details
+    assert "score[host-b]=[]" in first.reason_details
+
+
+def test_hard_constraints_filter_before_soft_preferences():
+    request = PlacementRequest(
+        "task-g3-filter",
+        PlacementRequirements(
+            platform="darwin",
+            required_capabilities=("agent_start.tool",),
+        ),
+        preferences=PlacementPreferences(
+            criteria=(PREFER_HOST_ORDER,),
+            preferred_host_ids=("host-linux", "host-darwin"),
+        ),
+    )
+
+    decision = PlacementEngine().place(
+        request,
+        [
+            snapshot(host_id="host-linux", platform="linux"),
+            snapshot(host_id="host-darwin", platform="darwin"),
+        ],
+    )
+
+    assert decision.host_id == "host-darwin"
+    assert decision.reason_code == "SOLE_ELIGIBLE_AFTER_FILTER"
+    assert "ineligible[host-linux]=platform" in decision.reason_details
+    assert decision.runtime_is_planner_authority is False
+
+
+def test_preferred_host_order_ranks_only_already_eligible_hosts():
+    request = PlacementRequest(
+        "task-g3-preferred-order",
+        preferences=PlacementPreferences(
+            criteria=(PREFER_HOST_ORDER,),
+            preferred_host_ids=("host-c", "host-a"),
+        ),
+    )
+    decision = PlacementEngine().place(
+        request,
+        [
+            snapshot(host_id="host-a"),
+            snapshot(host_id="host-b"),
+            snapshot(host_id="host-c"),
+        ],
+    )
+
+    assert decision.host_id == "host-c"
+    assert decision.reason_code == "SOFT_PREFERENCE_SCORE"
+    assert f"preferences_sha256={request.preferences_sha256}" in decision.reason_details
+    assert "score[host-a]=[1]" in decision.reason_details
+    assert "score[host-b]=[0]" in decision.reason_details
+    assert "score[host-c]=[2]" in decision.reason_details
+
+
+def test_memory_then_load_preference_order_is_explicit_and_deterministic():
+    request = PlacementRequest(
+        "task-g3-memory-load",
+        preferences=PlacementPreferences(
+            criteria=(
+                PREFER_MORE_AVAILABLE_MEMORY,
+                PREFER_LOWER_NORMALIZED_LOAD,
+            ),
+        ),
+    )
+    engine = PlacementEngine()
+    inventory = [
+        snapshot(
+            host_id="host-a",
+            available_memory_bytes=30 * 1024**3,
+            normalized_load_1m=0.10,
+        ),
+        snapshot(
+            host_id="host-b",
+            available_memory_bytes=40 * 1024**3,
+            normalized_load_1m=0.90,
+        ),
+        snapshot(
+            host_id="host-c",
+            available_memory_bytes=40 * 1024**3,
+            normalized_load_1m=0.20,
+        ),
+    ]
+
+    first = engine.place(request, inventory)
+    second = engine.place(request, list(reversed(inventory)))
+
+    assert first == second
+    assert first.host_id == "host-c"
+    assert first.reason_code == "SOFT_PREFERENCE_SCORE"
+    assert (
+        "soft_preference_criteria=MORE_AVAILABLE_MEMORY,LOWER_NORMALIZED_LOAD"
+        in first.reason_details
+    )
+
+
+def test_multi_host_decision_changes_when_request_soft_preference_changes():
+    inventory = [
+        snapshot(
+            host_id="host-a",
+            available_memory_bytes=20 * 1024**3,
+            normalized_load_1m=0.05,
+        ),
+        snapshot(
+            host_id="host-b",
+            available_memory_bytes=40 * 1024**3,
+            normalized_load_1m=0.50,
+        ),
+    ]
+    memory_request = PlacementRequest(
+        "task-g3-pref-change",
+        preferences=PlacementPreferences(criteria=(PREFER_MORE_AVAILABLE_MEMORY,)),
+    )
+    load_request = PlacementRequest(
+        "task-g3-pref-change",
+        preferences=PlacementPreferences(criteria=(PREFER_LOWER_NORMALIZED_LOAD,)),
+    )
+
+    memory = PlacementEngine().place(memory_request, inventory)
+    load = PlacementEngine().place(load_request, inventory)
+
+    assert memory.host_id == "host-b"
+    assert load.host_id == "host-a"
+    assert memory.decision_id != load.decision_id
+    assert memory.runtime_is_planner_authority is False
+    assert load.runtime_is_planner_authority is False
+
+
+def test_duplicate_physical_host_identity_fails_closed():
+    with pytest.raises(InvalidHostSnapshot, match="duplicate hostId"):
         PlacementEngine().place(
-            PlacementRequest("task-6/placement-1"),
+            PlacementRequest("task-g3-duplicate"),
             [
                 snapshot(host_id="host-a"),
-                snapshot(host_id="host-b"),
+                snapshot(
+                    host_id="host-a",
+                    available_memory_bytes=20 * 1024**3,
+                ),
             ],
         )
+
+
+def test_all_multi_host_candidates_rejected_reports_deterministic_failures():
+    request = PlacementRequest(
+        "task-g3-no-eligible",
+        PlacementRequirements(platform="darwin", min_total_memory_bytes=48 * 1024**3),
+    )
+
+    with pytest.raises(NoEligibleHost) as exc:
+        PlacementEngine().place(
+            request,
+            [
+                snapshot(host_id="host-b", platform="linux"),
+                snapshot(host_id="host-a", total_memory_bytes=32 * 1024**3),
+            ],
+        )
+
+    assert str(exc.value) == (
+        "NO_ELIGIBLE_HOST:HARD_CONSTRAINTS_FAILED:"
+        "host-a=memory;host-b=platform"
+    )
+
+
+def test_host_placement_lease_binds_exact_decision_host_snapshot_and_freshness():
+    request = PlacementRequest(
+        "task-g3-lease",
+        preferences=PlacementPreferences(criteria=(PREFER_MORE_AVAILABLE_MEMORY,)),
+    )
+    decision, lease = PlacementEngine().place_with_lease(
+        request,
+        [
+            snapshot(host_id="host-a", available_memory_bytes=20 * 1024**3),
+            snapshot(host_id="host-b", available_memory_bytes=40 * 1024**3),
+        ],
+    )
+
+    assert lease.schema == HOST_PLACEMENT_LEASE_SCHEMA
+    assert lease.decision_id == decision.decision_id
+    assert lease.request_id == request.request_id
+    assert lease.requirements_sha256 == request.requirements_sha256
+    assert lease.host_id == decision.host_id == "host-b"
+    assert lease.snapshot_id == decision.snapshot_id
+    assert lease.snapshot_observed_at == "2026-10-01T00:01:00.000Z"
+    assert lease.valid_until == "2026-10-01T00:01:30.000Z"
+    assert len(lease.lease_id) == 64
+    assert lease.runtime_is_planner_authority is False
+    assert lease.grants_execution_authority is False
+    assert lease.grants_retry_or_failover_authority is False
+
+
+def test_lease_identity_is_deterministic_and_ttl_is_explicit_runtime_policy():
+    request = PlacementRequest("task-g3-lease-deterministic")
+    value = snapshot(host_id="host-a")
+    first_decision, first_lease = PlacementEngine(
+        lease_ttl_seconds=45
+    ).place_with_lease(request, [value])
+    second_decision, second_lease = PlacementEngine(
+        lease_ttl_seconds=45
+    ).place_with_lease(request, [value])
+
+    assert first_decision == second_decision
+    assert first_lease == second_lease
+    assert first_lease.valid_until == "2026-10-01T00:01:45.000Z"
+
+    _, changed_ttl = PlacementEngine(
+        lease_ttl_seconds=60
+    ).place_with_lease(request, [value])
+    assert changed_ttl.lease_id != first_lease.lease_id
+    assert changed_ttl.valid_until == "2026-10-01T00:02:00.000Z"
+
+
+@pytest.mark.parametrize("ttl", [0, -1, True, 1.5])
+def test_invalid_lease_ttl_fails_before_placement(ttl):
+    with pytest.raises(ValueError, match="positive integer"):
+        PlacementEngine(lease_ttl_seconds=ttl)
+
+
+def test_preference_contract_rejects_implicit_or_ambiguous_policy():
+    with pytest.raises(ValueError, match="requires PREFERRED_HOST_ORDER"):
+        PlacementPreferences(preferred_host_ids=("host-a",))
+    with pytest.raises(ValueError, match="must be unique"):
+        PlacementPreferences(
+            criteria=(PREFER_MORE_AVAILABLE_MEMORY, PREFER_MORE_AVAILABLE_MEMORY)
+        )
+    with pytest.raises(ValueError, match="unsupported"):
+        PlacementPreferences(criteria=("INVENTED_PREFERENCE",))
+
+
+def test_g3_placement_contracts_are_public_runtime_exports():
+    import nexus_runtime
+
+    assert nexus_runtime.PlacementPreferences is PlacementPreferences
+    assert nexus_runtime.HOST_PLACEMENT_LEASE_SCHEMA == HOST_PLACEMENT_LEASE_SCHEMA
+    assert nexus_runtime.HostPlacementLease.__name__ == "HostPlacementLease"
+    assert nexus_runtime.PREFER_HOST_ORDER == PREFER_HOST_ORDER
+    assert (
+        nexus_runtime.PREFER_MORE_AVAILABLE_MEMORY
+        == PREFER_MORE_AVAILABLE_MEMORY
+    )
+    assert (
+        nexus_runtime.PREFER_LOWER_NORMALIZED_LOAD
+        == PREFER_LOWER_NORMALIZED_LOAD
+    )
 
 
 def test_malformed_devspace_snapshot_fails_closed():
