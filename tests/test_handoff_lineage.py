@@ -959,3 +959,155 @@ def test_bind_rejects_preexisting_cyclic_ancestry(tmp_path: Path):
             current_identity=ident,
             verified_fence_refs=("fence:C",),
         )
+
+
+def test_missing_lineage_hash_is_rejected():
+    ident = _identity()
+    handoff = HandoffLineage(
+        task_id="task-hash-required",
+        predecessor_attempt_id="attempt-A",
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id="op-A",
+        predecessor_checkpoint_hash="hash-A",
+        predecessor_checkpoint_revision=1,
+        handoff_reason="RETRY",
+        source_identity=ident,
+        terminal_state=STATUS_RUNNING,
+        fence_evidence_ref="fence:external",
+    )
+    payload = handoff.to_dict()
+    payload.pop("lineage_hash")
+    with pytest.raises(HandoffLineageError, match="lineage_hash is required"):
+        HandoffLineage.from_dict(payload)
+
+
+def test_readback_missing_successor_checkpoint_is_reconcile(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    cp = _seed_checkpoint(
+        store,
+        task_id="task-missing-successor",
+        attempt_id="attempt-A",
+        operation_id="op-A",
+        identity=ident,
+    )
+    handoff = HandoffLineage(
+        task_id=cp.task_id,
+        predecessor_attempt_id=cp.attempt_id,
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id=cp.operation_id,
+        predecessor_checkpoint_hash=cp.checkpoint_hash,
+        predecessor_checkpoint_revision=cp.revision,
+        handoff_reason="RETRY",
+        source_identity=ident,
+        terminal_state=cp.status,
+        fence_evidence_ref="fence:external",
+        successor_binding={"operation_id": "op-B"},
+    )
+    store.write_handoff(handoff)
+
+    result = readback_handoff_lineage(
+        cp.task_id,
+        "attempt-B",
+        store=store,
+        current_identity=ident,
+        verified_fence_refs=("fence:external",),
+    )
+    assert result["evaluation"]["disposition"] == DISPOSITION_RECONCILE
+    assert result["evaluation"]["reason"] == "MISSING_SUCCESSOR_CHECKPOINT"
+
+
+def test_readback_substituted_successor_is_reconcile(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    effect = CompletedEffect(effect_key="write_patch", receipt_ref="receipt-1", effect_hash="hash-1")
+    cp = _seed_checkpoint(
+        store,
+        task_id="task-substituted-successor",
+        attempt_id="attempt-A",
+        operation_id="op-A",
+        identity=ident,
+        completed_effects=(effect,),
+    )
+    handoff = HandoffLineage(
+        task_id=cp.task_id,
+        predecessor_attempt_id=cp.attempt_id,
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id=cp.operation_id,
+        predecessor_checkpoint_hash=cp.checkpoint_hash,
+        predecessor_checkpoint_revision=cp.revision,
+        handoff_reason="RETRY",
+        source_identity=ident,
+        terminal_state=cp.status,
+        fence_evidence_ref="fence:external",
+        successor_binding={"operation_id": "op-B"},
+    )
+    store.write_handoff(handoff)
+    store.write(
+        WorkflowCheckpoint(
+            task_id=cp.task_id,
+            operation_id="op-forged",
+            attempt_id="attempt-B",
+            identity=ident,
+            status=STATUS_RUNNING,
+            phase="EXECUTION",
+            next_gate=handoff.next_gate,
+            completed_effects=(),
+        )
+    )
+
+    result = readback_handoff_lineage(
+        cp.task_id,
+        "attempt-B",
+        store=store,
+        current_identity=ident,
+        verified_fence_refs=("fence:external",),
+    )
+    assert result["evaluation"]["disposition"] == DISPOSITION_RECONCILE
+    assert result["evaluation"]["reason"] == "SUCCESSOR_OPERATION_ID_MISMATCH"
+
+
+def test_predecessor_reconciliation_state_cannot_be_cleared_by_handoff(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    cp = store.write(
+        WorkflowCheckpoint(
+            task_id="task-reconcile-predecessor",
+            operation_id="op-A",
+            attempt_id="attempt-A",
+            identity=ident,
+            status="RECONCILE",
+            phase="OUTCOME_UNKNOWN",
+            next_gate="RECONCILE_EXTERNAL_EFFECT",
+            blocked_reason="OUTCOME_UNKNOWN:provider-write",
+        )
+    )
+    handoff = HandoffLineage(
+        task_id=cp.task_id,
+        predecessor_attempt_id=cp.attempt_id,
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id=cp.operation_id,
+        predecessor_checkpoint_hash=cp.checkpoint_hash,
+        predecessor_checkpoint_revision=cp.revision,
+        handoff_reason="RETRY",
+        source_identity=ident,
+        terminal_state=cp.status,
+        fence_evidence_ref="fence:external",
+        successor_binding={"operation_id": "op-B"},
+    )
+
+    result = evaluate_handoff_lineage(
+        handoff,
+        current_identity=ident,
+        predecessor_checkpoint=cp,
+        verified_fence_refs=("fence:external",),
+    )
+    assert result["disposition"] == DISPOSITION_RECONCILE
+    assert result["reason"] == "PREDECESSOR_RECONCILIATION_REQUIRED"
+
+    with pytest.raises(HandoffLineageError, match="PREDECESSOR_RECONCILIATION_REQUIRED"):
+        store.bind_successor_checkpoint(
+            handoff,
+            current_identity=ident,
+            verified_fence_refs=("fence:external",),
+        )

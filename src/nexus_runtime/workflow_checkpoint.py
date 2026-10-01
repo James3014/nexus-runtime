@@ -802,6 +802,55 @@ def readback_handoff_lineage(
             predecessor_checkpoint=pred_cp,
             verified_fence_refs=verified_fence_refs,
         )
+        if eval_result["disposition"] == DISPOSITION_SAFE:
+            if checkpoint is None:
+                eval_result = {
+                    **eval_result,
+                    "disposition": DISPOSITION_RECONCILE,
+                    "reason": "MISSING_SUCCESSOR_CHECKPOINT",
+                }
+            elif (
+                checkpoint.task_id != immediate.task_id
+                or checkpoint.attempt_id != immediate.successor_attempt_id
+            ):
+                eval_result = {
+                    **eval_result,
+                    "disposition": DISPOSITION_RECONCILE,
+                    "reason": "SUCCESSOR_IDENTITY_MISMATCH",
+                }
+            else:
+                expected_operation_id = str(
+                    immediate.successor_binding.get("operation_id")
+                    or f"op_{immediate.successor_attempt_id}"
+                )
+                if checkpoint.operation_id != expected_operation_id:
+                    eval_result = {
+                        **eval_result,
+                        "disposition": DISPOSITION_RECONCILE,
+                        "reason": "SUCCESSOR_OPERATION_ID_MISMATCH",
+                    }
+                elif checkpoint.identity != current_identity:
+                    eval_result = {
+                        **eval_result,
+                        "disposition": DISPOSITION_RECONCILE,
+                        "reason": "SUCCESSOR_SOURCE_IDENTITY_MISMATCH",
+                    }
+                elif pred_cp is not None:
+                    successor_effects = {
+                        effect.effect_key: effect for effect in checkpoint.completed_effects
+                    }
+                    missing_or_changed = [
+                        effect.effect_key
+                        for effect in pred_cp.completed_effects
+                        if successor_effects.get(effect.effect_key) != effect
+                    ]
+                    if missing_or_changed:
+                        eval_result = {
+                            **eval_result,
+                            "disposition": DISPOSITION_RECONCILE,
+                            "reason": "SUCCESSOR_EFFECT_LINEAGE_MISMATCH",
+                            "effect_keys": missing_or_changed,
+                        }
 
     return {
         "schema": HANDOFF_LINEAGE_SCHEMA,

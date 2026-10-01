@@ -299,10 +299,17 @@
     },
     {
       "path": "nexus_runtime/workflow_checkpoint.py",
-      "sha256": "d7dda69e29f96dc2db0c6c6f55e04e94ad76ed9aae1fec717117c5b2d4e6d763",
+      "sha256": "110633ae0b9fef61064e55d7cc8d9b7ec7b9f3d8e5326116eeb50cc54749ffc2",
       "canonical_owner": "runtime workflow checkpoint",
-      "donor": "repository-local Issue #41 source fcd7028",
-      "lineage_status": "known"
+      "donor": "repository-local Issue #41 source fcd7028 plus Issue #45 handoff-lineage integration",
+      "lineage_status": "integrated_pending_acceptance"
+    },
+    {
+      "path": "nexus_runtime/handoff_lineage.py",
+      "sha256": "15a5196246b0d8f0cc28a520b59e99c7ecfc6c4186e8736157664745c5d5a480",
+      "canonical_owner": "runtime attempt handoff lineage",
+      "donor": "repository-local Issue #45 durable predecessor-successor handoff lineage",
+      "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/planner_binding.py",

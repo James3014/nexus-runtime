@@ -23,6 +23,7 @@ from .workflow_checkpoint import (
     DISPOSITION_RECONCILE,
     DISPOSITION_SAFE,
     IdentityBinding,
+    STATUS_RECONCILE,
     WorkflowCheckpoint,
     _sha256,
     _text,
@@ -201,6 +202,8 @@ class HandoffLineage:
             raise HandoffLineageError("source_identity must be an object")
 
         stored_hash = data.get("lineage_hash")
+        if not isinstance(stored_hash, str) or not stored_hash.strip():
+            raise HandoffLineageError("lineage_hash is required for durable handoff records")
         candidate = cls(
             task_id=_text(data.get("task_id"), "task_id"),
             predecessor_attempt_id=_text(data.get("predecessor_attempt_id"), "predecessor_attempt_id"),
@@ -277,7 +280,22 @@ def evaluate_handoff_lineage(
             "lineage_hash": handoff.lineage_hash,
         }
 
-    # Check 2: unknown effects must fail closed
+    # Check 2: canonical predecessor reconciliation state must survive handoff.
+    if predecessor_checkpoint is not None and (
+        predecessor_checkpoint.status == STATUS_RECONCILE
+        or bool(predecessor_checkpoint.blocked_reason)
+    ):
+        return {
+            "disposition": DISPOSITION_RECONCILE,
+            "reason": "PREDECESSOR_RECONCILIATION_REQUIRED",
+            "stale_fields": [],
+            "blocked_reason": predecessor_checkpoint.blocked_reason,
+            "next_gate": handoff.next_gate,
+            "replay_completed_effects": False,
+            "lineage_hash": handoff.lineage_hash,
+        }
+
+    # Check 3: unknown effects must fail closed
     if handoff.unknown_effect_refs:
         return {
             "disposition": DISPOSITION_RECONCILE,
