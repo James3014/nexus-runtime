@@ -285,16 +285,16 @@
     },
     {
       "path": "nexus_runtime/__init__.py",
-      "sha256": "1bde34230140a283fa20bd9e10d3e47ef15caf242b591fc1b312f3c4adc9f9e8",
+      "sha256": "05223946e30a11fb1164c2c9c7a5790da652196a554baa96cfd1b4e6890fe1f3",
       "canonical_owner": "runtime context",
-      "donor": "runtime public composition; latest placement exports from Compute Fabric G3 Issue #38",
+      "donor": "runtime public composition; latest placement exports from Compute Fabric G4 Issue #38",
       "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/placement.py",
-      "sha256": "788ea6108c3bb863a1a949752c1ee929f382f2c6df36f1d6de0f17fc4e101e94",
+      "sha256": "3b0d08b6d5eb0f40b6d2880c77231de8fcb4bd6eaa4088c12f66a7716fa4430f",
       "canonical_owner": "runtime placement",
-      "donor": "repository-local Compute Fabric G3 multi-host implementation, Issue #38",
+      "donor": "repository-local Compute Fabric G4 lease-safety implementation, Issue #38",
       "lineage_status": "integrated_pending_acceptance"
     },
     {

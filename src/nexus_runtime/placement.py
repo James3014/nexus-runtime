@@ -24,7 +24,21 @@ DEVSPACE_HOST_CAPABILITY_SNAPSHOT_SCHEMA = "devspace.host_capability_snapshot.v1
 PLACEMENT_REQUEST_SCHEMA = "nexus.runtime.placement_request.v1"
 PLACEMENT_DECISION_SCHEMA = "nexus.runtime.placement_decision.v1"
 HOST_PLACEMENT_LEASE_SCHEMA = "nexus.runtime.host_placement_lease.v1"
+PLACEMENT_LEASE_REVALIDATION_SCHEMA = "nexus.runtime.placement_lease_revalidation.v1"
 SINGLE_HOST_PARITY_WITNESS = "NEXUS_COMPUTE_FABRIC_SINGLE_HOST_PARITY_PASS"
+
+PRIOR_OUTCOME_NONE = "NONE"
+PRIOR_OUTCOME_TERMINAL_SUCCESS = "TERMINAL_SUCCESS"
+PRIOR_OUTCOME_TERMINAL_FAILURE = "TERMINAL_FAILURE"
+PRIOR_OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
+_PRIOR_OPERATION_OUTCOMES = frozenset(
+    {
+        PRIOR_OUTCOME_NONE,
+        PRIOR_OUTCOME_TERMINAL_SUCCESS,
+        PRIOR_OUTCOME_TERMINAL_FAILURE,
+        PRIOR_OUTCOME_UNKNOWN,
+    }
+)
 
 PREFER_HOST_ORDER = "PREFERRED_HOST_ORDER"
 PREFER_MORE_AVAILABLE_MEMORY = "MORE_AVAILABLE_MEMORY"
@@ -55,6 +69,10 @@ class NoEligibleHost(PlacementError):
 
 class MultiHostPlacementNotEnabled(PlacementError):
     """Historical G2 compatibility error; G3 no longer raises this for 1..N inventory."""
+
+
+class InvalidPlacementLease(PlacementError):
+    """Raised when placement/lease identity is malformed or internally inconsistent."""
 
 
 @dataclass(frozen=True)
@@ -209,6 +227,47 @@ class HostPlacementLease:
             "snapshot_id": self.snapshot_id,
             "snapshot_observed_at": self.snapshot_observed_at,
             "valid_until": self.valid_until,
+            "runtime_is_planner_authority": self.runtime_is_planner_authority,
+            "grants_execution_authority": self.grants_execution_authority,
+            "grants_retry_or_failover_authority": self.grants_retry_or_failover_authority,
+        }
+
+
+@dataclass(frozen=True)
+class PlacementLeaseRevalidation:
+    """Read-only G4 verdict for one exact placement lease before any effect."""
+
+    status: str
+    reason_code: str
+    reason_details: tuple[str, ...]
+    lease_id: str
+    decision_id: str
+    request_id: str
+    requirements_sha256: str
+    host_id: str
+    snapshot_id: str
+    schema: str = PLACEMENT_LEASE_REVALIDATION_SCHEMA
+    runtime_is_planner_authority: bool = False
+    grants_execution_authority: bool = False
+    grants_retry_or_failover_authority: bool = False
+
+    @property
+    def placement_current(self) -> bool:
+        return self.status == "VALID"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "status": self.status,
+            "reason_code": self.reason_code,
+            "reason_details": list(self.reason_details),
+            "lease_id": self.lease_id,
+            "decision_id": self.decision_id,
+            "request_id": self.request_id,
+            "requirements_sha256": self.requirements_sha256,
+            "host_id": self.host_id,
+            "snapshot_id": self.snapshot_id,
+            "placement_current": self.placement_current,
             "runtime_is_planner_authority": self.runtime_is_planner_authority,
             "grants_execution_authority": self.grants_execution_authority,
             "grants_retry_or_failover_authority": self.grants_retry_or_failover_authority,
@@ -628,6 +687,208 @@ class PlacementEngine:
             snapshot_observed_at=selected.observed_at,
             valid_until=valid_until,
         )
+
+    def revalidate_lease(
+        self,
+        request: PlacementRequest,
+        decision: PlacementDecision,
+        lease: HostPlacementLease,
+        inventory: Sequence[Mapping[str, Any]],
+        *,
+        now: datetime,
+        prior_operation_outcome: str = PRIOR_OUTCOME_NONE,
+    ) -> PlacementLeaseRevalidation:
+        """Fail closed before effect when G3 placement assumptions are no longer current.
+
+        A ``VALID`` result means only that the placement assumptions represented by
+        the lease are still current. It never grants execution authority. Expiry or
+        host/snapshot drift requires a fresh placement. ``OUTCOME_UNKNOWN`` is
+        stronger: the same logical operation must be reconciled before either a
+        same-host retry or a replacement-host attempt can be considered.
+        """
+
+        self._validate_lease_identity(request, decision, lease)
+        if prior_operation_outcome not in _PRIOR_OPERATION_OUTCOMES:
+            raise ValueError("unsupported prior_operation_outcome")
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise ValueError("now must be an offset-aware datetime")
+
+        if prior_operation_outcome == PRIOR_OUTCOME_UNKNOWN:
+            return self._revalidation(
+                lease,
+                status="RECONCILIATION_REQUIRED",
+                reason_code="PRIOR_OPERATION_OUTCOME_UNKNOWN",
+                reason_details=(
+                    "same_logical_operation_must_be_reconciled",
+                    "same_host_retry=forbidden",
+                    "replacement_host_replay=forbidden",
+                ),
+            )
+
+        valid_until = datetime.fromisoformat(lease.valid_until.replace("Z", "+00:00"))
+        if now >= valid_until:
+            return self._revalidation(
+                lease,
+                status="REPLACEMENT_REQUIRED",
+                reason_code="LEASE_EXPIRED",
+                reason_details=(
+                    f"valid_until={lease.valid_until}",
+                    f"prior_operation_outcome={prior_operation_outcome}",
+                    "next_action=fresh_placement",
+                ),
+            )
+
+        parsed_hosts = tuple(parse_devspace_host_snapshot(value) for value in inventory)
+        host_ids = [host.host_id for host in parsed_hosts]
+        if len(set(host_ids)) != len(host_ids):
+            raise InvalidHostSnapshot("host inventory contains duplicate hostId")
+        selected = next((host for host in parsed_hosts if host.host_id == lease.host_id), None)
+        if selected is None:
+            return self._revalidation(
+                lease,
+                status="REPLACEMENT_REQUIRED",
+                reason_code="SELECTED_HOST_UNAVAILABLE",
+                reason_details=(
+                    f"host_id={lease.host_id}",
+                    "state=missing_offline_or_drained",
+                    "next_action=fresh_placement",
+                ),
+            )
+
+        hard_failures = self._hard_constraint_failures(request.requirements, selected)
+        if hard_failures:
+            return self._revalidation(
+                lease,
+                status="REPLACEMENT_REQUIRED",
+                reason_code="HARD_CONSTRAINTS_CHANGED",
+                reason_details=(
+                    f"host_id={selected.host_id}",
+                    "failures=" + ",".join(hard_failures),
+                    "next_action=fresh_placement",
+                ),
+            )
+
+        if (
+            selected.snapshot_id != lease.snapshot_id
+            or selected.observed_at != lease.snapshot_observed_at
+        ):
+            return self._revalidation(
+                lease,
+                status="REPLACEMENT_REQUIRED",
+                reason_code="HOST_SNAPSHOT_CHANGED",
+                reason_details=(
+                    f"host_id={selected.host_id}",
+                    f"lease_snapshot_id={lease.snapshot_id}",
+                    f"current_snapshot_id={selected.snapshot_id}",
+                    f"lease_observed_at={lease.snapshot_observed_at}",
+                    f"current_observed_at={selected.observed_at}",
+                    "next_action=fresh_placement",
+                ),
+            )
+
+        return self._revalidation(
+            lease,
+            status="VALID",
+            reason_code="LEASE_REVALIDATED",
+            reason_details=(
+                f"host_id={selected.host_id}",
+                f"snapshot_id={selected.snapshot_id}",
+                f"prior_operation_outcome={prior_operation_outcome}",
+                "placement_current=true",
+                "execution_authority=not_granted",
+            ),
+        )
+
+    @staticmethod
+    def _revalidation(
+        lease: HostPlacementLease,
+        *,
+        status: str,
+        reason_code: str,
+        reason_details: tuple[str, ...],
+    ) -> PlacementLeaseRevalidation:
+        return PlacementLeaseRevalidation(
+            status=status,
+            reason_code=reason_code,
+            reason_details=reason_details,
+            lease_id=lease.lease_id,
+            decision_id=lease.decision_id,
+            request_id=lease.request_id,
+            requirements_sha256=lease.requirements_sha256,
+            host_id=lease.host_id,
+            snapshot_id=lease.snapshot_id,
+        )
+
+    @staticmethod
+    def _validate_lease_identity(
+        request: PlacementRequest,
+        decision: PlacementDecision,
+        lease: HostPlacementLease,
+    ) -> None:
+        if lease.schema != HOST_PLACEMENT_LEASE_SCHEMA:
+            raise InvalidPlacementLease("unsupported HostPlacementLease schema")
+        if decision.schema != PLACEMENT_DECISION_SCHEMA:
+            raise InvalidPlacementLease("unsupported PlacementDecision schema")
+        if (
+            lease.runtime_is_planner_authority
+            or lease.grants_execution_authority
+            or lease.grants_retry_or_failover_authority
+            or decision.runtime_is_planner_authority
+        ):
+            raise InvalidPlacementLease("placement authority flags must remain false")
+        if decision.request_id != request.request_id or lease.request_id != request.request_id:
+            raise InvalidPlacementLease("LEASE_REQUEST_MISMATCH")
+        if (
+            decision.requirements_sha256 != request.requirements_sha256
+            or lease.requirements_sha256 != request.requirements_sha256
+        ):
+            raise InvalidPlacementLease("LEASE_REQUIREMENTS_MISMATCH")
+        if lease.decision_id != decision.decision_id:
+            raise InvalidPlacementLease("LEASE_DECISION_MISMATCH")
+        if lease.host_id != decision.host_id or lease.snapshot_id != decision.snapshot_id:
+            raise InvalidPlacementLease("LEASE_SELECTION_MISMATCH")
+
+        expected_decision_id = _sha256(
+            {
+                "request_id": decision.request_id,
+                "requirements_sha256": decision.requirements_sha256,
+                "host_id": decision.host_id,
+                "snapshot_id": decision.snapshot_id,
+                "reason_code": decision.reason_code,
+                "reason_details": list(decision.reason_details),
+                "runtime_is_planner_authority": False,
+            }
+        )
+        if decision.decision_id != expected_decision_id:
+            raise InvalidPlacementLease("PLACEMENT_DECISION_ID_MISMATCH")
+
+        expected_lease_id = _sha256(
+            {
+                "decision_id": lease.decision_id,
+                "request_id": lease.request_id,
+                "requirements_sha256": lease.requirements_sha256,
+                "host_id": lease.host_id,
+                "snapshot_id": lease.snapshot_id,
+                "snapshot_observed_at": lease.snapshot_observed_at,
+                "valid_until": lease.valid_until,
+                "runtime_is_planner_authority": False,
+                "grants_execution_authority": False,
+                "grants_retry_or_failover_authority": False,
+            }
+        )
+        if lease.lease_id != expected_lease_id:
+            raise InvalidPlacementLease("HOST_PLACEMENT_LEASE_ID_MISMATCH")
+        try:
+            observed_at = datetime.fromisoformat(
+                lease.snapshot_observed_at.replace("Z", "+00:00")
+            )
+            valid_until = datetime.fromisoformat(lease.valid_until.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise InvalidPlacementLease("lease freshness timestamps are invalid") from exc
+        if observed_at.tzinfo is None or valid_until.tzinfo is None:
+            raise InvalidPlacementLease("lease freshness timestamps must be offset-aware")
+        if valid_until <= observed_at:
+            raise InvalidPlacementLease("lease validity window is invalid")
 
     @staticmethod
     def _preference_score(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
+from datetime import datetime
 import hashlib
 import json
 
@@ -9,11 +11,15 @@ import pytest
 from nexus_runtime.placement import (
     DEVSPACE_HOST_CAPABILITY_SNAPSHOT_SCHEMA,
     HOST_PLACEMENT_LEASE_SCHEMA,
+    PLACEMENT_LEASE_REVALIDATION_SCHEMA,
+    PRIOR_OUTCOME_TERMINAL_FAILURE,
+    PRIOR_OUTCOME_UNKNOWN,
     PREFER_HOST_ORDER,
     PREFER_LOWER_NORMALIZED_LOAD,
     PREFER_MORE_AVAILABLE_MEMORY,
     SINGLE_HOST_PARITY_WITNESS,
     InvalidHostSnapshot,
+    InvalidPlacementLease,
     NoEligibleHost,
     PlacementEngine,
     PlacementPreferences,
@@ -421,6 +427,217 @@ def test_lease_identity_is_deterministic_and_ttl_is_explicit_runtime_policy():
 def test_invalid_lease_ttl_fails_before_placement(ttl):
     with pytest.raises(ValueError, match="positive integer"):
         PlacementEngine(lease_ttl_seconds=ttl)
+
+
+def test_g4_exact_unexpired_lease_revalidates_without_minting_authority():
+    request = PlacementRequest("task-g4-valid")
+    value = snapshot(host_id="host-a")
+    decision, lease = PlacementEngine().place_with_lease(request, [value])
+
+    result = PlacementEngine().revalidate_lease(
+        request,
+        decision,
+        lease,
+        [value],
+        now=datetime.fromisoformat("2026-10-01T00:01:10+00:00"),
+    )
+
+    assert result.schema == PLACEMENT_LEASE_REVALIDATION_SCHEMA
+    assert result.status == "VALID"
+    assert result.reason_code == "LEASE_REVALIDATED"
+    assert result.placement_current is True
+    assert result.runtime_is_planner_authority is False
+    assert result.grants_execution_authority is False
+    assert result.grants_retry_or_failover_authority is False
+
+
+def test_g4_lease_expiry_boundary_requires_fresh_placement():
+    request = PlacementRequest("task-g4-expiry")
+    value = snapshot(host_id="host-a")
+    decision, lease = PlacementEngine().place_with_lease(request, [value])
+
+    result = PlacementEngine().revalidate_lease(
+        request,
+        decision,
+        lease,
+        [value],
+        now=datetime.fromisoformat(lease.valid_until.replace("Z", "+00:00")),
+    )
+
+    assert result.status == "REPLACEMENT_REQUIRED"
+    assert result.reason_code == "LEASE_EXPIRED"
+    assert "next_action=fresh_placement" in result.reason_details
+    assert result.grants_execution_authority is False
+
+
+@pytest.mark.parametrize(
+    "mutated",
+    [
+        "request",
+        "requirements",
+        "decision",
+        "selection",
+        "lease_id",
+    ],
+)
+def test_g4_tampered_lease_or_binding_fails_closed(mutated):
+    request = PlacementRequest("task-g4-tamper")
+    value = snapshot(host_id="host-a")
+    decision, lease = PlacementEngine().place_with_lease(request, [value])
+
+    if mutated == "request":
+        other_request = PlacementRequest("task-g4-other")
+        with pytest.raises(InvalidPlacementLease, match="LEASE_REQUEST_MISMATCH"):
+            PlacementEngine().revalidate_lease(
+                other_request,
+                decision,
+                lease,
+                [value],
+                now=datetime.fromisoformat("2026-10-01T00:01:10+00:00"),
+            )
+        return
+    if mutated == "requirements":
+        other_request = PlacementRequest(
+            request.request_id,
+            PlacementRequirements(min_total_memory_bytes=1),
+        )
+        with pytest.raises(InvalidPlacementLease, match="LEASE_REQUIREMENTS_MISMATCH"):
+            PlacementEngine().revalidate_lease(
+                other_request,
+                decision,
+                lease,
+                [value],
+                now=datetime.fromisoformat("2026-10-01T00:01:10+00:00"),
+            )
+        return
+    if mutated == "decision":
+        changed = replace(lease, decision_id="f" * 64)
+        expected = "LEASE_DECISION_MISMATCH"
+    elif mutated == "selection":
+        changed = replace(lease, host_id="host-b")
+        expected = "LEASE_SELECTION_MISMATCH"
+    else:
+        changed = replace(lease, lease_id="f" * 64)
+        expected = "HOST_PLACEMENT_LEASE_ID_MISMATCH"
+
+    with pytest.raises(InvalidPlacementLease, match=expected):
+        PlacementEngine().revalidate_lease(
+            request,
+            decision,
+            changed,
+            [value],
+            now=datetime.fromisoformat("2026-10-01T00:01:10+00:00"),
+        )
+
+
+def test_g4_selected_host_missing_is_offline_or_drained_and_requires_replacement():
+    request = PlacementRequest("task-g4-host-missing")
+    selected = snapshot(host_id="host-a")
+    decision, lease = PlacementEngine().place_with_lease(
+        request,
+        [selected, snapshot(host_id="host-b")],
+    )
+
+    result = PlacementEngine().revalidate_lease(
+        request,
+        decision,
+        lease,
+        [snapshot(host_id="host-b")],
+        now=datetime.fromisoformat("2026-10-01T00:01:10+00:00"),
+    )
+
+    assert result.status == "REPLACEMENT_REQUIRED"
+    assert result.reason_code == "SELECTED_HOST_UNAVAILABLE"
+    assert "state=missing_offline_or_drained" in result.reason_details
+
+
+def test_g4_changed_load_snapshot_requires_replacement_before_effect():
+    request = PlacementRequest("task-g4-load-change")
+    original = snapshot(host_id="host-a")
+    decision, lease = PlacementEngine().place_with_lease(request, [original])
+    changed = copy.deepcopy(original)
+    changed["dynamic"]["availableMemoryBytes"] -= 1024
+    changed["dynamic"]["normalizedLoad1m"] = 0.5
+    changed["freshness"]["observedAt"] = "2026-10-01T00:01:05.000Z"
+    changed["freshness"]["telemetrySha256"] = _sha(changed["dynamic"])
+    changed["snapshotId"] = _sha(
+        {key: item for key, item in changed.items() if key != "snapshotId"}
+    )
+
+    result = PlacementEngine().revalidate_lease(
+        request,
+        decision,
+        lease,
+        [changed],
+        now=datetime.fromisoformat("2026-10-01T00:01:10+00:00"),
+    )
+
+    assert result.status == "REPLACEMENT_REQUIRED"
+    assert result.reason_code == "HOST_SNAPSHOT_CHANGED"
+    assert "next_action=fresh_placement" in result.reason_details
+
+
+def test_g4_hard_constraint_drift_requires_replacement():
+    request = PlacementRequest(
+        "task-g4-constraint-drift",
+        PlacementRequirements(min_total_memory_bytes=48 * 1024**3),
+    )
+    original = snapshot(host_id="host-a", total_memory_bytes=64 * 1024**3)
+    decision, lease = PlacementEngine().place_with_lease(request, [original])
+    changed = snapshot(host_id="host-a", total_memory_bytes=32 * 1024**3)
+
+    result = PlacementEngine().revalidate_lease(
+        request,
+        decision,
+        lease,
+        [changed],
+        now=datetime.fromisoformat("2026-10-01T00:01:10+00:00"),
+    )
+
+    assert result.status == "REPLACEMENT_REQUIRED"
+    assert result.reason_code == "HARD_CONSTRAINTS_CHANGED"
+    assert "failures=memory" in result.reason_details
+
+
+@pytest.mark.parametrize("inventory", [[], [snapshot(host_id="host-b")]])
+def test_g4_outcome_unknown_blocks_same_operation_replay_before_replacement(inventory):
+    request = PlacementRequest("task-g4-unknown")
+    original = snapshot(host_id="host-a")
+    decision, lease = PlacementEngine().place_with_lease(request, [original])
+
+    result = PlacementEngine().revalidate_lease(
+        request,
+        decision,
+        lease,
+        inventory,
+        now=datetime.fromisoformat("2026-10-01T00:01:10+00:00"),
+        prior_operation_outcome=PRIOR_OUTCOME_UNKNOWN,
+    )
+
+    assert result.status == "RECONCILIATION_REQUIRED"
+    assert result.reason_code == "PRIOR_OPERATION_OUTCOME_UNKNOWN"
+    assert "same_host_retry=forbidden" in result.reason_details
+    assert "replacement_host_replay=forbidden" in result.reason_details
+    assert result.grants_retry_or_failover_authority is False
+
+
+def test_g4_terminal_prior_outcome_allows_ordinary_revalidation_without_retry_authority():
+    request = PlacementRequest("task-g4-terminal")
+    value = snapshot(host_id="host-a")
+    decision, lease = PlacementEngine().place_with_lease(request, [value])
+
+    result = PlacementEngine().revalidate_lease(
+        request,
+        decision,
+        lease,
+        [value],
+        now=datetime.fromisoformat("2026-10-01T00:01:10+00:00"),
+        prior_operation_outcome=PRIOR_OUTCOME_TERMINAL_FAILURE,
+    )
+
+    assert result.status == "VALID"
+    assert "prior_operation_outcome=TERMINAL_FAILURE" in result.reason_details
+    assert result.grants_retry_or_failover_authority is False
 
 
 def test_preference_contract_rejects_implicit_or_ambiguous_policy():
