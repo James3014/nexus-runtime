@@ -299,7 +299,7 @@
     },
     {
       "path": "nexus_runtime/workflow_checkpoint.py",
-      "sha256": "110633ae0b9fef61064e55d7cc8d9b7ec7b9f3d8e5326116eeb50cc54749ffc2",
+      "sha256": "cf409fa2227ee41dd5d7673e6cd0f1045f800405a34f156d8a474f968fd060b3",
       "canonical_owner": "runtime workflow checkpoint",
       "donor": "repository-local Issue #41 source fcd7028 plus Issue #45 handoff-lineage integration",
       "lineage_status": "integrated_pending_acceptance"

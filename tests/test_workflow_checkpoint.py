@@ -252,10 +252,18 @@ def test_duplicate_effect_key_in_one_checkpoint_rejected():
 
 def test_checkpoint_is_sealed_by_hash_and_claim_ceiling():
     payload = _checkpoint().to_dict()
+
+    missing_hash = dict(payload)
+    missing_hash.pop("checkpoint_hash", None)
+    with pytest.raises(CheckpointError, match="checkpoint_hash is required"):
+        WorkflowCheckpoint.from_dict(missing_hash)
+
     tampered = dict(payload)
-    tampered["status"] = STATUS_COMPLETED
-    tampered.pop("checkpoint_hash", None)
-    assert tampered["status"] != payload["status"]
-    payload["claim_ceiling"] = "MERGE_AUTHORITY"
-    with pytest.raises(CheckpointError):
-        WorkflowCheckpoint.from_dict(payload)
+    tampered["phase"] = "TAMPERED"
+    with pytest.raises(CheckpointError, match="checkpoint_hash mismatch"):
+        WorkflowCheckpoint.from_dict(tampered)
+
+    wrong_ceiling = dict(payload)
+    wrong_ceiling["claim_ceiling"] = "MERGE_AUTHORITY"
+    with pytest.raises(CheckpointError, match="claim ceiling"):
+        WorkflowCheckpoint.from_dict(wrong_ceiling)

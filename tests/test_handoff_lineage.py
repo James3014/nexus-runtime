@@ -19,12 +19,17 @@ from nexus_runtime.handoff_lineage import (
 )
 from nexus_runtime.workflow_checkpoint import (
     CompletedEffect,
+    DISPOSITION_BLOCKED,
     DISPOSITION_RECONCILE,
     DISPOSITION_SAFE,
+    DISPOSITION_WAIT,
     IdentityBinding,
     STATUS_COMPLETED,
     STATUS_FAILED,
+    STATUS_RECONCILE,
     STATUS_RUNNING,
+    STATUS_WAITING_APPROVAL,
+    STATUS_WAITING_EXTERNAL,
     WorkflowCheckpoint,
     WorkflowCheckpointStore,
     readback_handoff_lineage,
@@ -1111,3 +1116,114 @@ def test_predecessor_reconciliation_state_cannot_be_cleared_by_handoff(tmp_path:
             current_identity=ident,
             verified_fence_refs=("fence:external",),
         )
+
+
+@pytest.mark.parametrize(
+    ("status", "blocked_reason", "expected_disposition"),
+    [
+        (STATUS_RECONCILE, "OUTCOME_UNKNOWN:provider-write", DISPOSITION_RECONCILE),
+        (STATUS_RUNNING, "OUTCOME_UNKNOWN:provider-write", DISPOSITION_RECONCILE),
+        (STATUS_WAITING_APPROVAL, "", DISPOSITION_WAIT),
+        (STATUS_WAITING_EXTERNAL, "", DISPOSITION_WAIT),
+        (STATUS_COMPLETED, "", DISPOSITION_BLOCKED),
+        (STATUS_FAILED, "", DISPOSITION_BLOCKED),
+    ],
+)
+def test_readback_never_reports_safe_when_successor_resume_is_not_safe(
+    tmp_path: Path,
+    status: str,
+    blocked_reason: str,
+    expected_disposition: str,
+):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    pred = _seed_checkpoint(
+        store,
+        task_id="task-successor-state",
+        attempt_id="attempt-A",
+        operation_id="op-A",
+    )
+    handoff = HandoffLineage(
+        task_id="task-successor-state",
+        predecessor_attempt_id="attempt-A",
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id=pred.operation_id,
+        predecessor_checkpoint_hash=pred.checkpoint_hash,
+        predecessor_checkpoint_revision=pred.revision,
+        handoff_reason="TAKEOVER",
+        source_identity=ident,
+        terminal_state=pred.status,
+        fence_evidence_ref="fence:external",
+    )
+    successor = store.bind_successor_checkpoint(
+        handoff,
+        current_identity=ident,
+        verified_fence_refs=("fence:external",),
+    )
+    successor = successor.advanced(
+        status=status,
+        blocked_reason=blocked_reason,
+    )
+    store.write(successor, expected_revision=1)
+    result = readback_handoff_lineage(
+        "task-successor-state",
+        "attempt-B",
+        store=store,
+        current_identity=ident,
+        verified_fence_refs=("fence:external",),
+    )
+    assert result["evaluation"]["disposition"] == expected_disposition
+    assert result["evaluation"]["disposition"] != DISPOSITION_SAFE
+
+
+def test_readback_rejects_partial_handoff_effect_metadata(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    effects = (
+        CompletedEffect(effect_key="publish", receipt_ref="receipt-publish"),
+        CompletedEffect(effect_key="write", receipt_ref="receipt-write"),
+    )
+    pred = _seed_checkpoint(
+        store,
+        task_id="task-partial-handoff",
+        attempt_id="attempt-A",
+        operation_id="op-A",
+        completed_effects=effects,
+    )
+    handoff = HandoffLineage(
+        task_id="task-partial-handoff",
+        predecessor_attempt_id="attempt-A",
+        successor_attempt_id="attempt-B",
+        predecessor_operation_id=pred.operation_id,
+        predecessor_checkpoint_hash=pred.checkpoint_hash,
+        predecessor_checkpoint_revision=pred.revision,
+        handoff_reason="TAKEOVER",
+        source_identity=ident,
+        terminal_state=pred.status,
+        fence_evidence_ref="fence:external",
+    )
+    store.bind_successor_checkpoint(
+        handoff,
+        current_identity=ident,
+        verified_fence_refs=("fence:external",),
+    )
+    partial = HandoffLineage(
+        **{
+            **handoff.__dict__,
+            "completed_effect_keys": ("write",),
+            "completed_effect_refs": ("receipt-write",),
+        }
+    )
+    store._atomic_write(
+        store._handoff_path("task-partial-handoff", "attempt-B"),
+        partial.to_dict(),
+    )
+    result = readback_handoff_lineage(
+        "task-partial-handoff",
+        "attempt-B",
+        store=store,
+        current_identity=ident,
+        verified_fence_refs=("fence:external",),
+    )
+    assert result["evaluation"]["disposition"] == DISPOSITION_RECONCILE
+    assert result["evaluation"]["reason"] == "HANDOFF_EFFECT_KEYS_MISMATCH"

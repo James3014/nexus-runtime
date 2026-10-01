@@ -241,7 +241,10 @@ class WorkflowCheckpoint:
         effects_raw = data.get("completed_effects") or ()
         if not isinstance(effects_raw, (list, tuple)):
             raise CheckpointError("completed_effects must be a list")
-        return cls(
+        stored_hash = data.get("checkpoint_hash")
+        if not isinstance(stored_hash, str) or not stored_hash.strip():
+            raise CheckpointError("checkpoint_hash is required for durable checkpoints")
+        checkpoint = cls(
             task_id=_text(data.get("task_id"), "task_id"),
             operation_id=_text(data.get("operation_id"), "operation_id"),
             attempt_id=_text(data.get("attempt_id"), "attempt_id"),
@@ -265,6 +268,9 @@ class WorkflowCheckpoint:
             schema=str(data.get("schema") or ""),
             claim_ceiling=str(data.get("claim_ceiling") or ""),
         )
+        if checkpoint.checkpoint_hash != stored_hash:
+            raise CheckpointError("checkpoint_hash mismatch: payload has been tampered")
+        return checkpoint
 
     @property
     def checkpoint_hash(self) -> str:
@@ -836,13 +842,16 @@ def readback_handoff_lineage(
                         "reason": "SUCCESSOR_SOURCE_IDENTITY_MISMATCH",
                     }
                 elif pred_cp is not None:
+                    predecessor_effects = {
+                        effect.effect_key: effect for effect in pred_cp.completed_effects
+                    }
                     successor_effects = {
                         effect.effect_key: effect for effect in checkpoint.completed_effects
                     }
                     missing_or_changed = [
-                        effect.effect_key
-                        for effect in pred_cp.completed_effects
-                        if successor_effects.get(effect.effect_key) != effect
+                        effect_key
+                        for effect_key, effect in predecessor_effects.items()
+                        if successor_effects.get(effect_key) != effect
                     ]
                     if missing_or_changed:
                         eval_result = {
@@ -851,6 +860,46 @@ def readback_handoff_lineage(
                             "reason": "SUCCESSOR_EFFECT_LINEAGE_MISMATCH",
                             "effect_keys": missing_or_changed,
                         }
+                    elif (
+                        immediate.completed_effect_keys
+                        and set(immediate.completed_effect_keys)
+                        != set(predecessor_effects)
+                    ):
+                        eval_result = {
+                            **eval_result,
+                            "disposition": DISPOSITION_RECONCILE,
+                            "reason": "HANDOFF_EFFECT_KEYS_MISMATCH",
+                        }
+                    elif (
+                        immediate.completed_effect_refs
+                        and set(immediate.completed_effect_refs)
+                        != {effect.receipt_ref for effect in predecessor_effects.values()}
+                    ):
+                        eval_result = {
+                            **eval_result,
+                            "disposition": DISPOSITION_RECONCILE,
+                            "reason": "HANDOFF_EFFECT_REFS_MISMATCH",
+                        }
+                    else:
+                        successor_resume = resume_disposition(
+                            checkpoint,
+                            current_identity=current_identity,
+                        )
+                        if checkpoint.blocked_reason and (
+                            successor_resume["disposition"] == DISPOSITION_SAFE
+                        ):
+                            successor_resume = {
+                                **successor_resume,
+                                "disposition": DISPOSITION_RECONCILE,
+                                "reason": checkpoint.blocked_reason,
+                            }
+                        if successor_resume["disposition"] != DISPOSITION_SAFE:
+                            eval_result = {
+                                **eval_result,
+                                "disposition": successor_resume["disposition"],
+                                "reason": f"SUCCESSOR_{successor_resume['reason']}",
+                                "successor_resume": successor_resume,
+                            }
 
     return {
         "schema": HANDOFF_LINEAGE_SCHEMA,
