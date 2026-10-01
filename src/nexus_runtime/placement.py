@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -125,6 +126,7 @@ class PlacementDecision:
 
 
 def _sha256(value: Any) -> str:
+    """Runtime-owned deterministic identity; not the DevSpace wire hash."""
     encoded = json.dumps(
         value,
         sort_keys=True,
@@ -132,6 +134,83 @@ def _sha256(value: Any) -> str:
         ensure_ascii=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _javascript_number(value: int | float) -> str:
+    """Serialize one finite Python number with JSON.stringify number spelling.
+
+    DevSpace owns snapshotId and telemetrySha256 and currently derives them
+    from JavaScript JSON.stringify over recursively key-sorted values.
+    Python's json module differs at exponent thresholds, exponent zero padding,
+    integral floats, and negative zero, so G2 must not reuse json.dumps for
+    those producer-owned hashes.
+    """
+
+    if isinstance(value, bool):
+        raise TypeError("bool is not a JSON number here")
+    if isinstance(value, int):
+        return str(value)
+    if not math.isfinite(value):
+        raise InvalidHostSnapshot("DevSpace snapshot numbers must be finite")
+    if value == 0:
+        return "0"
+
+    text = repr(value).lower()
+    if "e" not in text:
+        return text[:-2] if text.endswith(".0") else text
+
+    mantissa, exponent_text = text.split("e", 1)
+    exponent = int(exponent_text)
+    absolute = abs(value)
+
+    if 1e-6 <= absolute < 1e21:
+        sign = ""
+        if mantissa.startswith("-"):
+            sign, mantissa = "-", mantissa[1:]
+        integer_part, dot, fractional_part = mantissa.partition(".")
+        digits = integer_part + (fractional_part if dot else "")
+        decimal_position = len(integer_part) + exponent
+        if decimal_position <= 0:
+            return sign + "0." + ("0" * -decimal_position) + digits
+        if decimal_position >= len(digits):
+            return sign + digits + ("0" * (decimal_position - len(digits)))
+        return sign + digits[:decimal_position] + "." + digits[decimal_position:]
+
+    if mantissa.endswith(".0"):
+        mantissa = mantissa[:-2]
+    exponent_suffix = f"+{exponent}" if exponent >= 0 else str(exponent)
+    return f"{mantissa}e{exponent_suffix}"
+
+
+def _devspace_json_stringify(value: Any) -> str:
+    """Mirror the bounded JSON.stringify subset used by DevSpace G1."""
+
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, (int, float)):
+        return _javascript_number(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return "[" + ",".join(_devspace_json_stringify(item) for item in value) + "]"
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise InvalidHostSnapshot("DevSpace snapshot object keys must be strings")
+        return "{" + ",".join(
+            _devspace_json_stringify(key)
+            + ":"
+            + _devspace_json_stringify(value[key])
+            for key in sorted(value)
+        ) + "}"
+    raise InvalidHostSnapshot("DevSpace snapshot contains unsupported JSON value")
+
+
+def _devspace_sha256(value: Any) -> str:
+    return hashlib.sha256(_devspace_json_stringify(value).encode("utf-8")).hexdigest()
 
 
 def _mapping(value: Any, field: str) -> Mapping[str, Any]:
@@ -205,9 +284,12 @@ def parse_devspace_host_snapshot(value: Mapping[str, Any]) -> HostSnapshotView:
         if (
             not isinstance(metric, (int, float))
             or isinstance(metric, bool)
+            or not math.isfinite(metric)
             or metric < 0
         ):
-            raise InvalidHostSnapshot(f"dynamic.{field} must be a non-negative number")
+            raise InvalidHostSnapshot(
+                f"dynamic.{field} must be a finite non-negative number"
+            )
     connectivity = _string(dynamic.get("connectivityState"), "dynamic.connectivityState")
     if connectivity != "LOCAL_OBSERVED":
         raise InvalidHostSnapshot("dynamic.connectivityState must equal LOCAL_OBSERVED")
@@ -239,7 +321,7 @@ def parse_devspace_host_snapshot(value: Mapping[str, Any]) -> HostSnapshotView:
     telemetry_sha = _sha(freshness.get("telemetrySha256"), "freshness.telemetrySha256")
     observed_at = _iso_timestamp(freshness.get("observedAt"), "freshness.observedAt")
 
-    if _sha256(dynamic) != telemetry_sha:
+    if _devspace_sha256(dynamic) != telemetry_sha:
         raise InvalidHostSnapshot("host capability telemetry digest mismatch")
     snapshot_core = {
         "schema": value["schema"],
@@ -248,7 +330,7 @@ def parse_devspace_host_snapshot(value: Mapping[str, Any]) -> HostSnapshotView:
         "verified": verified,
         "freshness": freshness,
     }
-    if _sha256(snapshot_core) != snapshot_id:
+    if _devspace_sha256(snapshot_core) != snapshot_id:
         raise InvalidHostSnapshot("host capability snapshotId mismatch")
 
     return HostSnapshotView(

@@ -237,3 +237,60 @@ def test_snapshot_identity_tampering_fails_closed_before_placement():
 
     with pytest.raises(InvalidHostSnapshot, match="snapshotId mismatch"):
         PlacementEngine().place(PlacementRequest("task-12/placement-1"), [value])
+
+
+def test_devspace_javascript_digest_vector_accepts_exponent_boundary():
+    value = {
+        "schema": DEVSPACE_HOST_CAPABILITY_SNAPSHOT_SCHEMA,
+        "snapshotId": "756d268cea96c499814d74550c98dd1e53a461eadff11a6644bbc1ca827bca12",
+        "static": {
+            "hostId": "host-local",
+            "platform": "darwin",
+            "architecture": "arm64",
+            "totalMemoryBytes": 68719476736,
+            "memoryClass": "64_127_GIB",
+            "logicalCpuCount": 12,
+        },
+        "dynamic": {
+            "availableMemoryBytes": 42949672960,
+            "loadAverage1m": 1e-7,
+            "normalizedLoad1m": 1e-7,
+            "connectivityState": "LOCAL_OBSERVED",
+        },
+        "verified": {
+            "devspace": {
+                "sourceCommit": "b" * 40,
+                "sourceDirty": False,
+                "buildId": "devspace-build",
+                "serverInstanceId": "server-ephemeral",
+                "startedAt": "2026-10-01T00:00:00.000Z",
+            },
+            "capabilityManifest": {
+                "schema": "devspace.capability_manifest.v1",
+                "capabilities": ["agent_start.tool"],
+                "missing": [],
+                "manifestSha256": "c" * 64,
+            },
+        },
+        "freshness": {
+            "observedAt": "2026-10-01T00:01:00.000Z",
+            # Generated independently with the accepted DevSpace Node canonicalizer.
+            "telemetrySha256": "a23de5e1a6805f1a0c496ef163ca1a57309bc82dc342c9aa46ba6b2026b246dc",
+        },
+    }
+
+    decision = PlacementEngine().place(
+        PlacementRequest("task-13/placement-1"),
+        [value],
+    )
+
+    assert decision.snapshot_id == value["snapshotId"]
+
+
+@pytest.mark.parametrize("metric", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_dynamic_metrics_fail_closed(metric):
+    value = snapshot()
+    value["dynamic"]["loadAverage1m"] = metric
+
+    with pytest.raises(InvalidHostSnapshot, match="finite non-negative"):
+        PlacementEngine().place(PlacementRequest("task-14/placement-1"), [value])
