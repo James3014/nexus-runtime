@@ -241,7 +241,10 @@ class WorkflowCheckpoint:
         effects_raw = data.get("completed_effects") or ()
         if not isinstance(effects_raw, (list, tuple)):
             raise CheckpointError("completed_effects must be a list")
-        return cls(
+        stored_hash = data.get("checkpoint_hash")
+        if not isinstance(stored_hash, str) or not stored_hash.strip():
+            raise CheckpointError("checkpoint_hash is required for durable checkpoints")
+        checkpoint = cls(
             task_id=_text(data.get("task_id"), "task_id"),
             operation_id=_text(data.get("operation_id"), "operation_id"),
             attempt_id=_text(data.get("attempt_id"), "attempt_id"),
@@ -265,6 +268,9 @@ class WorkflowCheckpoint:
             schema=str(data.get("schema") or ""),
             claim_ceiling=str(data.get("claim_ceiling") or ""),
         )
+        if checkpoint.checkpoint_hash != stored_hash:
+            raise CheckpointError("checkpoint_hash mismatch: payload has been tampered")
+        return checkpoint
 
     @property
     def checkpoint_hash(self) -> str:
@@ -573,6 +579,171 @@ class WorkflowCheckpointStore:
             )
             return updated
 
+    def _handoffs_dir(self, task_id: str) -> Path:
+        return self.root / _safe_segment(task_id, "task_id") / "handoffs"
+
+    def _handoff_path(self, task_id: str, successor_attempt_id: str) -> Path:
+        return self._handoffs_dir(task_id) / f"{_safe_segment(successor_attempt_id, 'successor_attempt_id')}.json"
+
+    def write_handoff(self, handoff: Any) -> Any:
+        from .handoff_lineage import HandoffLineage, HandoffLineageError
+
+        if type(handoff) is not HandoffLineage:
+            raise HandoffLineageError("handoff must be a HandoffLineage")
+        with self._locked(handoff.task_id, f"handoff_{handoff.successor_attempt_id}"):
+            path = self._handoff_path(handoff.task_id, handoff.successor_attempt_id)
+            if path.exists():
+                existing = HandoffLineage.from_dict(json.loads(path.read_text(encoding="utf-8")))
+                if existing.lineage_hash == handoff.lineage_hash:
+                    return existing
+                raise CheckpointConflict(
+                    f"handoff for successor {handoff.successor_attempt_id} already exists with different payload"
+                )
+            self._atomic_write(path, handoff.to_dict())
+            return handoff
+
+    def read_handoff(self, task_id: str, successor_attempt_id: str) -> Any | None:
+        from .handoff_lineage import HandoffLineage
+
+        path = self._handoff_path(task_id, successor_attempt_id)
+        if not path.exists():
+            return None
+        return HandoffLineage.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
+    def list_handoffs(self, task_id: str) -> list[Any]:
+        from .handoff_lineage import HandoffLineage
+
+        directory = self._handoffs_dir(task_id)
+        if not directory.is_dir():
+            return []
+        records = []
+        for path in sorted(directory.glob("*.json")):
+            records.append(HandoffLineage.from_dict(json.loads(path.read_text(encoding="utf-8"))))
+        return records
+
+    def reconstruct_lineage_chain(self, task_id: str, attempt_id: str) -> list[Any]:
+        """Reconstruct the entire chain of handoffs leading up to attempt_id.
+
+        Fails closed on self-cycles, A->B->A cycles, or malformed cyclic loops.
+        """
+        from .handoff_lineage import HandoffLineageError
+
+        chain = []
+        current = attempt_id
+        visited = set()
+        while True:
+            if current in visited:
+                raise HandoffLineageError(f"detected cyclic handoff lineage: attempt {current!r} creates cycle")
+            visited.add(current)
+            h = self.read_handoff(task_id, current)
+            if h is None:
+                break
+            if h.task_id != task_id:
+                raise HandoffLineageError(
+                    f"malformed handoff lineage: expected task {task_id!r}, found {h.task_id!r}"
+                )
+            if h.successor_attempt_id != current:
+                raise HandoffLineageError(
+                    f"malformed handoff lineage: expected successor {current!r}, found {h.successor_attempt_id!r}"
+                )
+            if h.predecessor_attempt_id == h.successor_attempt_id:
+                raise HandoffLineageError(f"detected self-cycle handoff lineage for attempt {current!r}")
+            chain.append(h)
+            current = h.predecessor_attempt_id
+        return list(reversed(chain))
+
+    def bind_successor_checkpoint(
+        self,
+        handoff: Any,
+        *,
+        current_identity: IdentityBinding,
+        verified_fence_refs: Any = None,
+        initial_status: str = STATUS_RUNNING,
+        phase: str = "",
+    ) -> WorkflowCheckpoint:
+        from .handoff_lineage import HandoffLineageError, evaluate_handoff_lineage
+
+        predecessor_cp = self.read(handoff.task_id, handoff.predecessor_attempt_id)
+        if predecessor_cp is None:
+            raise HandoffLineageError(
+                f"cannot bind successor checkpoint: canonical predecessor checkpoint for attempt {handoff.predecessor_attempt_id!r} is missing"
+            )
+
+        # Existing ancestry must already be well-formed, and the successor may
+        # not point back into that ancestry. This prevents binding a new edge on
+        # top of a latent A->B->A cycle that would only be discovered later.
+        ancestry = self.reconstruct_lineage_chain(
+            handoff.task_id,
+            handoff.predecessor_attempt_id,
+        )
+        ancestry_attempts = {handoff.predecessor_attempt_id}
+        for edge in ancestry:
+            ancestry_attempts.add(edge.predecessor_attempt_id)
+            ancestry_attempts.add(edge.successor_attempt_id)
+        if handoff.successor_attempt_id in ancestry_attempts:
+            raise HandoffLineageError(
+                f"cannot bind successor checkpoint: successor {handoff.successor_attempt_id!r} creates a lineage cycle"
+            )
+
+        eval_result = evaluate_handoff_lineage(
+            handoff,
+            current_identity=current_identity,
+            predecessor_checkpoint=predecessor_cp,
+            verified_fence_refs=verified_fence_refs,
+        )
+        if eval_result["disposition"] != DISPOSITION_SAFE:
+            raise HandoffLineageError(
+                f"cannot bind successor checkpoint: disposition is {eval_result['disposition']} ({eval_result['reason']})"
+            )
+
+        # All canonical predecessor effects must carry forward so omission from
+        # handoff metadata can never make a completed side effect replayable.
+        predecessor_effects = tuple(predecessor_cp.completed_effects)
+        predecessor_keys = tuple(effect.effect_key for effect in predecessor_effects)
+        predecessor_refs = tuple(effect.receipt_ref for effect in predecessor_effects)
+
+        if handoff.completed_effect_keys:
+            if set(handoff.completed_effect_keys) != set(predecessor_keys):
+                raise HandoffLineageError(
+                    "completed_effect_keys must exactly match canonical predecessor completed effects"
+                )
+        if handoff.completed_effect_refs:
+            if set(handoff.completed_effect_refs) != set(predecessor_refs):
+                raise HandoffLineageError(
+                    "completed_effect_refs must exactly match canonical predecessor effect receipts"
+                )
+
+        inherited_effects = [
+            CompletedEffect(
+                effect_key=effect.effect_key,
+                receipt_ref=effect.receipt_ref,
+                effect_hash=effect.effect_hash,
+            )
+            for effect in predecessor_effects
+        ]
+
+        op_id = str(handoff.successor_binding.get("operation_id") or f"op_{handoff.successor_attempt_id}")
+        successor = WorkflowCheckpoint(
+            task_id=handoff.task_id,
+            operation_id=op_id,
+            attempt_id=handoff.successor_attempt_id,
+            identity=current_identity,
+            revision=1,
+            status=initial_status,
+            phase=phase,
+            next_gate=handoff.next_gate,
+            leases=(),
+            evidence_refs=handoff.inherited_evidence_refs,
+            completed_effects=tuple(inherited_effects),
+            pending_steps=(),
+            retry_history=(
+                f"handoff:{handoff.predecessor_attempt_id}->{handoff.successor_attempt_id}:{handoff.handoff_reason}",
+            ),
+        )
+        self.write_handoff(handoff)
+        self.write(successor)
+        return successor
+
 
 def readback(task_id: str, attempt_id: str, *, store: WorkflowCheckpointStore) -> dict[str, Any]:
     """Deterministic read API so a different session can pick up the workflow."""
@@ -609,6 +780,142 @@ def readback(task_id: str, attempt_id: str, *, store: WorkflowCheckpointStore) -
     }
 
 
+def readback_handoff_lineage(
+    task_id: str,
+    attempt_id: str,
+    *,
+    store: WorkflowCheckpointStore,
+    current_identity: IdentityBinding | None = None,
+    verified_fence_refs: Any = None,
+) -> dict[str, Any]:
+    """Deterministic readback for handoff lineage leading to attempt_id."""
+    from .handoff_lineage import (
+        HANDOFF_LINEAGE_CLAIM_CEILING,
+        HANDOFF_LINEAGE_SCHEMA,
+        evaluate_handoff_lineage,
+    )
+
+    chain = store.reconstruct_lineage_chain(task_id, attempt_id)
+    immediate = store.read_handoff(task_id, attempt_id)
+    checkpoint = store.read(task_id, attempt_id)
+
+    eval_result = None
+    if immediate is not None and current_identity is not None:
+        pred_cp = store.read(task_id, immediate.predecessor_attempt_id)
+        eval_result = evaluate_handoff_lineage(
+            immediate,
+            current_identity=current_identity,
+            predecessor_checkpoint=pred_cp,
+            verified_fence_refs=verified_fence_refs,
+        )
+        if eval_result["disposition"] == DISPOSITION_SAFE:
+            if checkpoint is None:
+                eval_result = {
+                    **eval_result,
+                    "disposition": DISPOSITION_RECONCILE,
+                    "reason": "MISSING_SUCCESSOR_CHECKPOINT",
+                }
+            elif (
+                checkpoint.task_id != immediate.task_id
+                or checkpoint.attempt_id != immediate.successor_attempt_id
+            ):
+                eval_result = {
+                    **eval_result,
+                    "disposition": DISPOSITION_RECONCILE,
+                    "reason": "SUCCESSOR_IDENTITY_MISMATCH",
+                }
+            else:
+                expected_operation_id = str(
+                    immediate.successor_binding.get("operation_id")
+                    or f"op_{immediate.successor_attempt_id}"
+                )
+                if checkpoint.operation_id != expected_operation_id:
+                    eval_result = {
+                        **eval_result,
+                        "disposition": DISPOSITION_RECONCILE,
+                        "reason": "SUCCESSOR_OPERATION_ID_MISMATCH",
+                    }
+                elif checkpoint.identity != current_identity:
+                    eval_result = {
+                        **eval_result,
+                        "disposition": DISPOSITION_RECONCILE,
+                        "reason": "SUCCESSOR_SOURCE_IDENTITY_MISMATCH",
+                    }
+                elif pred_cp is not None:
+                    predecessor_effects = {
+                        effect.effect_key: effect for effect in pred_cp.completed_effects
+                    }
+                    successor_effects = {
+                        effect.effect_key: effect for effect in checkpoint.completed_effects
+                    }
+                    missing_or_changed = [
+                        effect_key
+                        for effect_key, effect in predecessor_effects.items()
+                        if successor_effects.get(effect_key) != effect
+                    ]
+                    if missing_or_changed:
+                        eval_result = {
+                            **eval_result,
+                            "disposition": DISPOSITION_RECONCILE,
+                            "reason": "SUCCESSOR_EFFECT_LINEAGE_MISMATCH",
+                            "effect_keys": missing_or_changed,
+                        }
+                    elif (
+                        immediate.completed_effect_keys
+                        and set(immediate.completed_effect_keys)
+                        != set(predecessor_effects)
+                    ):
+                        eval_result = {
+                            **eval_result,
+                            "disposition": DISPOSITION_RECONCILE,
+                            "reason": "HANDOFF_EFFECT_KEYS_MISMATCH",
+                        }
+                    elif (
+                        immediate.completed_effect_refs
+                        and set(immediate.completed_effect_refs)
+                        != {effect.receipt_ref for effect in predecessor_effects.values()}
+                    ):
+                        eval_result = {
+                            **eval_result,
+                            "disposition": DISPOSITION_RECONCILE,
+                            "reason": "HANDOFF_EFFECT_REFS_MISMATCH",
+                        }
+                    else:
+                        successor_resume = resume_disposition(
+                            checkpoint,
+                            current_identity=current_identity,
+                        )
+                        if checkpoint.blocked_reason and (
+                            successor_resume["disposition"] == DISPOSITION_SAFE
+                        ):
+                            successor_resume = {
+                                **successor_resume,
+                                "disposition": DISPOSITION_RECONCILE,
+                                "reason": checkpoint.blocked_reason,
+                            }
+                        if successor_resume["disposition"] != DISPOSITION_SAFE:
+                            eval_result = {
+                                **eval_result,
+                                "disposition": successor_resume["disposition"],
+                                "reason": f"SUCCESSOR_{successor_resume['reason']}",
+                                "successor_resume": successor_resume,
+                            }
+
+    return {
+        "schema": HANDOFF_LINEAGE_SCHEMA,
+        "claim_ceiling": HANDOFF_LINEAGE_CLAIM_CEILING,
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "found": immediate is not None,
+        "chain_length": len(chain),
+        "chain": [h.to_dict() for h in chain],
+        "immediate_handoff": immediate.to_dict() if immediate is not None else None,
+        "evaluation": eval_result,
+        "completed_effect_keys": [e.effect_key for e in checkpoint.completed_effects] if checkpoint else [],
+        "next_gate": checkpoint.next_gate if checkpoint else (immediate.next_gate if immediate else ""),
+    }
+
+
 __all__ = [
     "CHECKPOINT_STATUSES",
     "DISPOSITION_BLOCKED",
@@ -632,5 +939,6 @@ __all__ = [
     "WorkflowCheckpoint",
     "WorkflowCheckpointStore",
     "readback",
+    "readback_handoff_lineage",
     "resume_disposition",
 ]
