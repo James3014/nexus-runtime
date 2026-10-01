@@ -159,14 +159,19 @@ def test_reconstruct_chain_after_process_restart(tmp_path: Path):
         source_identity=ident,
         terminal_state=cp_a.status,
         fence_evidence_ref="fence-receipt-A-fenced",
-        completed_effect_refs=("write_patch",),
-        inherited_evidence_refs=("evidence-G01-passed", "fence-receipt-A-fenced"),
+        completed_effect_refs=("rcpt-01",),
+        completed_effect_keys=("write_patch",),
+        inherited_evidence_refs=("evidence-G01-passed",),
         next_gate="G03_TESTS",
         transition_type=TRANSITION_LOCAL_TO_ONLINE,
     )
 
     # Successor B bound via store
-    cp_b = store.bind_successor_checkpoint(handoff_ab, current_identity=ident)
+    cp_b = store.bind_successor_checkpoint(
+        handoff_ab,
+        current_identity=ident,
+        verified_fence_refs=("fence-receipt-A-fenced",),
+    )
     assert cp_b.attempt_id == "attempt-B"
     assert cp_b.has_effect("write_patch")
     assert cp_b.next_gate == "G03_TESTS"
@@ -187,12 +192,17 @@ def test_reconstruct_chain_after_process_restart(tmp_path: Path):
         source_identity=ident,
         terminal_state=cp_b.status,
         fence_evidence_ref="fence-receipt-B-superseded",
-        completed_effect_refs=("write_patch", "run_tests"),
-        inherited_evidence_refs=("evidence-G01-passed", "evidence-G02-passed", "fence-receipt-B-superseded"),
+        completed_effect_refs=("rcpt-01", "rcpt-02"),
+        completed_effect_keys=("write_patch", "run_tests"),
+        inherited_evidence_refs=("evidence-G01-passed", "evidence-G02-passed"),
         next_gate="G04_MERGE_READY",
         transition_type=TRANSITION_RDC_TO_MAIN_GPT,
     )
-    cp_c = store.bind_successor_checkpoint(handoff_bc, current_identity=ident)
+    cp_c = store.bind_successor_checkpoint(
+        handoff_bc,
+        current_identity=ident,
+        verified_fence_refs=("fence-receipt-B-superseded",),
+    )
 
     # Simulate fresh session/process restart with new store pointing to same directory
     restarted_store = WorkflowCheckpointStore(tmp_path / "runtime_store")
@@ -211,6 +221,7 @@ def test_reconstruct_chain_after_process_restart(tmp_path: Path):
         "attempt-C",
         store=restarted_store,
         current_identity=ident,
+        verified_fence_refs=("fence-receipt-B-superseded",),
     )
     assert readback["found"] is True
     assert readback["chain_length"] == 2
@@ -243,12 +254,16 @@ def test_completed_effects_are_not_replayed_by_successor(tmp_path: Path):
         source_identity=ident,
         terminal_state=cp_a.status,
         fence_evidence_ref="fence-receipt-01",
-        completed_effect_refs=("deploy_canary",),
-        inherited_evidence_refs=("fence-receipt-01",),
+        completed_effect_refs=("receipt-canary-01",),
+        completed_effect_keys=("deploy_canary",),
         next_gate="G03",
         transition_type=TRANSITION_ONLINE_A_TO_ONLINE_B,
     )
-    cp_b = store.bind_successor_checkpoint(handoff, current_identity=ident)
+    cp_b = store.bind_successor_checkpoint(
+        handoff,
+        current_identity=ident,
+        verified_fence_refs=("fence-receipt-01",),
+    )
 
     # Successor B already has the inherited effect
     assert cp_b.has_effect("deploy_canary") is True
@@ -324,13 +339,22 @@ def test_negative_controls_stale_predecessor_checkpoint_fails_closed(tmp_path: P
         fence_evidence_ref="fence-ok",
         inherited_evidence_refs=("fence-ok",),
     )
-    res = evaluate_handoff_lineage(handoff_bad_hash, current_identity=ident, predecessor_checkpoint=cp_a)
+    res = evaluate_handoff_lineage(
+        handoff_bad_hash,
+        current_identity=ident,
+        predecessor_checkpoint=cp_a,
+        verified_fence_refs=("fence-ok",),
+    )
     assert res["disposition"] == DISPOSITION_RECONCILE
     assert res["reason"] == "STALE_PREDECESSOR_CHECKPOINT_HASH"
 
     # Attempting to bind successor with stale checkpoint raises HandoffLineageError
     with pytest.raises(HandoffLineageError, match="cannot bind successor checkpoint.*STALE_PREDECESSOR_CHECKPOINT_HASH"):
-        store.bind_successor_checkpoint(handoff_bad_hash, current_identity=ident)
+        store.bind_successor_checkpoint(
+            handoff_bad_hash,
+            current_identity=ident,
+            verified_fence_refs=("fence-ok",),
+        )
 
 
 def test_negative_controls_identity_drift_fails_closed():
@@ -393,7 +417,11 @@ def test_all_four_required_carrier_transitions(tmp_path: Path, transition: str):
         next_gate="G03_NEXT",
     )
 
-    successor = store.bind_successor_checkpoint(handoff, current_identity=ident)
+    successor = store.bind_successor_checkpoint(
+        handoff,
+        current_identity=ident,
+        verified_fence_refs=(f"fence-{transition}",),
+    )
     assert successor.attempt_id == "attempt-succ"
     assert successor.next_gate == "G03_NEXT"
     assert any(f"handoff:attempt-pred->attempt-succ:TRIGGER_{transition}" in r for r in successor.retry_history)
@@ -504,13 +532,22 @@ def test_negative_control_terminal_state_mismatch_fails_closed(tmp_path: Path):
         inherited_evidence_refs=("fence-term-test",),
     )
 
-    res = evaluate_handoff_lineage(handoff, current_identity=ident, predecessor_checkpoint=cp)
+    res = evaluate_handoff_lineage(
+        handoff,
+        current_identity=ident,
+        predecessor_checkpoint=cp,
+        verified_fence_refs=("fence-term-test",),
+    )
     assert res["disposition"] == DISPOSITION_RECONCILE
     assert res["reason"] == "TERMINAL_STATE_MISMATCH"
     assert "terminal_state" in res["stale_fields"]
 
     with pytest.raises(HandoffLineageError, match="cannot bind successor checkpoint.*TERMINAL_STATE_MISMATCH"):
-        store.bind_successor_checkpoint(handoff, current_identity=ident)
+        store.bind_successor_checkpoint(
+            handoff,
+            current_identity=ident,
+            verified_fence_refs=("fence-term-test",),
+        )
 
 
 def test_negative_control_cyclic_lineage_fails_closed(tmp_path: Path):
@@ -617,4 +654,76 @@ def test_negative_control_completed_effect_not_in_predecessor_fails_closed(tmp_p
     )
 
     with pytest.raises(HandoffLineageError, match="cannot inherit completed effect 'step_unperformed': not present in predecessor"):
+        store.bind_successor_checkpoint(
+            handoff,
+            current_identity=ident,
+            verified_fence_refs=("fence-ok",),
+        )
+
+
+def test_negative_control_handoff_cannot_self_verify_fence(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    cp = _seed_checkpoint(store, task_id="task-self-fence", attempt_id="attempt-pred")
+
+    handoff = HandoffLineage(
+        task_id="task-self-fence",
+        predecessor_attempt_id="attempt-pred",
+        successor_attempt_id="attempt-succ",
+        predecessor_operation_id=cp.operation_id,
+        predecessor_checkpoint_hash=cp.checkpoint_hash,
+        predecessor_checkpoint_revision=cp.revision,
+        handoff_reason="TAKEOVER",
+        source_identity=ident,
+        terminal_state=cp.status,
+        fence_evidence_ref="fence:forged",
+        inherited_evidence_refs=("fence:forged",),
+        successor_binding={"verified_fence_ref": "fence:forged"},
+    )
+    res = evaluate_handoff_lineage(
+        handoff,
+        current_identity=ident,
+        predecessor_checkpoint=cp,
+    )
+    assert res["disposition"] == DISPOSITION_RECONCILE
+    assert res["reason"] == "UNVERIFIED_OLD_WRITER_FENCE_REFERENCE"
+
+    with pytest.raises(
+        HandoffLineageError,
+        match="UNVERIFIED_OLD_WRITER_FENCE_REFERENCE",
+    ):
         store.bind_successor_checkpoint(handoff, current_identity=ident)
+
+
+def test_negative_control_effect_refs_cannot_substitute_for_keys(tmp_path: Path):
+    store = WorkflowCheckpointStore(tmp_path / "runtime_store")
+    ident = _identity()
+    cp = _seed_checkpoint(
+        store,
+        task_id="task-effect-ref-only",
+        attempt_id="attempt-pred",
+        completed_effects=(CompletedEffect(effect_key="write_patch", receipt_ref="rcpt-1"),),
+    )
+    handoff = HandoffLineage(
+        task_id="task-effect-ref-only",
+        predecessor_attempt_id="attempt-pred",
+        successor_attempt_id="attempt-succ",
+        predecessor_operation_id=cp.operation_id,
+        predecessor_checkpoint_hash=cp.checkpoint_hash,
+        predecessor_checkpoint_revision=cp.revision,
+        handoff_reason="TAKEOVER",
+        source_identity=ident,
+        terminal_state=cp.status,
+        fence_evidence_ref="fence:verified",
+        completed_effect_refs=("write_patch",),
+    )
+
+    with pytest.raises(
+        HandoffLineageError,
+        match="completed_effect_refs cannot substitute",
+    ):
+        store.bind_successor_checkpoint(
+            handoff,
+            current_identity=ident,
+            verified_fence_refs=("fence:verified",),
+        )

@@ -148,15 +148,9 @@ class HandoffLineage:
                 raise HandoffLineageError(f"{key} must contain non-empty strings")
             object.__setattr__(self, key, tuple(dict.fromkeys(values)))
 
-        # Normalize canonical effect keys and evidence refs
-        keys = self.completed_effect_keys
-        refs = self.completed_effect_refs
-        if not keys and refs:
-            keys = refs
-        elif not refs and keys:
-            refs = keys
-        object.__setattr__(self, "completed_effect_keys", keys)
-        object.__setattr__(self, "completed_effect_refs", refs)
+        # completed_effect_keys are canonical effect identities.
+        # completed_effect_refs are evidence references only and must never be
+        # promoted into effect identities (or vice versa).
 
         if not isinstance(self.successor_binding, Mapping):
             raise HandoffLineageError("successor_binding must be a Mapping")
@@ -342,12 +336,12 @@ def evaluate_handoff_lineage(
         else:
             fence_verified = handoff.fence_evidence_ref in verified_fence_refs
     else:
-        # Cross-bound against predecessor evidence, predecessor leases, or inherited evidence
+        # Only predecessor-owned canonical state may verify a fence implicitly.
+        # Handoff-owned inherited_evidence_refs / successor_binding are caller
+        # assertions and therefore cannot verify themselves.
         fence_verified = (
             handoff.fence_evidence_ref in predecessor_checkpoint.evidence_refs
             or handoff.fence_evidence_ref in predecessor_checkpoint.leases
-            or handoff.fence_evidence_ref in handoff.inherited_evidence_refs
-            or handoff.successor_binding.get("verified_fence_ref") == handoff.fence_evidence_ref
         )
 
     if not fence_verified:

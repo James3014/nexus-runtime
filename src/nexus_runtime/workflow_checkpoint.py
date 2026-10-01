@@ -668,7 +668,11 @@ class WorkflowCheckpointStore:
 
         # Inherit completed effects using canonical effect identity (effect_key) and durable receipt_ref
         pred_effects_by_key = {e.effect_key: e for e in predecessor_cp.completed_effects}
-        effect_keys = handoff.completed_effect_keys or handoff.completed_effect_refs
+        if handoff.completed_effect_refs and not handoff.completed_effect_keys:
+            raise HandoffLineageError(
+                "completed_effect_refs cannot substitute for canonical completed_effect_keys"
+            )
+        effect_keys = handoff.completed_effect_keys
         inherited_effects = []
         for k in effect_keys:
             if k not in pred_effects_by_key:
