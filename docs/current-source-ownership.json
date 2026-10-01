@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "0d9ebfe2c1ca7e24bcfc9cb9c96186fb3ea98290",
+  "source_head": "35b50408e0723e924adf48eb1f2d15b3fc9f47ef",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -292,7 +292,7 @@
     },
     {
       "path": "nexus_runtime/placement.py",
-      "sha256": "0e9ff14743e0445dd1fc632d403a2f902813ba9bc337a1f9f16e101f330b7614",
+      "sha256": "48c65f1107035f42e4c2e841471e9626e840c103bfc2d926f4c36ca3af0596dd",
       "canonical_owner": "runtime placement",
       "donor": "repository-local Compute Fabric G2 implementation, Issue #38",
       "lineage_status": "integrated_pending_acceptance"
