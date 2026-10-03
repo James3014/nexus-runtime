@@ -838,7 +838,7 @@
     },
     {
       "path": "nexus_runtime/execution_coordination/coordinator.py",
-      "sha256": "f6642c179106477c31a81c89f6237686eca2d618e34964742a511f211f9943f5",
+      "sha256": "d991e85557b879656f0f561fe1dc94c2445efba608d98d6e9b2d38b2570d927c",
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance"

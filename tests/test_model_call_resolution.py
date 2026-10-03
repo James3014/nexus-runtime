@@ -23,7 +23,11 @@ from test_execution_coordination import (
 )
 
 from nexus_runtime.execution_coordination import (
+    BOUNDED_DECISION_ELIGIBLE,
+    BOUNDED_DECISION_INSUFFICIENT_STATE,
+    BOUNDED_DECISION_TELEMETRY_SCHEMA,
     DETERMINISTIC_RESOLVED,
+    FRONTIER_REASONING_REQUIRED,
     INSUFFICIENT_STRUCTURED_STATE,
     MODEL_AVOIDED,
     MODEL_INVOKED,
@@ -67,6 +71,41 @@ def _resolved_receipt(**overrides):
     }
     values.update(overrides)
     return values
+
+
+def _bounded_context(**overrides):
+    values = {
+        "decision_family": "repair_candidate_choice",
+        "protected_authority_requirements": [],
+        "candidates": [
+            {
+                "candidate_id": "repair-a",
+                "payload": {"strategy": "repair-a"},
+                "evidence_refs": ["evidence:a"],
+            },
+            {
+                "candidate_id": "repair-b",
+                "payload": {"strategy": "repair-b"},
+                "evidence_refs": ["evidence:b"],
+            },
+        ],
+        "evidence_refs": ["evidence:root"],
+        "required_verifier": "runtime-verifier",
+        "claim_ceiling": "ADVISORY_ONLY",
+        "structured_state": {"failure_kind": "bounded"},
+    }
+    values.update(overrides)
+    return values
+
+
+def _enable_bounded_observation(state, context):
+    state.snapshot["request"].update(
+        {
+            "repository": "James3014/nexus-runtime",
+            "source_revision": "5e09e750daa91edf5a9e0a5629f5f60cb0f1432a",
+            "bounded_decision_context": context,
+        }
+    )
 
 
 def _coordinator(receipts, *, gate=None, **kwargs):
@@ -249,6 +288,222 @@ def test_model_needed_preserves_existing_invocation_path():
     assert totals["model_calls_invoked"] == 1
     assert totals["model_calls_avoided"] == 0
     assert totals["model_calls_not_eliminated"] is True
+
+
+def test_bounded_eligible_is_observed_without_intercepting_frontier_worker():
+    gate = Gate({"resolution": MODEL_NEEDED, "reason": "reasoning required"})
+    coordinator, state, worker, _ = _coordinator(
+        [Receipt(provider="codex", outcome=COMPLETED, evidence_complete=True)],
+        gate=gate,
+    )
+    _enable_bounded_observation(
+        state,
+        _bounded_context(
+            task_id="forged-task",
+            repository="forged/repository",
+            source_revision="forged-revision",
+        ),
+    )
+
+    coordinator.execute_attempt("task-1", "att")
+
+    assert worker.invocations == ["codex"]
+    assert gate.seen
+    resolver_state = gate.seen[0][0]
+    assert "decision_family" not in resolver_state
+    assert "repository" not in resolver_state
+    assert "source_revision" not in resolver_state
+
+    observations = state.snapshot["bounded_decision_observations"]
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation["schema"] == BOUNDED_DECISION_TELEMETRY_SCHEMA
+    assert observation["mode"] == "OBSERVE_ONLY"
+    assert observation["control_effect"] == "NONE"
+    assert observation["frontier_path_preserved"] is True
+    assert observation["disposition"] == BOUNDED_DECISION_ELIGIBLE
+    assert observation["candidate_count"] == 2
+    assert observation["packet_sha256"].startswith("sha256:")
+    assert observation["repository"] == "James3014/nexus-runtime"
+    assert observation["source_revision"] == (
+        "5e09e750daa91edf5a9e0a5629f5f60cb0f1432a"
+    )
+    assert observation["task_id"] == "task-1"
+    upstream_digests = {
+        item["structured_state_digest"]
+        for item in state.snapshot["model_call_resolutions"]
+    }
+    assert upstream_digests == {observation["upstream_model_call_state_digest"]}
+    assert observation["bounded_state_digest"] != (
+        observation["upstream_model_call_state_digest"]
+    )
+    totals = state.snapshot["bounded_decision_observation_totals"]
+    assert totals == {
+        "evaluated": 1,
+        "eligible": 1,
+        "frontier_required": 0,
+        "insufficient": 0,
+    }
+
+
+def test_unregistered_bounded_family_is_observed_as_frontier_without_rerouting():
+    gate = Gate({"resolution": MODEL_NEEDED, "reason": "reasoning required"})
+    coordinator, state, worker, _ = _coordinator(
+        [Receipt(provider="codex", outcome=COMPLETED, evidence_complete=True)],
+        gate=gate,
+    )
+    _enable_bounded_observation(
+        state,
+        _bounded_context(decision_family="merge_choice"),
+    )
+
+    coordinator.execute_attempt("task-1", "att")
+
+    assert worker.invocations == ["codex"]
+    observation = state.snapshot["bounded_decision_observations"][0]
+    assert observation["disposition"] == FRONTIER_REASONING_REQUIRED
+    assert observation["decision_family"] == "merge_choice"
+    assert observation["packet_sha256"] is None
+    assert state.snapshot["bounded_decision_observation_totals"] == {
+        "evaluated": 1,
+        "eligible": 0,
+        "frontier_required": 1,
+        "insufficient": 0,
+    }
+
+
+def test_malformed_bounded_context_fails_closed_in_observation_only():
+    gate = Gate({"resolution": MODEL_NEEDED, "reason": "reasoning required"})
+    coordinator, state, worker, _ = _coordinator(
+        [Receipt(provider="codex", outcome=COMPLETED, evidence_complete=True)],
+        gate=gate,
+    )
+    _enable_bounded_observation(state, "not-a-mapping")
+
+    coordinator.execute_attempt("task-1", "att")
+
+    assert worker.invocations == ["codex"]
+    observation = state.snapshot["bounded_decision_observations"][0]
+    assert observation["disposition"] == BOUNDED_DECISION_INSUFFICIENT_STATE
+    assert observation["context_error"] == "bounded_decision_context_not_mapping"
+    assert observation["frontier_path_preserved"] is True
+    assert state.snapshot["bounded_decision_observation_totals"]["insufficient"] == 1
+
+
+def test_bounded_observer_failure_cannot_block_frontier_worker():
+    gate = Gate({"resolution": MODEL_NEEDED, "reason": "reasoning required"})
+    coordinator, state, worker, _ = _coordinator(
+        [Receipt(provider="codex", outcome=COMPLETED, evidence_complete=True)],
+        gate=gate,
+    )
+    _enable_bounded_observation(state, _bounded_context())
+    state.snapshot["bounded_decision_observation_totals"] = {
+        "evaluated": "corrupt"
+    }
+
+    coordinator.execute_attempt("task-1", "att")
+
+    assert worker.invocations == ["codex"]
+    resolutions = state.snapshot["model_call_resolutions"]
+    assert any(item["outcome"] == MODEL_INVOKED for item in resolutions)
+
+
+def test_deterministic_resolution_does_not_create_bounded_observation():
+    gate = Gate(
+        {
+            "resolution": RESOLVED_DETERMINISTICALLY,
+            "reason": "deterministic evidence",
+            "deterministic_receipt": _resolved_receipt(),
+        }
+    )
+
+    @dataclass
+    class DeterministicReceipt:
+        provider: str = "codex"
+        outcome: str = COMPLETED
+        evidence_complete: bool = True
+        provider_calls: int = 0
+        provider_attempt_count: int = 0
+
+    class DeterministicContract(Contract):
+        def receipt_from_state(self, value):
+            if isinstance(value, Receipt):
+                return value
+            if isinstance(value, dict) and value.get("outcome") == COMPLETED:
+                return DeterministicReceipt()
+            return None
+
+    state = State("SUBMITTED")
+    _enable_bounded_observation(state, _bounded_context())
+    worker = Worker([])
+    coordinator = ExecutionCoordinator(
+        state,
+        DeterministicContract(),
+        worker,
+        Target(),
+        Processes(),
+        Finalization(),
+        Preparation(),
+        model_call_gate=gate,
+    )
+
+    coordinator.execute_attempt("task-1", "att")
+
+    assert worker.invocations == []
+    assert "bounded_decision_observations" not in state.snapshot
+    assert "bounded_decision_observation_totals" not in state.snapshot
+
+
+def test_bounded_observation_is_idempotent_for_same_attempt_and_state():
+    gate = Gate({"resolution": MODEL_NEEDED, "reason": "reasoning required"})
+    coordinator, state, _worker, _ = _coordinator([], gate=gate)
+    _enable_bounded_observation(state, _bounded_context())
+    resolver_state = coordinator._model_call_structured_state(
+        request=state.snapshot["request"],
+        state=state.snapshot,
+        task_id="task-1",
+        attempt_id="att",
+        provider="codex",
+        model=None,
+        remaining_calls=2,
+        remaining_attempts=2,
+        execution_lane="STANDARD",
+    )
+    upstream_verdict = resolve_model_call_need(
+        gate,
+        resolver_state,
+        seam=WORKER_INVOCATION_SEAM,
+    )
+    bounded_state, bounded_verdict, context_error = (
+        coordinator._bounded_observation_state(
+            request=state.snapshot["request"],
+            resolver_state=resolver_state,
+            upstream_verdict=upstream_verdict,
+            task_id="task-1",
+        )
+    )
+
+    coordinator._record_bounded_decision_observation(
+        upstream_verdict=upstream_verdict,
+        bounded_verdict=bounded_verdict,
+        structured_state=bounded_state,
+        context_error=context_error,
+        task_id="task-1",
+        attempt_id="att",
+        provider="codex",
+    )
+    coordinator._record_bounded_decision_observation(
+        upstream_verdict=upstream_verdict,
+        bounded_verdict=bounded_verdict,
+        structured_state=bounded_state,
+        context_error=context_error,
+        task_id="task-1",
+        attempt_id="att",
+        provider="codex",
+    )
+
+    assert len(state.snapshot["bounded_decision_observations"]) == 1
+    assert state.snapshot["bounded_decision_observation_totals"]["evaluated"] == 1
 
 
 def test_resolved_decision_triggers_zero_model_invocations():
