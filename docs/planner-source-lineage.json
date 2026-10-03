@@ -3,7 +3,7 @@
   "canonical": {
     "repository": "James3014/Nexus-new",
     "ref": "main",
-    "snapshot_revision": "5cff3aeb85bd01574124234f09981253a1efab98",
+    "snapshot_revision": "5d94556a68e500ca2f9255df0b3d4faff623face",
     "role": "CANONICAL_ALGORITHM_SOURCE"
   },
   "packaged": {
@@ -24,10 +24,10 @@
     },
     "raw_binding": {
       "algorithm": "ordered_path_content_sha256.v1",
-      "canonical_pair_source_set_sha256": "3e59c13914d19f920ecb964655b4c9d97a21bc32ed97fa67597315416e490a62",
-      "canonical_coverage_source_set_sha256": "6b4bd231908612cf80f9f5a443723a89a6dcb79fdc144d8829f7c6943a100e8a",
-      "packaged_pair_source_set_sha256": "0d24cbeba2439ac92dbb25af3c41a302d5d920635a2e20bcc37c09aca218d48b",
-      "packaged_coverage_source_set_sha256": "2ccaefe2373a8775b6ac24906b9ea85d713b841fb18800b22618a0f80d7aef53"
+      "canonical_pair_source_set_sha256": "a26fd019025c738ed64fcad9f26ba5df1415f1139ac25dde355ecbd4813f2337",
+      "canonical_coverage_source_set_sha256": "a183b2c362993ea5641f62f76b1726b3c25a66b36cb14de8f91794fcb59196bf",
+      "packaged_pair_source_set_sha256": "2e414489d8c05e575b22096b9f5e0ada36cca8aae3c62a42820831a229091b30",
+      "packaged_coverage_source_set_sha256": "aba5985d2f6e69960445bfcf4d661cb2a8a931c8f82f4bad2ac3f764914d0713"
     }
   },
   "invariants": {
