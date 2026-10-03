@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 
-from nexus_planning_candidate.services.capability_evidence_bundle import compute_bundle_hash
-from nexus_runtime.task_context.consumer_projection import (
-    _TYPED_SOURCE_HASH_KIND,
-    _typed_bundle_intact,
+from nexus_planning_candidate.services.capability_evidence_bundle import (
+    SOURCE_HASH_KIND,
+    assert_consumer_bundle_intact,
+    build_source_hash_subject,
+    compute_bundle_hash,
 )
 
 
@@ -21,7 +22,7 @@ def _typed_bundle(*, revision: str = "r" * 40, statement: str = "repair the pars
         "task_id": "task-456",
         "workspace_revision": revision,
         "task_statement_hash": hashlib.sha256(statement.encode("utf-8")).hexdigest(),
-        "source_hash_kind": _TYPED_SOURCE_HASH_KIND,
+        "source_hash_kind": SOURCE_HASH_KIND,
         "source_hash": hashlib.sha256(f"{revision}:{statement}".encode("utf-8")).hexdigest(),
         "plan_hash": "p" * 64,
         "planner_decision_id": "decision-456",
@@ -41,10 +42,12 @@ def _typed_bundle(*, revision: str = "r" * 40, statement: str = "repair the pars
 
 def test_typed_bundle_compat_accepts_exact_external_preimage() -> None:
     bundle = _typed_bundle()
-    verdict = _typed_bundle_intact(
+    verdict = assert_consumer_bundle_intact(
         bundle,
-        workspace_revision="r" * 40,
-        task_statement="repair the parser",
+        source_hash_subject=build_source_hash_subject(
+            "r" * 40,
+            "repair the parser",
+        ),
     )
     assert verdict["ok"] is True
     assert verdict["source_hash_verified"] is True
@@ -53,10 +56,12 @@ def test_typed_bundle_compat_accepts_exact_external_preimage() -> None:
 
 def test_typed_bundle_compat_rejects_substituted_preimage() -> None:
     bundle = _typed_bundle()
-    verdict = _typed_bundle_intact(
+    verdict = assert_consumer_bundle_intact(
         bundle,
-        workspace_revision="r" * 40,
-        task_statement="tampered statement",
+        source_hash_subject=build_source_hash_subject(
+            "r" * 40,
+            "tampered statement",
+        ),
     )
     assert verdict["ok"] is False
     assert "source_hash_task_statement_mismatch" in verdict["blockers"]
@@ -79,10 +84,12 @@ def test_typed_bundle_compat_rejects_tampered_kind_even_when_resealed() -> None:
     bundle["baseline_hash"] = _hash_json(baseline)
     bundle["bundle_hash"] = compute_bundle_hash(bundle)
 
-    verdict = _typed_bundle_intact(
+    verdict = assert_consumer_bundle_intact(
         bundle,
-        workspace_revision="r" * 40,
-        task_statement="repair the parser",
+        source_hash_subject=build_source_hash_subject(
+            "r" * 40,
+            "repair the parser",
+        ),
     )
     assert verdict["ok"] is False
     assert "source_hash_kind_mismatch" in verdict["blockers"]
