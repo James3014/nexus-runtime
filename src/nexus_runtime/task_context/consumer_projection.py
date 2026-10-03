@@ -7,9 +7,11 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from nexus_planning_candidate.services.capability_evidence_bundle import (
+    BUNDLE_SCHEMA,
     CONSUMER_PAYLOAD_SCHEMA,
     MAX_CONSUMER_PAYLOAD_CHARS,
     assert_consumer_bundle_intact,
+    compute_bundle_hash,
 )
 
 from .assembly import build_context_assembly_contract
@@ -22,6 +24,7 @@ from .context_admission import (
 
 MODEL_CONTEXT_MARKER = "[NEXUS MODEL CONTEXT]"
 _CONTEXT_ADMISSION_PROJECTION_TOKEN = object()
+_TYPED_SOURCE_HASH_KIND = "workspace_revision_task_statement_v1"
 
 
 def _estimate_tokens(value: Any) -> int:
@@ -35,6 +38,115 @@ def _normalized_ids(values: Sequence[str]) -> tuple[str, ...]:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _hash_json(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _typed_bundle_intact(
+    bundle: Mapping[str, Any],
+    *,
+    workspace_revision: str,
+    task_statement: str,
+) -> dict[str, Any]:
+    """Temporary compatibility verifier for the exact #456 typed bundle.
+
+    Nexus owns the canonical bundle schema. Runtime uses this bridge only while
+    the canonical source and standalone mirror converge across repositories.
+    Legacy bundles continue through the existing canonical verifier.
+    """
+    if "source_hash_kind" not in bundle:
+        result = dict(assert_consumer_bundle_intact(bundle))
+        result["source_hash_verified"] = False
+        return result
+
+    blockers: list[str] = []
+    if str(bundle.get("schema") or "") != BUNDLE_SCHEMA:
+        blockers.append("schema_mismatch")
+    if str(bundle.get("source_hash_kind") or "") != _TYPED_SOURCE_HASH_KIND:
+        blockers.append("source_hash_kind_mismatch")
+
+    revision = str(workspace_revision or "")
+    statement = str(task_statement or "")
+    if not revision or not statement:
+        blockers.append("source_hash_subject_preimage_missing")
+    if revision and str(bundle.get("workspace_revision") or "") != revision:
+        blockers.append("source_hash_workspace_revision_mismatch")
+    statement_hash = hashlib.sha256(statement.encode("utf-8")).hexdigest() if statement else ""
+    if statement_hash and str(bundle.get("task_statement_hash") or "") != statement_hash:
+        blockers.append("source_hash_task_statement_mismatch")
+    expected_source_hash = (
+        hashlib.sha256(f"{revision}:{statement}".encode("utf-8")).hexdigest()
+        if revision and statement
+        else ""
+    )
+    if expected_source_hash and str(bundle.get("source_hash") or "") != expected_source_hash:
+        blockers.append("source_hash_content_mismatch")
+
+    claimed_hash = str(bundle.get("bundle_hash") or "")
+    expected_hash = compute_bundle_hash(bundle)
+    if not claimed_hash:
+        blockers.append("bundle_hash_missing")
+    elif claimed_hash != expected_hash:
+        blockers.append("bundle_hash_mismatch")
+
+    required_fields = (
+        "task_id",
+        "workspace_revision",
+        "task_statement_hash",
+        "source_hash_kind",
+        "source_hash",
+        "plan_hash",
+        "planner_decision_id",
+        "selected_capabilities",
+        "entries",
+    )
+    for field in required_fields:
+        if field not in bundle:
+            blockers.append(f"missing_field:{field}")
+
+    selected = [str(item) for item in (bundle.get("selected_capabilities") or [])]
+    entries = bundle.get("entries")
+    if not isinstance(entries, list):
+        blockers.append("entries_not_list")
+        entries = []
+    entry_names = {
+        str(entry.get("name"))
+        for entry in entries
+        if isinstance(entry, Mapping)
+    }
+    for name in selected:
+        if name not in entry_names:
+            blockers.append(f"missing_selected_entry:{name}")
+
+    baseline = {
+        "task_id": str(bundle.get("task_id") or ""),
+        "workspace_revision": str(bundle.get("workspace_revision") or ""),
+        "task_statement_hash": str(bundle.get("task_statement_hash") or ""),
+        "source_hash_kind": str(bundle.get("source_hash_kind") or ""),
+        "source_hash": str(bundle.get("source_hash") or ""),
+        "plan_hash": str(bundle.get("plan_hash") or ""),
+        "planner_decision_id": str(bundle.get("planner_decision_id") or ""),
+        "selected_capabilities": selected,
+    }
+    expected_baseline = _hash_json(baseline)
+    claimed_baseline = str(bundle.get("baseline_hash") or "")
+    if claimed_baseline and claimed_baseline != expected_baseline:
+        blockers.append("baseline_hash_mismatch")
+    if bundle.get("public_claim_allowed") is True:
+        blockers.append("public_claim_allowed_must_be_false")
+
+    ok = not blockers
+    return {
+        "ok": ok,
+        "gate_passed": ok,
+        "blockers": blockers,
+        "bundle_hash": claimed_hash,
+        "expected_bundle_hash": expected_hash,
+        "source_hash_verified": bool(ok and expected_source_hash),
+    }
 
 
 def _strict_json_copy(value: Any) -> Any:
@@ -193,6 +305,7 @@ def _evidence_projection(
     expected_plan_hash: str = "",
     expected_decision_id: str = "",
     expected_statement: str = "",
+    expected_workspace_revision: str = "",
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[dict[str, Any], ...], tuple[str, ...], tuple[dict[str, Any], ...]]:
     bundle = _mapping(container.get("capability_evidence_bundle"))
     if not bundle:
@@ -203,17 +316,6 @@ def _evidence_projection(
         bundle = _mapping(signal_snapshot.get("capability_evidence_bundle"))
     if not bundle:
         return (), (), (), (), ()
-    intact = assert_consumer_bundle_intact(bundle)
-    if not intact.get("ok"):
-        raise ValueError(
-            "consumer_evidence_bundle_invalid:" + ",".join(intact.get("blockers") or ())
-        )
-    selected = _normalized_ids(expected_selected)
-    bundle_selected = bundle.get("selected_capabilities")
-    if not isinstance(bundle_selected, (list, tuple)):
-        raise ValueError("consumer_evidence_bundle_selection_invalid")
-    if _normalized_ids(tuple(str(item) for item in bundle_selected)) != selected:
-        raise ValueError("consumer_evidence_bundle_selection_mismatch")
     if expected_task_id and str(bundle.get("task_id") or "") != expected_task_id:
         raise ValueError("consumer_evidence_bundle_task_mismatch")
     if expected_plan_hash and str(bundle.get("plan_hash") or "") != expected_plan_hash:
@@ -224,6 +326,26 @@ def _evidence_projection(
         statement_hash = hashlib.sha256(expected_statement.encode("utf-8")).hexdigest()
         if str(bundle.get("task_statement_hash") or "") != statement_hash:
             raise ValueError("consumer_evidence_bundle_statement_mismatch")
+    if expected_workspace_revision:
+        if str(bundle.get("workspace_revision") or "") != expected_workspace_revision:
+            raise ValueError("consumer_evidence_bundle_workspace_revision_mismatch")
+    intact = _typed_bundle_intact(
+        bundle,
+        workspace_revision=expected_workspace_revision,
+        task_statement=expected_statement,
+    )
+    if not intact.get("ok"):
+        raise ValueError(
+            "consumer_evidence_bundle_invalid:" + ",".join(intact.get("blockers") or ())
+        )
+    if "source_hash_kind" in bundle and not intact.get("source_hash_verified"):
+        raise ValueError("consumer_evidence_bundle_invalid:source_hash_not_verified")
+    selected = _normalized_ids(expected_selected)
+    bundle_selected = bundle.get("selected_capabilities")
+    if not isinstance(bundle_selected, (list, tuple)):
+        raise ValueError("consumer_evidence_bundle_selection_invalid")
+    if _normalized_ids(tuple(str(item) for item in bundle_selected)) != selected:
+        raise ValueError("consumer_evidence_bundle_selection_mismatch")
     materialized_values: list[str] = []
     payload_evidence_values: list[str] = []
     payloads: list[dict[str, Any]] = []
@@ -733,6 +855,7 @@ def build_online_context_package(context: Mapping[str, Any]) -> dict[str, Any]:
     if not planner_plan_hash:
         raise ValueError("online_model_context_planner_plan_missing")
     task_id = str(context.get("task_id") or "").strip()
+    workspace_revision = str(context.get("workspace_revision") or "").strip()
     materialized, bundles, payloads, payload_evidence, payload_records = _evidence_projection(
         context,
         expected_selected=selected,
@@ -740,6 +863,7 @@ def build_online_context_package(context: Mapping[str, Any]) -> dict[str, Any]:
         expected_plan_hash=planner_plan_hash,
         expected_decision_id=planner_decision_id,
         expected_statement=str(context.get("task_statement") or ""),
+        expected_workspace_revision=workspace_revision,
     )
     attempt_id = str(
         context.get("attempt_id")
@@ -817,6 +941,15 @@ def build_worker_context_package_with_admission(
     task_statement = str(
         request.get("what") or request.get("task_statement") or ""
     )
+    request_workspace_revision = str(request.get("workspace_revision") or "").strip()
+    envelope_workspace_revision = str(envelope.get("workspace_revision") or "").strip()
+    if (
+        request_workspace_revision
+        and envelope_workspace_revision
+        and request_workspace_revision != envelope_workspace_revision
+    ):
+        raise ValueError("worker_model_context_workspace_revision_mismatch")
+    workspace_revision = request_workspace_revision or envelope_workspace_revision
     selected = _planner_selected_capabilities(planner)
     materialized, bundles, payloads, payload_evidence, payload_records = (
         _evidence_projection(
@@ -826,6 +959,7 @@ def build_worker_context_package_with_admission(
             expected_plan_hash=planner_plan_hash,
             expected_decision_id=planner_decision_id,
             expected_statement=task_statement,
+            expected_workspace_revision=workspace_revision,
         )
     )
     worker_binding = {

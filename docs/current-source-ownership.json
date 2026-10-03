@@ -397,7 +397,7 @@
     },
     {
       "path": "nexus_runtime/task_context/consumer_projection.py",
-      "sha256": "32bf4decf3b62c17d47ba6216028209f8efb743a5a617c738cdaddf2f8670998",
+      "sha256": "fdd7dcaf57c9a8c2d1405080649e0053f32873be873f39b27d7489343af2948e",
       "canonical_owner": "runtime context",
       "donor": "docs/task-context-provenance.json",
       "lineage_status": "integrated_pending_acceptance"
@@ -649,7 +649,7 @@
     },
     {
       "path": "nexus_runtime_p6c_candidate/runtime.py",
-      "sha256": "108a82f534e6c8745873b8cfe77d1d21f2e4ccbd752eb49fac2238069db7ee84",
+      "sha256": "bc00702ab8ddddf3bc080330c1474d2e81f381b5182609a35e617b56d46d5b44",
       "canonical_owner": "runtime",
       "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
       "lineage_status": "known"
