@@ -329,6 +329,14 @@ def test_bounded_eligible_is_observed_without_intercepting_frontier_worker():
         "5e09e750daa91edf5a9e0a5629f5f60cb0f1432a"
     )
     assert observation["task_id"] == "task-1"
+    upstream_digests = {
+        item["structured_state_digest"]
+        for item in state.snapshot["model_call_resolutions"]
+    }
+    assert upstream_digests == {observation["upstream_model_call_state_digest"]}
+    assert observation["bounded_state_digest"] != (
+        observation["upstream_model_call_state_digest"]
+    )
     totals = state.snapshot["bounded_decision_observation_totals"]
     assert totals == {
         "evaluated": 1,
@@ -450,7 +458,7 @@ def test_bounded_observation_is_idempotent_for_same_attempt_and_state():
     gate = Gate({"resolution": MODEL_NEEDED, "reason": "reasoning required"})
     coordinator, state, _worker, _ = _coordinator([], gate=gate)
     _enable_bounded_observation(state, _bounded_context())
-    structured_state, resolver_state, context_error = coordinator._model_call_states(
+    resolver_state = coordinator._model_call_structured_state(
         request=state.snapshot["request"],
         state=state.snapshot,
         task_id="task-1",
@@ -461,24 +469,33 @@ def test_bounded_observation_is_idempotent_for_same_attempt_and_state():
         remaining_attempts=2,
         execution_lane="STANDARD",
     )
-    verdict = resolve_model_call_need(
+    upstream_verdict = resolve_model_call_need(
         gate,
-        structured_state,
+        resolver_state,
         seam=WORKER_INVOCATION_SEAM,
-        resolver_state=resolver_state,
+    )
+    bounded_state, bounded_verdict, context_error = (
+        coordinator._bounded_observation_state(
+            request=state.snapshot["request"],
+            resolver_state=resolver_state,
+            upstream_verdict=upstream_verdict,
+            task_id="task-1",
+        )
     )
 
     coordinator._record_bounded_decision_observation(
-        verdict=verdict,
-        structured_state=structured_state,
+        upstream_verdict=upstream_verdict,
+        bounded_verdict=bounded_verdict,
+        structured_state=bounded_state,
         context_error=context_error,
         task_id="task-1",
         attempt_id="att",
         provider="codex",
     )
     coordinator._record_bounded_decision_observation(
-        verdict=verdict,
-        structured_state=structured_state,
+        upstream_verdict=upstream_verdict,
+        bounded_verdict=bounded_verdict,
+        structured_state=bounded_state,
         context_error=context_error,
         task_id="task-1",
         attempt_id="att",
