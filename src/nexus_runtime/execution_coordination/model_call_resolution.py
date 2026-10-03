@@ -288,8 +288,15 @@ def resolve_model_call_need(
     *,
     seam: str = WORKER_INVOCATION_SEAM,
     on_invalid: str = MODEL_NEEDED,
+    resolver_state: Mapping[str, Any] | None = None,
 ) -> ModelCallNeedVerdict:
     """Attempt deterministic MODEL_CALL_NEEDED resolution, fail-safe.
+
+    ``structured_state`` is the identity-bound state whose digest is carried
+    by the verdict. ``resolver_state``, when supplied, is a semantic
+    projection presented to the resolver. This lets observation-only metadata
+    participate in the durable identity without changing the resolver's
+    pre-existing decision inputs.
 
     ``on_invalid`` selects the safe fallback (``MODEL_NEEDED`` or
     ``INSUFFICIENT_STRUCTURED_STATE``) when the resolver is absent, raises, or
@@ -321,8 +328,20 @@ def resolve_model_call_need(
             seam=seam_name,
             structured_state_digest=digest,
         )
+    semantic_state = structured_state if resolver_state is None else resolver_state
     try:
-        raw = resolver.resolve_model_call_need(structured_state, seam=seam_name)
+        _structured_state_digest(semantic_state)
+    except ModelCallResolutionError as exc:
+        return ModelCallNeedVerdict(
+            resolution=INSUFFICIENT_STRUCTURED_STATE,
+            reason=f"resolver_state_unusable:{exc}",
+            resolver_id=_resolver_identity(resolver),
+            seam=seam_name,
+            structured_state_digest=digest,
+            resolver_failure="resolver_state_unusable",
+        )
+    try:
+        raw = resolver.resolve_model_call_need(semantic_state, seam=seam_name)
     except Exception as exc:  # noqa: BLE001 - fail-safe by contract
         return ModelCallNeedVerdict(
             resolution=INSUFFICIENT_STRUCTURED_STATE,

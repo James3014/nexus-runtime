@@ -17,6 +17,14 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Optional
 
+from .bounded_decision import (
+    BOUNDED_DECISION_ELIGIBLE,
+    BOUNDED_DECISION_INSUFFICIENT_STATE,
+    BOUNDED_DECISION_TELEMETRY_SCHEMA,
+    FRONTIER_REASONING_REQUIRED,
+    build_bounded_decision_packet,
+    classify_bounded_decision,
+)
 from .effect_authorization import (
     EffectAuthorization,
     EffectAuthorizationError,
@@ -27,6 +35,7 @@ from .model_call_resolution import (
     INSUFFICIENT_STRUCTURED_STATE,
     MODEL_AVOIDED,
     MODEL_INVOKED,
+    MODEL_NEEDED,
     MODEL_REQUIRED,
     RESOLVED_DETERMINISTICALLY,
     WORKER_INVOCATION_SEAM,
@@ -43,6 +52,23 @@ from .ports import (
     ProcessOwnershipPort,
     TargetExecutionPort,
     WorkerAdapterPort,
+)
+
+_BOUNDED_OBSERVATION_CONTEXT_KEY = "bounded_decision_context"
+_BOUNDED_OBSERVATION_CONTEXT_FIELDS = frozenset(
+    {
+        "decision_family",
+        "protected_authority_requirements",
+        "candidates",
+        "evidence_refs",
+        "required_verifier",
+        "claim_ceiling",
+        "structured_state",
+    }
+)
+_BOUNDED_OBSERVATION_MODE = "OBSERVE_ONLY"
+_BOUNDED_OBSERVATION_CLAIM_CEILING = (
+    "BOUNDED_DECISION_OPPORTUNITY_OBSERVATION_ONLY"
 )
 
 
@@ -172,7 +198,33 @@ class ExecutionCoordinator:
         digest = hashlib.sha256(prompt_value.encode("utf-8")).hexdigest()
         return binding, digest, len(prompt_value)
 
-    def _model_call_structured_state(
+    @staticmethod
+    def _bounded_observation_context(
+        request: Mapping[str, Any],
+    ) -> tuple[dict[str, Any], str | None]:
+        if _BOUNDED_OBSERVATION_CONTEXT_KEY not in request:
+            return {}, "bounded_decision_context_missing"
+        raw = request.get(_BOUNDED_OBSERVATION_CONTEXT_KEY)
+        if not isinstance(raw, Mapping):
+            return {}, "bounded_decision_context_not_mapping"
+        projected = {
+            key: raw[key]
+            for key in _BOUNDED_OBSERVATION_CONTEXT_FIELDS
+            if key in raw
+        }
+        try:
+            json.dumps(
+                projected,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError):
+            return {}, "bounded_decision_context_not_canonical_json"
+        return projected, None
+
+    def _model_call_states(
         self,
         *,
         request: Mapping[str, Any],
@@ -184,14 +236,14 @@ class ExecutionCoordinator:
         remaining_calls: int,
         remaining_attempts: int,
         execution_lane: str,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any], str | None]:
         attempts_evidence = state.get("executions")
         durable_execution = state.get("execution")
         dispatch_binding, prompt_digest, prompt_length = self._model_call_prompt_facts(
             state
         )
         candidates = request.get("deterministic_candidates")
-        return {
+        resolver_state = {
             "task_id": task_id,
             "attempt_id": attempt_id,
             "provider": str(provider),
@@ -226,6 +278,153 @@ class ExecutionCoordinator:
                 list(candidates) if isinstance(candidates, list) else []
             ),
         }
+        context, context_error = self._bounded_observation_context(request)
+        observation_state = {**resolver_state, **context}
+        # These identities are Runtime-owned for the observation. Caller context
+        # cannot replace them even if it carries similarly named fields.
+        observation_state["task_id"] = task_id
+        observation_state["repository"] = str(request.get("repository") or "")
+        observation_state["source_revision"] = str(
+            request.get("source_revision") or ""
+        )
+        return observation_state, resolver_state, context_error
+
+    @staticmethod
+    def _bounded_candidate_ids(structured_state: Mapping[str, Any]) -> tuple[str, ...]:
+        raw = structured_state.get("candidates")
+        if not isinstance(raw, Sequence) or isinstance(
+            raw, (str, bytes, bytearray)
+        ):
+            return ()
+        ids: list[str] = []
+        for item in raw:
+            if not isinstance(item, Mapping):
+                return ()
+            candidate_id = item.get("candidate_id")
+            if not isinstance(candidate_id, str) or not candidate_id.strip():
+                return ()
+            ids.append(candidate_id.strip())
+        return tuple(sorted(ids))
+
+    def _record_bounded_decision_observation(
+        self,
+        *,
+        verdict: ModelCallNeedVerdict,
+        structured_state: Mapping[str, Any],
+        context_error: str | None,
+        task_id: str,
+        attempt_id: str,
+        provider: str,
+    ) -> Mapping[str, Any]:
+        """Persist one idempotent observation without influencing execution."""
+
+        state = self.state.read_snapshot(task_id) or {}
+        try:
+            eligibility = classify_bounded_decision(verdict, structured_state)
+            disposition = eligibility.disposition
+            reason = eligibility.reason
+            decision_family = eligibility.decision_family
+            packet_sha256 = None
+            if disposition == BOUNDED_DECISION_ELIGIBLE:
+                packet_sha256 = build_bounded_decision_packet(
+                    verdict, structured_state
+                ).content_sha256
+        except Exception as exc:  # noqa: BLE001 - observer must never control route
+            disposition = BOUNDED_DECISION_INSUFFICIENT_STATE
+            reason = f"bounded_observer_failed:{type(exc).__name__}"
+            decision_family = str(
+                structured_state.get("decision_family") or ""
+            ).strip()
+            packet_sha256 = None
+
+        candidate_ids = self._bounded_candidate_ids(structured_state)
+        candidate_set_sha256 = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(
+                    candidate_ids,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
+            if candidate_ids
+            else None
+        )
+        observation_identity = {
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "provider": str(provider),
+            "seam": verdict.seam,
+            "structured_state_digest": verdict.structured_state_digest,
+        }
+        observation_id = "sha256:" + hashlib.sha256(
+            json.dumps(
+                observation_identity,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        observation = {
+            "schema": BOUNDED_DECISION_TELEMETRY_SCHEMA,
+            "mode": _BOUNDED_OBSERVATION_MODE,
+            "control_effect": "NONE",
+            "claim_ceiling": _BOUNDED_OBSERVATION_CLAIM_CEILING,
+            "observation_id": observation_id,
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "provider": str(provider),
+            "seam": verdict.seam,
+            "model_call_resolution": verdict.resolution,
+            "structured_state_digest": verdict.structured_state_digest,
+            "repository": str(structured_state.get("repository") or ""),
+            "source_revision": str(
+                structured_state.get("source_revision") or ""
+            ),
+            "disposition": disposition,
+            "reason": reason,
+            "decision_family": decision_family,
+            "candidate_count": len(candidate_ids),
+            "candidate_set_sha256": candidate_set_sha256,
+            "packet_sha256": packet_sha256,
+            "context_error": context_error,
+            "frontier_path_preserved": True,
+        }
+
+        history = state.get("bounded_decision_observations")
+        entries = list(history) if isinstance(history, list) else []
+        if any(
+            isinstance(item, Mapping)
+            and item.get("observation_id") == observation_id
+            for item in entries
+        ):
+            return state
+
+        entries.append(observation)
+        aggregate = state.get("bounded_decision_observation_totals")
+        totals = dict(aggregate) if isinstance(aggregate, Mapping) else {}
+        totals["evaluated"] = int(totals.get("evaluated") or 0) + 1
+        if disposition == BOUNDED_DECISION_ELIGIBLE:
+            key = "eligible"
+        elif disposition == FRONTIER_REASONING_REQUIRED:
+            key = "frontier_required"
+        else:
+            key = "insufficient"
+        totals[key] = int(totals.get(key) or 0) + 1
+        for required_key in ("eligible", "frontier_required", "insufficient"):
+            totals[required_key] = int(totals.get(required_key) or 0)
+
+        try:
+            self.state.mutate_metadata(
+                task_id,
+                {
+                    "bounded_decision_observations": entries,
+                    "bounded_decision_observation_totals": totals,
+                },
+            )
+        except Exception:  # noqa: BLE001 - observation is explicitly non-authoritative
+            return state
+        return self.state.read_snapshot(task_id) or state
 
     def _consume_model_call_verdict(
         self,
@@ -922,7 +1121,11 @@ class ExecutionCoordinator:
                 execution_receipt = None
                 deterministic_receipt = None
                 if self.model_call_gate is not None:
-                    structured_state = self._model_call_structured_state(
+                    (
+                        structured_state,
+                        resolver_state,
+                        bounded_context_error,
+                    ) = self._model_call_states(
                         request=request,
                         state=state,
                         task_id=task_id,
@@ -937,7 +1140,20 @@ class ExecutionCoordinator:
                         self.model_call_gate,
                         structured_state,
                         seam=WORKER_INVOCATION_SEAM,
+                        resolver_state=resolver_state,
                     )
+                    if model_call_verdict.resolution == MODEL_NEEDED:
+                        try:
+                            state = self._record_bounded_decision_observation(
+                                verdict=model_call_verdict,
+                                structured_state=structured_state,
+                                context_error=bounded_context_error,
+                                task_id=task_id,
+                                attempt_id=attempt_id,
+                                provider=provider,
+                            )
+                        except Exception:  # noqa: BLE001 - observer has zero control authority
+                            state = self.state.read_snapshot(task_id) or state
                     state, deterministic_receipt = self._consume_model_call_verdict(
                         verdict=model_call_verdict,
                         task_id=task_id,
