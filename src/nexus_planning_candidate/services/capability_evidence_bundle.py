@@ -19,6 +19,30 @@ from typing import Any, Mapping
 
 BUNDLE_SCHEMA = "nexus.capability_evidence_bundle.v1"
 VERDICT_SCHEMA = "nexus.capability_evidence_bundle_verdict.v1"
+SOURCE_HASH_KIND = "workspace_revision_task_statement_v1"
+
+
+def build_source_hash_subject(
+    workspace_revision: str,
+    task_statement: str,
+) -> dict[str, str]:
+    """Build the transient, typed preimage needed to verify ``source_hash``.
+
+    The task statement stays outside the persisted evidence bundle. Consumers
+    pass the exact request inputs back to the verifier at the point of use.
+    """
+    return {
+        "kind": SOURCE_HASH_KIND,
+        "workspace_revision": str(workspace_revision or ""),
+        "task_statement": str(task_statement or ""),
+    }
+
+
+def _source_hash_for_subject(subject: Mapping[str, Any]) -> str:
+    # Preserve the established production composite while making its domain
+    # explicit in the sealed bundle and at every consumer boundary.
+    composite = f"{subject['workspace_revision']}:{subject['task_statement']}"
+    return hashlib.sha256(composite.encode("utf-8")).hexdigest()
 CONSUMER_PAYLOAD_SCHEMA = "nexus.consumer_payload.v1"
 MAX_CONSUMER_PAYLOAD_CHARS = 2000
 MAX_PAYLOAD_STRING_FIELD = 400
@@ -395,10 +419,20 @@ def build_capability_evidence_bundle(
     capability_results: Mapping[str, Any],
     selected_capabilities: list[str] | tuple[str, ...],
     source_hash: str = "",
+    source_hash_kind: str = SOURCE_HASH_KIND,
 ) -> dict[str, Any]:
     """Build hash-sealed shared evidence bundle for Local and Online consumers."""
     task_hash = hashlib.sha256(str(task_statement or "").encode("utf-8")).hexdigest()
-    src_hash = str(source_hash or "").strip() or task_hash
+    if source_hash_kind != SOURCE_HASH_KIND:
+        raise ValueError("source_hash_kind_mismatch")
+    source_subject = build_source_hash_subject(workspace_revision, task_statement)
+    if not source_subject["workspace_revision"] or not source_subject["task_statement"]:
+        raise ValueError("source_hash_subject_requires_workspace_revision_and_task_statement")
+    expected_source_hash = _source_hash_for_subject(source_subject)
+    provided_source_hash = str(source_hash or "").strip()
+    if provided_source_hash and provided_source_hash != expected_source_hash:
+        raise ValueError("source_hash_does_not_match_workspace_revision_task_statement_v1")
+    src_hash = expected_source_hash
     plan_h = str(plan_hash or _hash_json(plan_payload))
     decision_id = str(planner_decision_id or plan_h)
     selected = [str(x) for x in selected_capabilities]
@@ -522,6 +556,7 @@ def build_capability_evidence_bundle(
         "task_id": str(task_id),
         "workspace_revision": str(workspace_revision),
         "task_statement_hash": task_hash,
+        "source_hash_kind": SOURCE_HASH_KIND,
         "source_hash": src_hash,
         "plan_hash": plan_h,
         "planner_decision_id": decision_id,
@@ -535,6 +570,7 @@ def build_capability_evidence_bundle(
         "task_id": str(task_id),
         "workspace_revision": str(workspace_revision),
         "task_statement_hash": task_hash,
+        "source_hash_kind": SOURCE_HASH_KIND,
         "source_hash": src_hash,
         "plan_hash": plan_h,
         "planner_decision_id": decision_id,
@@ -558,7 +594,11 @@ def build_capability_evidence_bundle(
     return bundle
 
 
-def verify_capability_evidence_bundle(bundle: Mapping[str, Any] | None) -> dict[str, Any]:
+def verify_capability_evidence_bundle(
+    bundle: Mapping[str, Any] | None,
+    *,
+    source_hash_subject: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Public verifier: fail-closed on missing/tampered hash-sealed bundles.
 
     ``immutable=True`` alone is **not** sufficient proof.
@@ -572,6 +612,8 @@ def verify_capability_evidence_bundle(bundle: Mapping[str, Any] | None) -> dict[
             "blockers": ["bundle_missing_or_not_mapping"],
             "bundle_hash": "",
             "expected_bundle_hash": "",
+            "source_hash_verified": False,
+            "source_hash_kind": "",
             "immutable_alone_insufficient": True,
         }
 
@@ -606,6 +648,42 @@ def verify_capability_evidence_bundle(bundle: Mapping[str, Any] | None) -> dict[
         if field not in bundle:
             blockers.append(f"missing_field:{field}")
 
+    typed_source_verification = source_hash_subject is not None
+    subject = source_hash_subject if isinstance(source_hash_subject, Mapping) else {}
+    subject_kind = str(subject.get("kind") or "")
+    subject_revision = str(subject.get("workspace_revision") or "")
+    subject_statement = str(subject.get("task_statement") or "")
+    if typed_source_verification:
+        if not subject:
+            blockers.append("source_hash_subject_missing")
+        elif subject_kind != SOURCE_HASH_KIND:
+            blockers.append("source_hash_subject_kind_mismatch")
+        if not subject_revision or not subject_statement:
+            blockers.append("source_hash_subject_preimage_missing")
+        if "source_hash_kind" not in bundle:
+            blockers.append("missing_field:source_hash_kind")
+        if str(bundle.get("source_hash_kind") or "") != SOURCE_HASH_KIND:
+            blockers.append("source_hash_kind_mismatch")
+        if subject_revision and subject_revision != str(bundle.get("workspace_revision") or ""):
+            blockers.append("source_hash_workspace_revision_mismatch")
+        if subject_statement and hashlib.sha256(subject_statement.encode("utf-8")).hexdigest() != str(
+            bundle.get("task_statement_hash") or ""
+        ):
+            blockers.append("source_hash_task_statement_mismatch")
+        if (
+            subject_kind == SOURCE_HASH_KIND
+            and subject_revision
+            and subject_statement
+            and _source_hash_for_subject(
+                {
+                    "workspace_revision": subject_revision,
+                    "task_statement": subject_statement,
+                }
+            )
+            != str(bundle.get("source_hash") or "")
+        ):
+            blockers.append("source_hash_content_mismatch")
+
     selected = [str(x) for x in (bundle.get("selected_capabilities") or [])]
     entries = bundle.get("entries")
     if not isinstance(entries, list):
@@ -628,6 +706,8 @@ def verify_capability_evidence_bundle(bundle: Mapping[str, Any] | None) -> dict[
         "planner_decision_id": str(bundle.get("planner_decision_id") or ""),
         "selected_capabilities": selected,
     }
+    if "source_hash_kind" in bundle:
+        baseline["source_hash_kind"] = str(bundle.get("source_hash_kind") or "")
     expected_baseline = _hash_json(baseline)
     claimed_baseline = str(bundle.get("baseline_hash") or "")
     if claimed_baseline and claimed_baseline != expected_baseline:
@@ -646,6 +726,13 @@ def verify_capability_evidence_bundle(bundle: Mapping[str, Any] | None) -> dict[
         "expected_bundle_hash": recomputed,
         "baseline_hash": claimed_baseline,
         "expected_baseline_hash": expected_baseline,
+        "source_hash_verified": bool(
+            ok
+            and typed_source_verification
+            and subject_kind == SOURCE_HASH_KIND
+            and str(bundle.get("source_hash_kind") or "") == SOURCE_HASH_KIND
+        ),
+        "source_hash_kind": str(bundle.get("source_hash_kind") or ""),
         "immutable_alone_insufficient": True,
         "public_claim_allowed": False,
     }
@@ -659,9 +746,15 @@ def consumer_view(bundle: Mapping[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(dict(bundle))
 
 
-def assert_consumer_bundle_intact(bundle: Mapping[str, Any]) -> dict[str, Any]:
+def assert_consumer_bundle_intact(
+    bundle: Mapping[str, Any],
+    *,
+    source_hash_subject: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Consumer pre-use check: re-canonicalize and require matching bundle_hash."""
-    verdict = verify_capability_evidence_bundle(bundle)
+    verdict = verify_capability_evidence_bundle(
+        bundle, source_hash_subject=source_hash_subject
+    )
     if not verdict["ok"]:
         return {
             "ok": False,
@@ -669,6 +762,7 @@ def assert_consumer_bundle_intact(bundle: Mapping[str, Any]) -> dict[str, Any]:
             "blockers": list(verdict.get("blockers") or []),
             "bundle_hash": verdict.get("bundle_hash"),
             "expected_bundle_hash": verdict.get("expected_bundle_hash"),
+            "source_hash_verified": False,
         }
     # Presence of bundle without hash recheck is insufficient
     if not str(bundle.get("bundle_hash") or ""):
@@ -678,6 +772,7 @@ def assert_consumer_bundle_intact(bundle: Mapping[str, Any]) -> dict[str, Any]:
             "blockers": ["consumer_missing_bundle_hash"],
             "bundle_hash": "",
             "expected_bundle_hash": compute_bundle_hash(bundle),
+            "source_hash_verified": False,
         }
     return {
         "ok": True,
@@ -685,6 +780,7 @@ def assert_consumer_bundle_intact(bundle: Mapping[str, Any]) -> dict[str, Any]:
         "blockers": [],
         "bundle_hash": str(bundle.get("bundle_hash")),
         "expected_bundle_hash": verdict["expected_bundle_hash"],
+        "source_hash_verified": bool(verdict.get("source_hash_verified")),
     }
 
 
@@ -727,6 +823,7 @@ def record_consumption(
     extra: Mapping[str, Any] | None = None,
     consumed_capability_payloads: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
     payload_serialized_into_prompt: bool = False,
+    source_hash_subject: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build consumer consumption receipt fields.
 
@@ -734,7 +831,9 @@ def record_consumption(
     ``capability_payload_consumed`` is true only when bounded payloads were
     actually serialized into the provider prompt (not ID-only bookkeeping).
     """
-    intact = assert_consumer_bundle_intact(bundle)
+    intact = assert_consumer_bundle_intact(
+        bundle, source_hash_subject=source_hash_subject
+    )
     # Reject empty / synthetic envelope IDs (bundle:<hash> is never real consumption).
     raw_ids = [str(x).strip() for x in consumed_evidence_ids if str(x).strip()]
     ids = [i for i in raw_ids if not i.startswith("bundle:")]
@@ -807,5 +906,6 @@ def record_consumption(
         "capability_consumed": consumed,
         "bundle_intact": bool(intact.get("ok")),
         "bundle_verify_blockers": list(intact.get("blockers") or []),
+        "source_hash_verified": bool(intact.get("source_hash_verified")),
         "public_claim_allowed": False,
     }

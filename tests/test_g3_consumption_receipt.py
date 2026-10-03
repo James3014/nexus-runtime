@@ -64,10 +64,10 @@ def planner(task="task-1"):
 
 def worker_request():
     return {
-        "task_id": "task-1", "attempt_id": "attempt-1", "what": "repair parser", "timeout_seconds": 10,
+        "task_id": "task-1", "workspace_revision": "r" * 40, "attempt_id": "attempt-1", "what": "repair parser", "timeout_seconds": 10,
         "planner_output": planner(),
         "canonical_dispatch_envelope": {
-            "schema": "nexus.canonical_dispatch_envelope.v1", "task_id": "task-1", "attempt_id": "attempt-1",
+            "schema": "nexus.canonical_dispatch_envelope.v1", "task_id": "task-1", "workspace_revision": "r" * 40, "attempt_id": "attempt-1",
             "task_card_path": "tasks/task-1.md", "task_card_hash": "d" * 64, "demand_id": "online:implementer",
             "planner_decision_hash": D, "planner_plan_hash": P, "worker_id": "agy_flash", "provider": "agy",
             "model": "gemini-3.6-flash-high", "policy_hash": "e" * 64, "binding_hash": "f" * 64,
@@ -79,7 +79,7 @@ def worker_request():
 def online_context():
     bundle = sealed_bundle("online-1", "inspect context")
     return {
-        "task_id": "online-1", "attempt_id": "attempt-online-1", "task_statement": "inspect context",
+        "task_id": "online-1", "workspace_revision": "r" * 40, "attempt_id": "attempt-online-1", "task_statement": "inspect context",
         "online_prompt": "inspect context", "planner_decision_id": D,
         "planner": {"plan_hash": P, "signal_snapshot": {"selected_capabilities": ["memory", "codeintel"]}},
         "capability_evidence_bundle": bundle,
