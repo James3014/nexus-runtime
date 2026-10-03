@@ -1,5 +1,23 @@
 """Explicit runtime execution coordination contracts."""
 
+from .bounded_decision import (
+    BOUNDED_DECISION_ELIGIBLE,
+    BOUNDED_DECISION_INSUFFICIENT_STATE,
+    BOUNDED_DECISION_PACKET_SCHEMA,
+    BOUNDED_DECISION_RESPONSE_SCHEMA,
+    BOUNDED_DECISION_TELEMETRY_SCHEMA,
+    DETERMINISTIC_ALREADY_RESOLVED,
+    ESCALATE,
+    FRONTIER_REASONING_REQUIRED,
+    BoundedDecisionCandidate,
+    BoundedDecisionEligibility,
+    BoundedDecisionError,
+    BoundedDecisionPacket,
+    BoundedDecisionResponse,
+    build_bounded_decision_packet,
+    classify_bounded_decision,
+    validate_bounded_decision_response,
+)
 from .context_aware import ExecutionCoordinator
 from .coordinator import (
     EscalationDecision,
@@ -33,8 +51,16 @@ from .model_call_resolution import (
 from .ports import MissingExecutionBindingError, ModelCallGatePort
 
 __all__ = [
+    "BOUNDED_DECISION_ELIGIBLE",
+    "BOUNDED_DECISION_INSUFFICIENT_STATE",
+    "BOUNDED_DECISION_PACKET_SCHEMA",
+    "BOUNDED_DECISION_RESPONSE_SCHEMA",
+    "BOUNDED_DECISION_TELEMETRY_SCHEMA",
+    "DETERMINISTIC_ALREADY_RESOLVED",
     "DETERMINISTIC_RESOLVED",
     "EFFECT_AUTHORIZATION_SCHEMA",
+    "ESCALATE",
+    "FRONTIER_REASONING_REQUIRED",
     "INSUFFICIENT_STRUCTURED_STATE",
     "MODEL_AVOIDED",
     "MODEL_CALL_RESOLUTION_SCHEMA",
@@ -45,6 +71,11 @@ __all__ = [
     "RESOLVED_DETERMINISTICALLY",
     "TOOL_PROJECTION_SCHEMA",
     "WORKER_INVOCATION_SEAM",
+    "BoundedDecisionCandidate",
+    "BoundedDecisionEligibility",
+    "BoundedDecisionError",
+    "BoundedDecisionPacket",
+    "BoundedDecisionResponse",
     "EffectAuthorization",
     "EffectAuthorizationError",
     "EscalationDecision",
@@ -58,5 +89,8 @@ __all__ = [
     "ToolProjectionManifest",
     "WorkerEscalationPolicy",
     "WorkerOutcome",
+    "build_bounded_decision_packet",
+    "classify_bounded_decision",
     "resolve_model_call_need",
+    "validate_bounded_decision_response",
 ]
