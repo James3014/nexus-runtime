@@ -10,6 +10,7 @@ from nexus_planning_candidate.services.capability_evidence_bundle import (
     CONSUMER_PAYLOAD_SCHEMA,
     MAX_CONSUMER_PAYLOAD_CHARS,
     assert_consumer_bundle_intact,
+    build_source_hash_subject,
 )
 
 from .assembly import build_context_assembly_contract
@@ -193,6 +194,7 @@ def _evidence_projection(
     expected_plan_hash: str = "",
     expected_decision_id: str = "",
     expected_statement: str = "",
+    expected_workspace_revision: str = "",
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[dict[str, Any], ...], tuple[str, ...], tuple[dict[str, Any], ...]]:
     bundle = _mapping(container.get("capability_evidence_bundle"))
     if not bundle:
@@ -203,17 +205,6 @@ def _evidence_projection(
         bundle = _mapping(signal_snapshot.get("capability_evidence_bundle"))
     if not bundle:
         return (), (), (), (), ()
-    intact = assert_consumer_bundle_intact(bundle)
-    if not intact.get("ok"):
-        raise ValueError(
-            "consumer_evidence_bundle_invalid:" + ",".join(intact.get("blockers") or ())
-        )
-    selected = _normalized_ids(expected_selected)
-    bundle_selected = bundle.get("selected_capabilities")
-    if not isinstance(bundle_selected, (list, tuple)):
-        raise ValueError("consumer_evidence_bundle_selection_invalid")
-    if _normalized_ids(tuple(str(item) for item in bundle_selected)) != selected:
-        raise ValueError("consumer_evidence_bundle_selection_mismatch")
     if expected_task_id and str(bundle.get("task_id") or "") != expected_task_id:
         raise ValueError("consumer_evidence_bundle_task_mismatch")
     if expected_plan_hash and str(bundle.get("plan_hash") or "") != expected_plan_hash:
@@ -224,6 +215,27 @@ def _evidence_projection(
         statement_hash = hashlib.sha256(expected_statement.encode("utf-8")).hexdigest()
         if str(bundle.get("task_statement_hash") or "") != statement_hash:
             raise ValueError("consumer_evidence_bundle_statement_mismatch")
+    if expected_workspace_revision:
+        if str(bundle.get("workspace_revision") or "") != expected_workspace_revision:
+            raise ValueError("consumer_evidence_bundle_workspace_revision_mismatch")
+    source_hash_subject = build_source_hash_subject(
+        expected_workspace_revision, expected_statement
+    )
+    intact = assert_consumer_bundle_intact(
+        bundle, source_hash_subject=source_hash_subject
+    )
+    if not intact.get("ok"):
+        raise ValueError(
+            "consumer_evidence_bundle_invalid:" + ",".join(intact.get("blockers") or ())
+        )
+    if not intact.get("source_hash_verified"):
+        raise ValueError("consumer_evidence_bundle_invalid:source_hash_not_verified")
+    selected = _normalized_ids(expected_selected)
+    bundle_selected = bundle.get("selected_capabilities")
+    if not isinstance(bundle_selected, (list, tuple)):
+        raise ValueError("consumer_evidence_bundle_selection_invalid")
+    if _normalized_ids(tuple(str(item) for item in bundle_selected)) != selected:
+        raise ValueError("consumer_evidence_bundle_selection_mismatch")
     materialized_values: list[str] = []
     payload_evidence_values: list[str] = []
     payloads: list[dict[str, Any]] = []
@@ -733,6 +745,7 @@ def build_online_context_package(context: Mapping[str, Any]) -> dict[str, Any]:
     if not planner_plan_hash:
         raise ValueError("online_model_context_planner_plan_missing")
     task_id = str(context.get("task_id") or "").strip()
+    workspace_revision = str(context.get("workspace_revision") or "").strip()
     materialized, bundles, payloads, payload_evidence, payload_records = _evidence_projection(
         context,
         expected_selected=selected,
@@ -740,6 +753,7 @@ def build_online_context_package(context: Mapping[str, Any]) -> dict[str, Any]:
         expected_plan_hash=planner_plan_hash,
         expected_decision_id=planner_decision_id,
         expected_statement=str(context.get("task_statement") or ""),
+        expected_workspace_revision=workspace_revision,
     )
     attempt_id = str(
         context.get("attempt_id")
@@ -817,6 +831,12 @@ def build_worker_context_package_with_admission(
     task_statement = str(
         request.get("what") or request.get("task_statement") or ""
     )
+    request_workspace_revision = str(request.get("workspace_revision") or "").strip()
+    envelope_workspace_revision = str(envelope.get("workspace_revision") or "").strip()
+    if request_workspace_revision and envelope_workspace_revision and request_workspace_revision != envelope_workspace_revision:
+        raise ValueError("worker_model_context_workspace_revision_mismatch")
+    workspace_revision = request_workspace_revision or envelope_workspace_revision
+
     selected = _planner_selected_capabilities(planner)
     materialized, bundles, payloads, payload_evidence, payload_records = (
         _evidence_projection(
@@ -826,6 +846,7 @@ def build_worker_context_package_with_admission(
             expected_plan_hash=planner_plan_hash,
             expected_decision_id=planner_decision_id,
             expected_statement=task_statement,
+            expected_workspace_revision=workspace_revision,
         )
     )
     worker_binding = {
