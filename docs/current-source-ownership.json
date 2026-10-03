@@ -824,7 +824,7 @@
     },
     {
       "path": "nexus_runtime/execution_coordination/bounded_decision.py",
-      "sha256": "0a73497483d9feae646bf45dbc7fb556fe1618c5f18ef9d437d4f189b49ddb6e",
+      "sha256": "1fffb230f06ef7efbbbec61aaddce4f0395b1e59aedab37fce03a697999c92f1",
       "canonical_owner": "runtime execution coordination",
       "donor": "James3014/nexus-runtime#54",
       "lineage_status": "integrated_pending_acceptance"

@@ -7,6 +7,8 @@ fail-safe escalation. No decision model/provider is invoked.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import replace
 
 import pytest
@@ -30,12 +32,24 @@ from nexus_runtime.execution_coordination import (
 )
 
 
-def _verdict(resolution=MODEL_NEEDED):
+def _state_digest(value):
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _verdict(resolution=MODEL_NEEDED, state=None):
+    state = _state() if state is None else state
     return ModelCallNeedVerdict.build(
         resolution=resolution,
         reason="test",
         resolver_id="test-resolver",
-        structured_state_digest="state-digest",
+        structured_state_digest=_state_digest(state),
     )
 
 
@@ -103,6 +117,38 @@ def test_insufficient_model_call_state_stays_insufficient():
     assert result.disposition == BOUNDED_DECISION_INSUFFICIENT_STATE
 
 
+def test_model_needed_verdict_cannot_be_replayed_against_different_state():
+    first_state = _state(
+        structured_state={"failure_kind": "bounded", "attempt": 1}
+    )
+    second_state = _state(
+        structured_state={"failure_kind": "bounded", "attempt": 2}
+    )
+    result = classify_bounded_decision(
+        _verdict(state=first_state), second_state
+    )
+    assert result.disposition == BOUNDED_DECISION_INSUFFICIENT_STATE
+    assert result.reason == "model_call_state_digest_mismatch"
+    with pytest.raises(BoundedDecisionError, match="state_digest_mismatch"):
+        build_bounded_decision_packet(_verdict(state=first_state), second_state)
+
+
+@pytest.mark.parametrize(
+    "decision_family",
+    ["merge_choice", "completion_choice", "evidence_sufficiency_choice"],
+)
+def test_unregistered_decision_family_fails_to_frontier_even_when_declared_safe(
+    decision_family,
+):
+    state = _state(
+        decision_family=decision_family,
+        protected_authority_requirements=[],
+    )
+    result = classify_bounded_decision(_verdict(state=state), state)
+    assert result.disposition == FRONTIER_REASONING_REQUIRED
+    assert result.reason == f"decision_family_not_bounded_safe:{decision_family}"
+
+
 @pytest.mark.parametrize(
     "protected",
     [
@@ -117,9 +163,8 @@ def test_insufficient_model_call_state_stays_insufficient():
     ],
 )
 def test_protected_authority_never_becomes_bounded_semantic_choice(protected):
-    result = classify_bounded_decision(
-        _verdict(), _state(protected_authority_requirements=protected)
-    )
+    state = _state(protected_authority_requirements=protected)
+    result = classify_bounded_decision(_verdict(state=state), state)
     assert result.disposition == FRONTIER_REASONING_REQUIRED
     assert protected[0] in result.reason
 
@@ -127,7 +172,7 @@ def test_protected_authority_never_becomes_bounded_semantic_choice(protected):
 def test_protected_authority_declaration_is_required_fail_closed():
     state = _state()
     state.pop("protected_authority_requirements")
-    result = classify_bounded_decision(_verdict(), state)
+    result = classify_bounded_decision(_verdict(state=state), state)
     assert result.disposition == BOUNDED_DECISION_INSUFFICIENT_STATE
 
 
@@ -169,14 +214,16 @@ def test_protected_authority_declaration_is_required_fail_closed():
     ],
 )
 def test_incomplete_candidate_contract_fails_closed(candidates):
-    result = classify_bounded_decision(_verdict(), _state(candidates=candidates))
+    state = _state(candidates=candidates)
+    result = classify_bounded_decision(_verdict(state=state), state)
     assert result.disposition == BOUNDED_DECISION_INSUFFICIENT_STATE
 
 
 def test_packet_is_stable_under_candidate_order_permutation():
-    first = build_bounded_decision_packet(_verdict(), _state())
+    first_state = _state()
+    first = build_bounded_decision_packet(_verdict(state=first_state), first_state)
     permuted = _state(candidates=list(reversed(_state()["candidates"])))
-    second = build_bounded_decision_packet(_verdict(), permuted)
+    second = build_bounded_decision_packet(_verdict(state=permuted), permuted)
 
     assert first.content_sha256 == second.content_sha256
     assert [candidate.candidate_id for candidate in first.candidates] == [
@@ -188,18 +235,23 @@ def test_packet_is_stable_under_candidate_order_permutation():
 
 
 def test_material_state_change_changes_packet_identity():
-    first = build_bounded_decision_packet(_verdict(), _state())
+    first_state = _state()
+    first = build_bounded_decision_packet(_verdict(state=first_state), first_state)
+    changed_state = _state(
+        structured_state={"failure_kind": "bounded", "attempt": 2}
+    )
     changed = build_bounded_decision_packet(
-        _verdict(),
-        _state(structured_state={"failure_kind": "bounded", "attempt": 2}),
+        _verdict(state=changed_state), changed_state
     )
     assert first.content_sha256 != changed.content_sha256
 
 
 def test_source_revision_change_changes_packet_identity():
-    first = build_bounded_decision_packet(_verdict(), _state())
+    first_state = _state()
+    first = build_bounded_decision_packet(_verdict(state=first_state), first_state)
+    changed_state = _state(source_revision="f" * 40)
     changed = build_bounded_decision_packet(
-        _verdict(), _state(source_revision="f" * 40)
+        _verdict(state=changed_state), changed_state
     )
     assert first.content_sha256 != changed.content_sha256
 

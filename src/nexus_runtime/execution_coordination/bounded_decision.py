@@ -48,6 +48,10 @@ _ELIGIBILITY_STATUSES = frozenset(
     }
 )
 
+# Admission is fail-closed: only explicitly reviewed decision families may use
+# the bounded semantic seam. New families require a source change + review.
+_SAFE_BOUNDED_DECISION_FAMILIES = frozenset({"repair_candidate_choice"})
+
 # These authority classes are deliberately outside bounded semantic choice.
 # A caller may use more specific labels, but these canonical values provide a
 # portable fail-closed contract for the known protected classes.
@@ -107,6 +111,10 @@ def _canonical_json(value: Any) -> str:
 
 def _sha256_payload(value: Any) -> str:
     return "sha256:" + hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _content_digest(value: Any) -> str:
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
 def _text(value: Any, name: str) -> str:
@@ -286,12 +294,42 @@ def classify_bounded_decision(
             model_call_verdict.resolution,
         )
 
+    try:
+        state_digest = _content_digest(
+            _json_value(dict(structured_state), "structured_state")
+        )
+    except BoundedDecisionError as exc:
+        return BoundedDecisionEligibility(
+            BOUNDED_DECISION_INSUFFICIENT_STATE,
+            f"bounded_state_unusable:{exc}",
+            model_call_verdict.resolution,
+        )
+    if not model_call_verdict.structured_state_digest:
+        return BoundedDecisionEligibility(
+            BOUNDED_DECISION_INSUFFICIENT_STATE,
+            "model_call_state_digest_missing",
+            model_call_verdict.resolution,
+        )
+    if model_call_verdict.structured_state_digest != state_digest:
+        return BoundedDecisionEligibility(
+            BOUNDED_DECISION_INSUFFICIENT_STATE,
+            "model_call_state_digest_mismatch",
+            model_call_verdict.resolution,
+        )
+
     decision_family = str(structured_state.get("decision_family") or "").strip()
     if not decision_family:
         return BoundedDecisionEligibility(
             BOUNDED_DECISION_INSUFFICIENT_STATE,
             "decision_family_missing",
             model_call_verdict.resolution,
+        )
+    if decision_family not in _SAFE_BOUNDED_DECISION_FAMILIES:
+        return BoundedDecisionEligibility(
+            FRONTIER_REASONING_REQUIRED,
+            f"decision_family_not_bounded_safe:{decision_family}",
+            model_call_verdict.resolution,
+            decision_family,
         )
 
     protected = structured_state.get("protected_authority_requirements")
