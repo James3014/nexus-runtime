@@ -126,3 +126,50 @@ def test_nested_verifier_exact_task_binding_allows_final_contribution() -> None:
         },
     )
     assert finalized["claim_boundary"]["outcome_contributed"] is True
+
+
+def test_verified_assist_consumption_allows_final_contribution_without_stage_claims() -> None:
+    receipt = _receipt_for_nested_verifier_binding()
+    for name in ("planner", "local", "online"):
+        receipt[name]["outcome_contributed"] = False
+    receipt["local"]["verified_assist_packet_expected_hash"] = "expected-vap"
+    finalized = _finalize(
+        receipt,
+        {
+            "task_id": "vap-bind-final",
+            "invoked": True,
+            "gate_passed": True,
+            "evidence_refs": ["verifier:evidence"],
+            "response": {
+                "task_id": "vap-bind-final",
+                "attempt_id": "attempt-final",
+                "source_hash": "source-final",
+            },
+        },
+    )
+    assert finalized["claim_boundary"]["outcome_contributed"] is True
+    assert finalized["local"]["substitution_trace"]["final_outcome_contributed"] is True
+
+
+def test_verified_assist_credit_without_online_consumption_stays_false() -> None:
+    receipt = _receipt_for_nested_verifier_binding()
+    for name in ("planner", "local", "online"):
+        receipt[name]["outcome_contributed"] = False
+    receipt["local"]["verified_assist_packet_expected_hash"] = "expected-vap"
+    receipt["local"]["substitution_trace"]["online_consumed"] = False
+    finalized = _finalize(
+        receipt,
+        {
+            "task_id": "vap-bind-final",
+            "invoked": True,
+            "gate_passed": True,
+            "evidence_refs": ["verifier:evidence"],
+            "response": {
+                "task_id": "vap-bind-final",
+                "attempt_id": "attempt-final",
+                "source_hash": "source-final",
+            },
+        },
+    )
+    assert finalized["claim_boundary"]["outcome_contributed"] is False
+    assert finalized["local"]["substitution_trace"]["final_outcome_contributed"] is False
