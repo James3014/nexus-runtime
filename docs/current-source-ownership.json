@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "53dfe56c414f597af03a97fe0b2c5fa9bbd6eab3",
+  "source_head": "d7ec24c27e813474190cecd67e02f7027dde1265",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -649,7 +649,7 @@
     },
     {
       "path": "nexus_runtime_p6c_candidate/runtime.py",
-      "sha256": "8110ee962a8ca3630d1269e25462fb8bd26a9cded98e248c7c788c853446a87b",
+      "sha256": "f7c1d0288786e3dc480284b2c2e02d9052a959e9720d13feb49f66428a200785",
       "canonical_owner": "runtime",
       "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
       "lineage_status": "known"
