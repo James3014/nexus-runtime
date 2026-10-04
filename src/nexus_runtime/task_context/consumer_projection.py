@@ -21,9 +21,18 @@ from .context_admission import (
     build_admission_receipt,
     build_admission_telemetry,
 )
+from .retrieval_hints import (
+    RETRIEVAL_HINT_CLAIM_CEILING,
+    RETRIEVAL_HINT_SCHEMA,
+    build_hint_telemetry,
+    compose_verified_repository_query_hints,
+    seal_retrieval_hint_report,
+)
 
 MODEL_CONTEXT_MARKER = "[NEXUS MODEL CONTEXT]"
 _CONTEXT_ADMISSION_PROJECTION_TOKEN = object()
+_RETRIEVAL_HINT_PROJECTION_TOKEN = object()
+
 
 def _estimate_tokens(value: Any) -> int:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -65,6 +74,17 @@ def _strict_json_copy(value: Any) -> Any:
         return json.loads(encoded)
     except (TypeError, ValueError, UnicodeError) as exc:
         raise ValueError("consumer_payload_json_invalid") from exc
+
+
+def _serialized_json_metrics(value: Any) -> dict[str, int]:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return {"chars": len(encoded), "bytes": len(encoded.encode("utf-8"))}
 
 
 def _payload_hash_basis(payload: Mapping[str, Any]) -> tuple[str, int]:
@@ -618,6 +638,8 @@ def build_planner_consumer_context_package(
     consumer_channel: str,
     worker_binding: Mapping[str, Any] | None = None,
     _context_admission_token: object | None = None,
+    retrieval_hints_context: Mapping[str, Any] | None = None,
+    _retrieval_hint_token: object | None = None,
 ) -> dict[str, Any]:
     """Project already-selected Planner context into the G1 semantic package.
 
@@ -687,6 +709,16 @@ def build_planner_consumer_context_package(
     if not set(serialized_caps).issubset(payload_caps) or not set(serialized_evidence).issubset(payload_evidence):
         raise ValueError("consumer_payload_serialization_binding_invalid")
 
+    if retrieval_hints_context is not None and (
+        _retrieval_hint_token is not _RETRIEVAL_HINT_PROJECTION_TOKEN
+    ):
+        raise ValueError("retrieval_hint_projection_not_allowed")
+    retrieval_context = (
+        _strict_json_copy(retrieval_hints_context)
+        if retrieval_hints_context is not None
+        else None
+    )
+
     task_source = {
         "source_id": f"task:{task_id}",
         "kind": "L0",
@@ -697,22 +729,29 @@ def build_planner_consumer_context_package(
         "required": True,
         "metadata": {"projection": "task_identity"},
     }
+    planner_source_metadata = {
+        "projection": "planner_selected_context",
+        "consumer_payload_records": validated_records,
+    }
+    planner_estimate_context = {
+        "planner_decision_id": planner_decision_id,
+        "planner_plan_hash": planner_plan_hash,
+        "selected_capability_ids": selected,
+        "materialized_evidence_ids": materialized,
+        "evidence_bundle_ids": bundles,
+        "consumer_payload_records": validated_records,
+    }
+    if retrieval_context is not None:
+        planner_source_metadata["retrieval_hints"] = retrieval_context
+        planner_estimate_context["retrieval_hints"] = retrieval_context
+
     planner_source = {
         "source_id": f"planner:{planner_decision_id}",
         "kind": "L1",
-        "estimated_tokens": _estimate_tokens(
-            {
-                "planner_decision_id": planner_decision_id,
-                "planner_plan_hash": planner_plan_hash,
-                "selected_capability_ids": selected,
-                "materialized_evidence_ids": materialized,
-                "evidence_bundle_ids": bundles,
-                "consumer_payload_records": validated_records,
-            }
-        ),
+        "estimated_tokens": _estimate_tokens(planner_estimate_context),
         "priority": 1,
         "required": True,
-        "metadata": {"projection": "planner_selected_context", "consumer_payload_records": validated_records},
+        "metadata": planner_source_metadata,
     }
     sources: list[Mapping[str, Any]] = [task_source, planner_source]
     token_budget = sum(int(source["estimated_tokens"]) for source in sources)
@@ -804,6 +843,9 @@ def build_online_context_package(context: Mapping[str, Any]) -> dict[str, Any]:
 
 def build_worker_context_package_with_admission(
     request: Mapping[str, Any],
+    *,
+    repository_query_evidence_validator: Callable[[Mapping[str, Any]], Any] | None = None,
+    trusted_repository_identity: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build WorkerRegistry projection plus non-model-visible recovery evidence."""
 
@@ -887,23 +929,140 @@ def build_worker_context_package_with_admission(
             "tokens_saved_now": 0,
         }
 
-    package = build_planner_consumer_context_package(
+    package_kwargs = {
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "planner_decision_id": planner_decision_id,
+        "planner_plan_hash": planner_plan_hash,
+        "task_statement": task_statement,
+        "selected_capability_ids": selected,
+        "materialized_evidence_ids": materialized,
+        "evidence_bundle_ids": bundles,
+        "consumer_role": "worker",
+        "consumer_channel": "worker_registry",
+        "worker_binding": worker_binding,
+        "consumer_payloads": admitted_payloads,
+        "serialized_evidence_ids": payload_evidence,
+        "consumer_payload_records": payload_records,
+        "_context_admission_token": _CONTEXT_ADMISSION_PROJECTION_TOKEN,
+    }
+    package = build_planner_consumer_context_package(**package_kwargs)
+
+    raw_query_evidence = request.get("repository_query_evidence")
+    if raw_query_evidence is None:
+        raw_hints = request.get("retrieval_hints")
+        if isinstance(raw_hints, Mapping):
+            raw_query_evidence = raw_hints.get("repository_query_evidence")
+
+    expected_identity = _mapping(trusted_repository_identity)
+    expected_repository = expected_identity.get("repository")
+    expected_revision = expected_identity.get("source_revision")
+    if not isinstance(expected_repository, str):
+        expected_repository = ""
+    if not isinstance(expected_revision, str):
+        expected_revision = ""
+    required_segments = [
+        f"task:{task_id}",
+        f"attempt:{attempt_id}",
+        f"planner:{planner_decision_id}",
+        *[f"capability:{item}" for item in selected],
+        *[f"evidence:{item}" for item in materialized],
+        *[f"bundle:{item}" for item in bundles],
+    ]
+    composed = compose_verified_repository_query_hints(
+        required_segments=required_segments,
+        query_evidence=raw_query_evidence,
+        expected_repository=expected_repository,
+        expected_revision=expected_revision,
+        validator=repository_query_evidence_validator,
+    )
+    hint_context: dict[str, Any] | None = None
+    if composed.get("bound") is True:
+        hint_context = {
+            "schema": RETRIEVAL_HINT_SCHEMA,
+            "required_preserved": list(composed.get("required_preserved") or []),
+            "hints": list(composed.get("hints") or []),
+            "hint_identity": dict(composed.get("hint_identity") or {}),
+            "claim_ceiling": RETRIEVAL_HINT_CLAIM_CEILING,
+            "canonical_query_verified": True,
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "query_evidence_hash": str(
+                (composed.get("hint_identity") or {}).get("content_sha256") or ""
+            ),
+        }
+        package_kwargs["retrieval_hints_context"] = hint_context
+        package_kwargs["_retrieval_hint_token"] = _RETRIEVAL_HINT_PROJECTION_TOKEN
+        package = build_planner_consumer_context_package(**package_kwargs)
+
+    try:
+        source_metrics = (
+            _serialized_json_metrics(raw_query_evidence)
+            if raw_query_evidence is not None
+            else {"chars": None, "bytes": None}
+        )
+    except (TypeError, ValueError, UnicodeError):
+        source_metrics = {"chars": None, "bytes": None}
+    try:
+        canonical_metrics = _serialized_json_metrics(
+            build_planner_consumer_context_package(
+                **{
+                    key: value
+                    for key, value in package_kwargs.items()
+                    if key
+                    not in {"retrieval_hints_context", "_retrieval_hint_token"}
+                }
+            )
+        )
+    except (TypeError, ValueError, UnicodeError):
+        canonical_metrics = {"chars": None, "bytes": None}
+    model_metrics = _serialized_json_metrics(package)
+    hint_metrics = (
+        _serialized_json_metrics(hint_context)
+        if hint_context is not None
+        else {"chars": 0, "bytes": 0}
+    )
+    query_hash = (
+        str((composed.get("hint_identity") or {}).get("content_sha256") or "")
+        if composed.get("canonical_query_verified") is True
+        else None
+    )
+    telemetry = build_hint_telemetry(
+        composed=composed,
+        source_chars=source_metrics["chars"],
+        source_bytes=source_metrics["bytes"],
+        canonical_chars=canonical_metrics["chars"],
+        canonical_bytes=canonical_metrics["bytes"],
+        model_visible_chars=model_metrics["chars"],
+        model_visible_bytes=model_metrics["bytes"],
+        hint_chars=hint_metrics["chars"],
+        hint_bytes=hint_metrics["bytes"],
+        # The invocation proves the package was supplied; it does not prove
+        # that the worker opened or used any individual candidate.
+        consumed_hints=None,
+        recovery_calls=None,
+        recalled_hidden=None,
+        online_calls=None,
+        online_tokens=None,
         task_id=task_id,
         attempt_id=attempt_id,
-        planner_decision_id=planner_decision_id,
-        planner_plan_hash=planner_plan_hash,
-        task_statement=task_statement,
-        selected_capability_ids=selected,
-        materialized_evidence_ids=materialized,
-        evidence_bundle_ids=bundles,
-        consumer_role="worker",
-        consumer_channel="worker_registry",
-        worker_binding=worker_binding,
-        consumer_payloads=admitted_payloads,
-        serialized_evidence_ids=payload_evidence,
-        consumer_payload_records=payload_records,
-        _context_admission_token=_CONTEXT_ADMISSION_PROJECTION_TOKEN,
+        query_evidence_hash=query_hash,
     )
+    admission_report["retrieval_hint_report"] = seal_retrieval_hint_report({
+        "schema": RETRIEVAL_HINT_SCHEMA,
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "bound": composed.get("bound") is True,
+        "canonical_query_verified": composed.get("canonical_query_verified") is True,
+        "blockers": list(composed.get("blockers") or []),
+        "hint_identity": dict(composed.get("hint_identity") or {}),
+        "normalized_payload": dict(composed.get("normalized_payload") or {}),
+        "hint_candidates": list(composed.get("hints") or []),
+        "candidate_bytes": composed.get("candidate_bytes"),
+        "query_evidence_hash": query_hash,
+        "telemetry": telemetry,
+        "observation_status": "PENDING_WORKER_ADAPTER",
+    })
     if package.get("status") != "PASS":
         raise ValueError(
             "worker_model_context_package_invalid:"
