@@ -454,11 +454,12 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
     # These providers have no verified registered-CLI model-binding contract. An
     # admitted physical call must not silently fall back to a provider default.
     REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS: frozenset[str] = frozenset(
-        {"agy", "grok", "openai"}
+        {"grok", "openai"}
     )
 
     # Explicit provider contracts. These are not inferred from installed CLIs.
     REGISTERED_CLI_MODEL_BINDING_FLAGS: dict[str, tuple[str, str]] = {
+        "agy": ("", "--model"),
         "codex": ("exec", "-m"),
         "opencode": ("run", "--model"),
         "cline": ("", "--model"),
@@ -2001,6 +2002,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             payload = str(context.get("online_payload") or "")
             local_context_forwarded = False
             capability_context_forwarded = False
+            vap_injection = ""
             planner_context = context.get("planner")
             canonical_context = (
                 context.get("schema") == REQUEST_SCHEMA
@@ -2025,6 +2027,12 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                         final_prompt=prompt,
                     )
                     forward = safe.get("forward", {}) if isinstance(safe, Mapping) else {}
+                    verified_assist = (
+                        safe.get("verified_assist")
+                        if isinstance(safe, Mapping) and isinstance(safe.get("verified_assist"), Mapping)
+                        else {}
+                    )
+                    vap_injection = str(verified_assist.get("injection_fragment") or "")
                     if isinstance(forward, Mapping) and (
                         forward.get("concise_summary")
                         or forward.get("candidate_hash")
@@ -2037,6 +2045,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                             default=str,
                         )
                         local_context_forwarded = True
+                    if vap_injection and vap_injection not in prompt:
+                        prompt = f"{prompt}\n{vap_injection}"
                 capability_results = context.get("capability_results", {})
                 if capability_results and not canonical_context:
                     compressed = bool(context.get("capability_context_compressed"))
@@ -2151,13 +2161,30 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             elif print_flag and len(argv) == 1:
                 if model_binding and admitted_model:
                     subcommand, model_flag = model_binding
-                    argv = (
-                        ([argv[0], subcommand, model_flag, admitted_model, stdin] if model_flag else [argv[0], subcommand, admitted_model, stdin])
-                        if subcommand
-                        else [argv[0], model_flag, admitted_model, stdin]
-                    )
+                    if spec.provider == "agy":
+                        argv = [
+                            argv[0],
+                            "--dangerously-skip-permissions",
+                            "--sandbox",
+                            model_flag,
+                            admitted_model,
+                            print_flag,
+                            stdin,
+                        ]
+                    else:
+                        argv = (
+                            ([argv[0], subcommand, model_flag, admitted_model, stdin] if model_flag else [argv[0], subcommand, admitted_model, stdin])
+                            if subcommand
+                            else [argv[0], model_flag, admitted_model, stdin]
+                        )
                 elif spec.provider == "agy":
-                    argv = [argv[0], "--dangerously-skip-permissions", print_flag, stdin]
+                    argv = [
+                        argv[0],
+                        "--dangerously-skip-permissions",
+                        "--sandbox",
+                        print_flag,
+                        stdin,
+                    ]
                 else:
                     argv = [argv[0], print_flag, stdin]
                 stdin_input = ""
@@ -2190,7 +2217,14 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             cmd_fp = hashlib.sha256(json.dumps(argv, ensure_ascii=False).encode("utf-8")).hexdigest()
             exec_path = str(shutil.which(argv[0]) or argv[0])
             exec_hash = hashlib.sha256(exec_path.encode("utf-8")).hexdigest()
-            cwd_str = str(spec.working_directory or os.getcwd())
+            agy_isolated_working_directory = ""
+            effective_working_directory = str(spec.working_directory or "")
+            if spec.provider == "agy" and not effective_working_directory:
+                agy_isolated_working_directory = tempfile.mkdtemp(
+                    prefix="nexus-agy-online-"
+                )
+                effective_working_directory = agy_isolated_working_directory
+            cwd_str = str(effective_working_directory or os.getcwd())
             cwd_hash = hashlib.sha256(cwd_str.encode("utf-8")).hexdigest()
             input_sha256 = hashlib.sha256(stdin.encode("utf-8")).hexdigest()
 
@@ -2226,7 +2260,14 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     "command_fingerprint": cmd_fp,
                     "executable_path_hash": exec_hash,
                     "working_directory_hash": cwd_hash,
-                    "sandboxed_working_directory": bool(spec.working_directory),
+                    "sandboxed_working_directory": bool(effective_working_directory),
+                    "working_directory_isolation": (
+                        "runtime_ephemeral"
+                        if agy_isolated_working_directory
+                        else "caller_bound"
+                        if spec.working_directory
+                        else "inherited"
+                    ),
                     "provider_input_sha256": input_sha256,
                     "stdout_sha256": hashlib.sha256(stdout_str.encode("utf-8")).hexdigest() if started else "",
                     "stderr_sha256": hashlib.sha256(stderr_str.encode("utf-8")).hexdigest() if started else "",
@@ -2240,13 +2281,15 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 result = runner(
                     argv,
                     input=stdin_input,
-                    cwd=spec.working_directory or None,
+                    cwd=effective_working_directory or None,
                     capture_output=True,
                     text=True,
                     timeout=spec.timeout_sec,
                     check=False,
                 )
             except subprocess.TimeoutExpired as exc:
+                if agy_isolated_working_directory:
+                    shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
                 elapsed = int((time.monotonic() - start_time) * 1000)
                 pe = _build_process_evidence(True, "", str(exc), None, max(0, elapsed))
                 return attach_context_receipt(normalize_online_invoker_payload(
@@ -2266,6 +2309,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
                 ))
             except OSError as exc:
+                if agy_isolated_working_directory:
+                    shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
                 elapsed = int((time.monotonic() - start_time) * 1000)
                 pe = _build_process_evidence(False, "", str(exc), None, max(0, elapsed))
                 return attach_context_receipt(normalize_online_invoker_payload(
@@ -2284,6 +2329,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     selection_source=SELECTION_EXPLICIT_REQUEST,
                     extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
                 ))
+            if agy_isolated_working_directory:
+                shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
             elapsed = int((time.monotonic() - start_time) * 1000)
             stdout = str(getattr(result, "stdout", "") or "")
             stderr = str(getattr(result, "stderr", "") or "")
@@ -2309,7 +2356,12 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 ),
                 transport=TRANSPORT_REGISTERED_CLI,
                 selection_source=SELECTION_EXPLICIT_REQUEST,
-                extra={"returncode": returncode, "stderr": stderr, "process_evidence": pe},
+                extra={
+                    "returncode": returncode,
+                    "stderr": stderr,
+                    "process_evidence": pe,
+                    "assembled_online_prompt": stdin,
+                },
             ))
 
         invoke.provider = spec.provider  # type: ignore[attr-defined]
