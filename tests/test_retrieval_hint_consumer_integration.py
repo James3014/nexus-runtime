@@ -1,25 +1,11 @@
 """Canonical Repository Intelligence evidence through ContextHub and WorkerRegistry."""
 from __future__ import annotations
 
-import sys
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-try:
-    from repository_intelligence.retrieval import (
-        analyze_repository_query,
-        verify_repository_query_evidence,
-    )
-except ImportError:
-    pytest.skip(
-        "canonical Repository Intelligence package is not installed",
-        allow_module_level=True,
-    )
 
 from nexus_planning_candidate.services.capability_evidence_bundle import (
     build_capability_evidence_bundle,
@@ -50,53 +36,63 @@ DECISION = "b" * 64
 PLAN = "c" * 64
 
 
+def _query_report_digest(report: dict[str, Any]) -> str:
+    payload = {key: value for key, value in report.items() if key != "content_sha256"}
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def verify_repository_query_evidence(report: dict[str, Any]) -> bool:
+    """Test double for the injected canonical Repository Intelligence verifier."""
+    if not isinstance(report, dict):
+        return False
+    observed = report.get("content_sha256")
+    return isinstance(observed, str) and observed == _query_report_digest(report)
+
+
 def _canonical_query_report() -> dict[str, Any]:
-    report = analyze_repository_query(
-        {
-            "snapshot": {
-                "repository": REPOSITORY,
-                "pr_number": 40,
-                "head_sha": REVISION,
-                "base_sha": "d" * 40,
-                "current_main_sha": "d" * 40,
-                "declared_base_sha": "d" * 40,
-                "declared_head_sha": REVISION,
-                "declared_main_sha": "d" * 40,
-            },
-            "query_id": "symbols:read_outside_hint",
-            "query_digest": "e" * 64,
-            "index_identity": {
-                "index_id": "python-ast-symbols-v1",
-                "index_revision": "idx-40",
-                "backend_id": "stdlib-pointer",
-            },
-            "retrievers": [
-                {
-                    "identity": {
-                        "retriever_id": "exact_symbol",
-                        "index_id": "python-ast-symbols-v1",
-                        "index_revision": "idx-40",
-                        "retriever_version": "v1",
-                    },
-                    "ranked_candidates": [
-                        {
-                            "candidate_ref": "pkg/über.py",
-                            "source_rank": 1,
-                            "source_score": 1.0,
-                            "evidence_ref": "symbol-index:über",
-                            "match_class": "EXACT",
-                        }
-                    ],
-                    "complete": True,
-                    "source_hits": 1,
-                    "errors": [],
+    report = {
+        "schema": "reviewer.repository_query_evidence.v1",
+        "identity": {
+            "repository": REPOSITORY,
+            "head_sha": REVISION,
+        },
+        "query_digest": "e" * 64,
+        "index_identity": {
+            "index_id": "python-ast-symbols-v1",
+            "index_revision": "idx-40",
+            "backend_id": "stdlib-pointer",
+        },
+        "retrievers": [
+            {
+                "identity": {
+                    "retriever_id": "exact_symbol",
+                    "index_id": "python-ast-symbols-v1",
+                    "index_revision": "idx-40",
+                    "retriever_version": "v1",
                 }
-            ],
-            "required_candidates": 3,
-            "collection_complete": True,
-            "collection_errors": [],
-        }
-    ).to_dict()
+            }
+        ],
+        "required_candidates": 3,
+        "fused_candidates": [
+            {
+                "candidate_ref": "pkg/über.py",
+                "fused_rank": 1,
+                "fused_score": 1.0,
+                "exact_match": True,
+                "matched_source_count": 1,
+            }
+        ],
+        "resolution": "complete",
+        "is_complete": True,
+    }
+    report["content_sha256"] = _query_report_digest(report)
     assert verify_repository_query_evidence(report) is True
     return report
 
