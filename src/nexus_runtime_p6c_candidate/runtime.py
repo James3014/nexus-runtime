@@ -2165,6 +2165,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                         argv = [
                             argv[0],
                             "--dangerously-skip-permissions",
+                            "--sandbox",
                             model_flag,
                             admitted_model,
                             print_flag,
@@ -2177,7 +2178,13 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                             else [argv[0], model_flag, admitted_model, stdin]
                         )
                 elif spec.provider == "agy":
-                    argv = [argv[0], "--dangerously-skip-permissions", print_flag, stdin]
+                    argv = [
+                        argv[0],
+                        "--dangerously-skip-permissions",
+                        "--sandbox",
+                        print_flag,
+                        stdin,
+                    ]
                 else:
                     argv = [argv[0], print_flag, stdin]
                 stdin_input = ""
@@ -2210,7 +2217,14 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             cmd_fp = hashlib.sha256(json.dumps(argv, ensure_ascii=False).encode("utf-8")).hexdigest()
             exec_path = str(shutil.which(argv[0]) or argv[0])
             exec_hash = hashlib.sha256(exec_path.encode("utf-8")).hexdigest()
-            cwd_str = str(spec.working_directory or os.getcwd())
+            agy_isolated_working_directory = ""
+            effective_working_directory = str(spec.working_directory or "")
+            if spec.provider == "agy" and not effective_working_directory:
+                agy_isolated_working_directory = tempfile.mkdtemp(
+                    prefix="nexus-agy-online-"
+                )
+                effective_working_directory = agy_isolated_working_directory
+            cwd_str = str(effective_working_directory or os.getcwd())
             cwd_hash = hashlib.sha256(cwd_str.encode("utf-8")).hexdigest()
             input_sha256 = hashlib.sha256(stdin.encode("utf-8")).hexdigest()
 
@@ -2246,7 +2260,14 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     "command_fingerprint": cmd_fp,
                     "executable_path_hash": exec_hash,
                     "working_directory_hash": cwd_hash,
-                    "sandboxed_working_directory": bool(spec.working_directory),
+                    "sandboxed_working_directory": bool(effective_working_directory),
+                    "working_directory_isolation": (
+                        "runtime_ephemeral"
+                        if agy_isolated_working_directory
+                        else "caller_bound"
+                        if spec.working_directory
+                        else "inherited"
+                    ),
                     "provider_input_sha256": input_sha256,
                     "stdout_sha256": hashlib.sha256(stdout_str.encode("utf-8")).hexdigest() if started else "",
                     "stderr_sha256": hashlib.sha256(stderr_str.encode("utf-8")).hexdigest() if started else "",
@@ -2260,13 +2281,15 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 result = runner(
                     argv,
                     input=stdin_input,
-                    cwd=spec.working_directory or None,
+                    cwd=effective_working_directory or None,
                     capture_output=True,
                     text=True,
                     timeout=spec.timeout_sec,
                     check=False,
                 )
             except subprocess.TimeoutExpired as exc:
+                if agy_isolated_working_directory:
+                    shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
                 elapsed = int((time.monotonic() - start_time) * 1000)
                 pe = _build_process_evidence(True, "", str(exc), None, max(0, elapsed))
                 return attach_context_receipt(normalize_online_invoker_payload(
@@ -2286,6 +2309,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
                 ))
             except OSError as exc:
+                if agy_isolated_working_directory:
+                    shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
                 elapsed = int((time.monotonic() - start_time) * 1000)
                 pe = _build_process_evidence(False, "", str(exc), None, max(0, elapsed))
                 return attach_context_receipt(normalize_online_invoker_payload(
@@ -2304,6 +2329,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     selection_source=SELECTION_EXPLICIT_REQUEST,
                     extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
                 ))
+            if agy_isolated_working_directory:
+                shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
             elapsed = int((time.monotonic() - start_time) * 1000)
             stdout = str(getattr(result, "stdout", "") or "")
             stderr = str(getattr(result, "stderr", "") or "")

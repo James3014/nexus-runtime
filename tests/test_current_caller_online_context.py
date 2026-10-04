@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
+from pathlib import Path
 from subprocess import TimeoutExpired
 from types import SimpleNamespace
 
@@ -129,15 +130,47 @@ def test_agy_registered_cli_binds_exact_admitted_model_in_argv():
         include_local_context=False,
     )(context)
 
-    assert captured["argv"][1:5] == [
+    assert captured["argv"][1:6] == [
         "--dangerously-skip-permissions",
+        "--sandbox",
         "--model",
         model,
         "-p",
     ]
-    assert captured["argv"][5]
+    assert captured["argv"][6]
     assert result["gate_passed"] is True
     assert result["provider_call_count"] == 1
+
+
+def test_agy_registered_cli_uses_runtime_isolated_working_directory(tmp_path, monkeypatch):
+    source_probe = tmp_path / "probe.txt"
+    source_probe.write_text("BEFORE\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    observed = {}
+
+    def runner(argv, **kwargs):
+        observed["cwd"] = str(kwargs["cwd"])
+        observed["argv"] = list(argv)
+        Path(kwargs["cwd"], "probe.txt").write_text("AFTER\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    model = "gemini-3.7-flash-medium"
+    exports, context = _agy_context(model)
+    result = exports.build_registered_online_invoker(
+        "agy",
+        command=(sys.executable,),
+        model_name=model,
+        runner=runner,
+        include_local_context=False,
+    )(context)
+
+    assert observed["cwd"] != str(tmp_path)
+    assert source_probe.read_text(encoding="utf-8") == "BEFORE\n"
+    assert not Path(observed["cwd"]).exists()
+    assert "--sandbox" in observed["argv"]
+    evidence = result["process_evidence"]
+    assert evidence["sandboxed_working_directory"] is True
+    assert evidence["working_directory_isolation"] == "runtime_ephemeral"
 
 
 def test_agy_registered_cli_model_mismatch_makes_zero_calls():
