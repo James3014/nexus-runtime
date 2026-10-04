@@ -5155,8 +5155,21 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 )
             )
             physical_contribution = bool(vap_credit.get("assist_credited")) if local_vap_required else True
+            local_trace = _mapping(finalized_local.get("substitution_trace"))
+            verified_assist_contribution = bool(
+                local_vap_required
+                and vap_credit.get("assist_credited")
+                and local_trace.get("online_consumed")
+            )
             outcome_contributed = (
-                any(bool(stage.get("outcome_contributed")) for stage in required_stages if isinstance(stage, Mapping))
+                (
+                    any(
+                        bool(stage.get("outcome_contributed"))
+                        for stage in required_stages
+                        if isinstance(stage, Mapping)
+                    )
+                    or verified_assist_contribution
+                )
                 and verifier_authoritative
                 and physical_contribution
             )
