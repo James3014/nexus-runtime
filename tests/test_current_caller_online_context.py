@@ -94,3 +94,86 @@ def test_timeout_and_oserror_attach_consumption_receipt():
         else:
             assert result["provider_call_count"] == 0
             assert result["process_evidence"]["process_started"] is False
+
+
+def _agy_context(model: str = "gemini-3.7-flash-medium"):
+    exports, context = _context()
+    context["gateway_invocation_authority"] = {
+        "gate_passed": True,
+        "resolved_worker_id": "agy_flash_37_medium",
+        "resolved_provider": "agy",
+        "resolved_model": model,
+    }
+    return exports, context
+
+
+def test_agy_registered_cli_binds_exact_admitted_model_in_argv():
+    captured = {}
+
+    def runner(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    model = "gemini-3.7-flash-medium"
+    exports, context = _agy_context(model)
+    result = exports.build_registered_online_invoker(
+        "agy",
+        command=(sys.executable,),
+        model_name=model,
+        runner=runner,
+        include_local_context=False,
+    )(context)
+
+    assert captured["argv"][1:5] == [
+        "--dangerously-skip-permissions",
+        "--model",
+        model,
+        "-p",
+    ]
+    assert captured["argv"][5]
+    assert result["gate_passed"] is True
+    assert result["provider_call_count"] == 1
+
+
+def test_agy_registered_cli_model_mismatch_makes_zero_calls():
+    calls = []
+
+    def runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    exports, context = _agy_context("gemini-3.7-flash-medium")
+    result = exports.build_registered_online_invoker(
+        "agy",
+        command=(sys.executable,),
+        model_name="gemini-3.7-flash-high",
+        runner=runner,
+        include_local_context=False,
+    )(context)
+
+    assert result["error"] == "gateway_invocation_authority_model_mismatch"
+    assert result["provider_call_count"] == 0
+    assert calls == []
+
+
+def test_agy_registered_cli_rejects_unbound_custom_command_shape():
+    calls = []
+
+    def runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    model = "gemini-3.7-flash-medium"
+    exports, context = _agy_context(model)
+    result = exports.build_registered_online_invoker(
+        "agy",
+        command=(sys.executable, "--dangerously-skip-permissions", "-p"),
+        model_name=model,
+        runner=runner,
+        include_local_context=False,
+    )(context)
+
+    assert result["error"] == "registered_cli_model_binding_command_shape_unsupported"
+    assert result["provider_call_count"] == 0
+    assert calls == []

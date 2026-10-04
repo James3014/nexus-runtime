@@ -454,11 +454,12 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
     # These providers have no verified registered-CLI model-binding contract. An
     # admitted physical call must not silently fall back to a provider default.
     REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS: frozenset[str] = frozenset(
-        {"agy", "grok", "openai"}
+        {"grok", "openai"}
     )
 
     # Explicit provider contracts. These are not inferred from installed CLIs.
     REGISTERED_CLI_MODEL_BINDING_FLAGS: dict[str, tuple[str, str]] = {
+        "agy": ("", "--model"),
         "codex": ("exec", "-m"),
         "opencode": ("run", "--model"),
         "cline": ("", "--model"),
@@ -2151,11 +2152,21 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             elif print_flag and len(argv) == 1:
                 if model_binding and admitted_model:
                     subcommand, model_flag = model_binding
-                    argv = (
-                        ([argv[0], subcommand, model_flag, admitted_model, stdin] if model_flag else [argv[0], subcommand, admitted_model, stdin])
-                        if subcommand
-                        else [argv[0], model_flag, admitted_model, stdin]
-                    )
+                    if spec.provider == "agy":
+                        argv = [
+                            argv[0],
+                            "--dangerously-skip-permissions",
+                            model_flag,
+                            admitted_model,
+                            print_flag,
+                            stdin,
+                        ]
+                    else:
+                        argv = (
+                            ([argv[0], subcommand, model_flag, admitted_model, stdin] if model_flag else [argv[0], subcommand, admitted_model, stdin])
+                            if subcommand
+                            else [argv[0], model_flag, admitted_model, stdin]
+                        )
                 elif spec.provider == "agy":
                     argv = [argv[0], "--dangerously-skip-permissions", print_flag, stdin]
                 else:
