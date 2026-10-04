@@ -2002,6 +2002,7 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             payload = str(context.get("online_payload") or "")
             local_context_forwarded = False
             capability_context_forwarded = False
+            vap_injection = ""
             planner_context = context.get("planner")
             canonical_context = (
                 context.get("schema") == REQUEST_SCHEMA
@@ -2026,6 +2027,12 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                         final_prompt=prompt,
                     )
                     forward = safe.get("forward", {}) if isinstance(safe, Mapping) else {}
+                    verified_assist = (
+                        safe.get("verified_assist")
+                        if isinstance(safe, Mapping) and isinstance(safe.get("verified_assist"), Mapping)
+                        else {}
+                    )
+                    vap_injection = str(verified_assist.get("injection_fragment") or "")
                     if isinstance(forward, Mapping) and (
                         forward.get("concise_summary")
                         or forward.get("candidate_hash")
@@ -2038,6 +2045,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                             default=str,
                         )
                         local_context_forwarded = True
+                    if vap_injection and vap_injection not in prompt:
+                        prompt = f"{prompt}\n{vap_injection}"
                 capability_results = context.get("capability_results", {})
                 if capability_results and not canonical_context:
                     compressed = bool(context.get("capability_context_compressed"))
@@ -2320,7 +2329,12 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 ),
                 transport=TRANSPORT_REGISTERED_CLI,
                 selection_source=SELECTION_EXPLICIT_REQUEST,
-                extra={"returncode": returncode, "stderr": stderr, "process_evidence": pe},
+                extra={
+                    "returncode": returncode,
+                    "stderr": stderr,
+                    "process_evidence": pe,
+                    "assembled_online_prompt": stdin,
+                },
             ))
 
         invoke.provider = spec.provider  # type: ignore[attr-defined]
