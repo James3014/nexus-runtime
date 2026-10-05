@@ -2116,6 +2116,26 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
 
             model_binding = REGISTERED_CLI_MODEL_BINDING_FLAGS.get(spec.provider)
             if context.get("gateway_invocation_authority") is not None and admitted_model and model_binding and len(argv) != 1:
+                if spec.provider == "agy":
+                    return normalize_online_invoker_payload(
+                        provider=spec.provider,
+                        task_id=task_id,
+                        invoked=False,
+                        output_delivered=False,
+                        gate_passed=False,
+                        provider_call_count=0,
+                        response="",
+                        raw_response="",
+                        usage={},
+                        error="registered_cli_model_binding_command_shape_unsupported",
+                        evidence_refs=[
+                            f"online:{spec.provider}:{task_id}:"
+                            "registered_cli_model_binding_command_shape_unsupported"
+                        ],
+                        transport=TRANSPORT_REGISTERED_CLI,
+                        selection_source=SELECTION_EXPLICIT_REQUEST,
+                        extra={"live_provider_claim": False},
+                    )
                 subcommand, model_flag = model_binding
                 accepted_model_flags = {model_flag}
                 if spec.provider == "codex":
@@ -2164,7 +2184,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                     if spec.provider == "agy":
                         argv = [
                             argv[0],
-                            "--dangerously-skip-permissions",
+                            "--mode",
+                            "plan",
                             "--sandbox",
                             model_flag,
                             admitted_model,
@@ -2180,7 +2201,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 elif spec.provider == "agy":
                     argv = [
                         argv[0],
-                        "--dangerously-skip-permissions",
+                        "--mode",
+                        "plan",
                         "--sandbox",
                         print_flag,
                         stdin,
@@ -2209,8 +2231,6 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                 stdin_input = ""
                 prompt_transport = "argv"
             else:
-                if spec.provider == "agy" and "--dangerously-skip-permissions" not in argv:
-                    argv.insert(1, "--dangerously-skip-permissions")
                 stdin_input = stdin
                 prompt_transport = "stdin"
 
@@ -2267,6 +2287,9 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
                         else "caller_bound"
                         if spec.working_directory
                         else "inherited"
+                    ),
+                    "provider_permission_mode": (
+                        "plan_no_autoapprove" if spec.provider == "agy" else "provider_default"
                     ),
                     "provider_input_sha256": input_sha256,
                     "stdout_sha256": hashlib.sha256(stdout_str.encode("utf-8")).hexdigest() if started else "",
