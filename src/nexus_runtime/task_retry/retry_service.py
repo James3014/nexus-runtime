@@ -82,17 +82,24 @@ class RetryService:
         request = state.get("request")
         try:
             maximum = int(self.contract.maximum_attempts(request or {}))
-            if len(state.get("attempts") or ()) >= maximum:
-                return {
-                    **state,
-                    "retry": {
-                        **meta,
-                        "decision": "BLOCK",
-                        "blocker": "ATTEMPT_BUDGET_EXHAUSTED",
-                    },
-                }
         except Exception:
-            pass
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCK",
+                    "blocker": "ATTEMPT_BUDGET_UNAVAILABLE",
+                },
+            }
+        if len(state.get("attempts") or ()) >= maximum:
+            return {
+                **state,
+                "retry": {
+                    **meta,
+                    "decision": "BLOCK",
+                    "blocker": "ATTEMPT_BUDGET_EXHAUSTED",
+                },
+            }
         if status == "RETAINED_FOR_REVIEW":
             return {
                 **state,
