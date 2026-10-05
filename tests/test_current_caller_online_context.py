@@ -130,14 +130,17 @@ def test_agy_registered_cli_binds_exact_admitted_model_in_argv():
         include_local_context=False,
     )(context)
 
-    assert captured["argv"][1:6] == [
-        "--dangerously-skip-permissions",
+    assert captured["argv"][1:7] == [
+        "--mode",
+        "plan",
         "--sandbox",
         "--model",
         model,
         "-p",
     ]
-    assert captured["argv"][6]
+    assert captured["argv"][7]
+    assert "--dangerously-skip-permissions" not in captured["argv"]
+    assert result["process_evidence"]["provider_permission_mode"] == "plan_no_autoapprove"
     assert result["gate_passed"] is True
     assert result["provider_call_count"] == 1
 
@@ -168,9 +171,41 @@ def test_agy_registered_cli_uses_runtime_isolated_working_directory(tmp_path, mo
     assert source_probe.read_text(encoding="utf-8") == "BEFORE\n"
     assert not Path(observed["cwd"]).exists()
     assert "--sandbox" in observed["argv"]
+    assert ["--mode", "plan"] == observed["argv"][1:3]
+    assert "--dangerously-skip-permissions" not in observed["argv"]
     evidence = result["process_evidence"]
     assert evidence["sandboxed_working_directory"] is True
     assert evidence["working_directory_isolation"] == "runtime_ephemeral"
+    assert evidence["provider_permission_mode"] == "plan_no_autoapprove"
+
+
+def test_agy_permission_block_without_output_is_not_delivery():
+    def runner(argv, **kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr=(
+                "jetski: no output produced — a tool required the read_file permission "
+                "that headless mode cannot prompt for, so it was auto-denied."
+            ),
+        )
+
+    model = "gemini-3.7-flash-medium"
+    exports, context = _agy_context(model)
+    result = exports.build_registered_online_invoker(
+        "agy",
+        command=(sys.executable,),
+        model_name=model,
+        runner=runner,
+        include_local_context=False,
+    )(context)
+
+    assert result["invoked"] is True
+    assert result["provider_call_count"] == 1
+    assert result["output_delivered"] is False
+    assert result["gate_passed"] is False
+    assert result["error"] == "provider_subprocess_failed"
+    assert result["process_evidence"]["provider_permission_mode"] == "plan_no_autoapprove"
 
 
 def test_agy_registered_cli_model_mismatch_makes_zero_calls():
@@ -205,7 +240,7 @@ def test_agy_registered_cli_rejects_unbound_custom_command_shape():
     exports, context = _agy_context(model)
     result = exports.build_registered_online_invoker(
         "agy",
-        command=(sys.executable, "--dangerously-skip-permissions", "-p"),
+        command=(sys.executable, "--mode", "plan", "--sandbox", "-p"),
         model_name=model,
         runner=runner,
         include_local_context=False,
