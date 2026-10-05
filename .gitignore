@@ -4,3 +4,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+
+# Nexus Core local evidence/bindings
+.nexus-core/receipts/
+.nexus-core/issues/
