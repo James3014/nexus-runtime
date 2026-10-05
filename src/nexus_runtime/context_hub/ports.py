@@ -56,3 +56,9 @@ class StateCompactor(Protocol):
 
 class PolicyReader(Protocol):
     def __call__(self) -> Mapping[str, Any]: ...
+
+
+class RepositoryQueryEvidenceValidator(Protocol):
+    """Injected canonical owner verifier for repository-query evidence."""
+
+    def __call__(self, payload: Mapping[str, Any]) -> bool: ...

@@ -18,6 +18,11 @@ from nexus_runtime.task_context import (
     build_context_assembly_contract,
     build_context_budget_receipt,
 )
+from nexus_runtime.task_context.retrieval_hints import (
+    RETRIEVAL_HINT_CLAIM_CEILING,
+    RETRIEVAL_HINT_SCHEMA,
+    compose_verified_repository_query_hints,
+)
 
 from .ports import (
     DialoguePruner,
@@ -26,6 +31,7 @@ from .ports import (
     LearningWriter,
     MemoryReader,
     PolicyReader,
+    RepositoryQueryEvidenceValidator,
     Renderer,
     StateCompactor,
     StateReader,
@@ -49,6 +55,7 @@ class ContextHubDependencies:
     learning_writer: LearningWriter | None = None
     policy_reader: PolicyReader | None = None
     clock: Any | None = None
+    repository_query_evidence_validator: RepositoryQueryEvidenceValidator | None = None
 
 
 class ContextHub:
@@ -342,6 +349,41 @@ class ContextHub:
             "relevance_gate": True,
             "memory_reminders": self._inject_memory_reminders("X"),
         }
+
+    def assemble_research_pack_with_retrieval_hints(
+        self,
+        query: str,
+        canonical_results: list[dict[str, Any]],
+        *,
+        query_evidence: Mapping[str, Any] | None,
+        expected_repository: str,
+        expected_source_revision: str,
+        required_segments: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Add verified advisory RIE candidates to the existing research pack.
+
+        The caller provides repository identity from its established request or
+        dispatch record. Failed, stale, foreign, or unavailable evidence keeps
+        the canonical result list and pack shape unchanged.
+        """
+        pack = self.assemble_research_pack(query, canonical_results)
+        composed = compose_verified_repository_query_hints(
+            required_segments=required_segments or (),
+            query_evidence=query_evidence,
+            expected_repository=expected_repository,
+            expected_revision=expected_source_revision,
+            validator=self.deps.repository_query_evidence_validator,
+        )
+        if composed.get("bound") is not True:
+            return pack
+        pack["retrieval_hints"] = {
+            **dict(composed.get("normalized_payload") or {}),
+            "schema": RETRIEVAL_HINT_SCHEMA,
+            "advisory": True,
+            "hint_identity": dict(composed.get("hint_identity") or {}),
+            "claim_ceiling": RETRIEVAL_HINT_CLAIM_CEILING,
+        }
+        return pack
 
     def assemble_feature_pack(
         self, plan: dict[str, Any] | None = None

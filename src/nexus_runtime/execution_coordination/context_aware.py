@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from nexus_runtime.task_context.consumer_projection import (
@@ -8,8 +8,13 @@ from nexus_runtime.task_context.consumer_projection import (
     build_worker_context_package_with_admission,
 )
 from nexus_runtime.task_context.consumption import build_worker_consumption_receipt
+from nexus_runtime.task_context.retrieval_hints import (
+    apply_hint_observation_envelope,
+    seal_retrieval_hint_report,
+)
 
 from .coordinator import ExecutionCoordinator as _BaseExecutionCoordinator
+from .effect_authorization import EffectAuthorization
 
 
 class _ConsumptionTracker:
@@ -47,7 +52,12 @@ class _ContextAwareStatePort:
     ) -> Mapping[str, Any]:
         payload = dict(values)
         if status == "WORKER_COMPLETED" and self._tracker.admission_report:
-            payload["context_admission_report"] = dict(self._tracker.admission_report)
+            report = dict(self._tracker.admission_report)
+            retrieval_report = report.pop("retrieval_hint_report", None)
+            if report:
+                payload["context_admission_report"] = report
+            if isinstance(retrieval_report, Mapping):
+                payload["retrieval_hint_report"] = dict(retrieval_report)
         if status == "WORKER_COMPLETED" and self._tracker.receipt is not None:
             receipt = dict(self._tracker.receipt)
             if str(receipt.get("task_id") or "") != str(task_id):
@@ -63,9 +73,19 @@ class _ContextAwareStatePort:
 class _ContextAwareContractPort:
     """Transparent contract-port decorator for the canonical WorkerRegistry path."""
 
-    def __init__(self, delegate: Any, tracker: _ConsumptionTracker) -> None:
+    def __init__(
+        self,
+        delegate: Any,
+        tracker: _ConsumptionTracker,
+        state: Any,
+        repository_query_evidence_validator: Callable[[Mapping[str, Any]], Any] | None,
+    ) -> None:
         self._delegate = delegate
         self._tracker = tracker
+        self._state = state
+        self._repository_query_evidence_validator = (
+            repository_query_evidence_validator
+        )
         self._request_by_contract_id: dict[int, Mapping[str, Any]] = {}
 
     def __getattr__(self, name: str) -> Any:
@@ -78,6 +98,106 @@ class _ContextAwareContractPort:
         contract = self._delegate.build_contract(request)
         self.bind_request(contract, request)
         return contract
+
+    def _trusted_repository_identity(
+        self, request: Mapping[str, Any]
+    ) -> dict[str, str]:
+        envelope = request.get("canonical_dispatch_envelope")
+        envelope = envelope if isinstance(envelope, Mapping) else {}
+        task_id = str(envelope.get("task_id") or "").strip()
+        attempt_id = str(envelope.get("attempt_id") or "").strip()
+        state = self._state.read_snapshot(task_id) if task_id else None
+        state = state if isinstance(state, Mapping) else {}
+        raw_authorization = state.get("effect_authorization")
+        if raw_authorization is None:
+            raw_authorization = request.get("effect_authorization")
+        if raw_authorization is not None:
+            if not isinstance(raw_authorization, Mapping):
+                return {}
+            try:
+                authorization = EffectAuthorization.from_mapping(raw_authorization)
+                authorization.assert_fresh()
+                authorization.assert_identity(
+                    attempt_id=attempt_id,
+                    operation_id=(
+                        str(request.get("operation_id"))
+                        if request.get("operation_id") is not None
+                        else None
+                    ),
+                    repository=(
+                        str(request.get("repository"))
+                        if request.get("repository") is not None
+                        else None
+                    ),
+                    source_revision=(
+                        str(request.get("source_revision"))
+                        if request.get("source_revision") is not None
+                        else None
+                    ),
+                )
+            except Exception:  # noqa: BLE001 -- identity evidence fails closed
+                return {}
+            if not authorization.repository:
+                return {}
+            workspace_revision = request.get("workspace_revision")
+            envelope_workspace_revision = envelope.get("workspace_revision")
+            observed_source_revision = authorization.source_revision or ""
+            if (
+                isinstance(workspace_revision, str)
+                and workspace_revision.strip()
+                and workspace_revision.strip() != observed_source_revision
+            ) or (
+                isinstance(envelope_workspace_revision, str)
+                and envelope_workspace_revision.strip()
+                and envelope_workspace_revision.strip() != observed_source_revision
+            ):
+                return {}
+            return {
+                "repository": authorization.repository,
+                "source_revision": observed_source_revision,
+            }
+
+        repository = request.get("repository")
+        source_revision = request.get("source_revision")
+        workspace_revision = request.get("workspace_revision")
+        envelope_repository = envelope.get("repository")
+        envelope_revision = envelope.get("source_revision")
+        envelope_workspace_revision = envelope.get("workspace_revision")
+        if repository is None:
+            repository = envelope_repository
+        if source_revision is None:
+            source_revision = envelope_revision
+        if workspace_revision is None:
+            workspace_revision = envelope_workspace_revision
+        if (
+            not isinstance(repository, str)
+            or not repository.strip()
+            or not isinstance(source_revision, str)
+            or not source_revision.strip()
+        ):
+            return {}
+        if (
+            isinstance(envelope_repository, str)
+            and envelope_repository.strip()
+            and envelope_repository.strip() != repository.strip()
+        ) or (
+            isinstance(envelope_revision, str)
+            and envelope_revision.strip()
+            and envelope_revision.strip() != source_revision.strip()
+        ) or (
+            isinstance(workspace_revision, str)
+            and workspace_revision.strip()
+            and workspace_revision.strip() != source_revision.strip()
+        ) or (
+            isinstance(envelope_workspace_revision, str)
+            and envelope_workspace_revision.strip()
+            and envelope_workspace_revision.strip() != source_revision.strip()
+        ):
+            return {}
+        return {
+            "repository": repository.strip(),
+            "source_revision": source_revision.strip(),
+        }
 
     def prompt(self, contract: Any) -> str:
         prompt = str(self._delegate.prompt(contract))
@@ -93,7 +213,13 @@ class _ContextAwareContractPort:
         if not (has_planner and has_envelope):
             raise ValueError("worker_model_context_binding_incomplete")
 
-        package, admission_report = build_worker_context_package_with_admission(request)
+        package, admission_report = build_worker_context_package_with_admission(
+            request,
+            repository_query_evidence_validator=(
+                self._repository_query_evidence_validator
+            ),
+            trusted_repository_identity=self._trusted_repository_identity(request),
+        )
         serialized_prompt = append_model_context_to_prompt(prompt, package)
         self._tracker.package = package
         self._tracker.admission_report = admission_report or None
@@ -149,6 +275,40 @@ class _ContextAwareWorkerPort:
             raise ValueError("worker_consumption_model_substitution")
 
         execution_receipt = self._delegate.invoke(provider, contract, lease, **kwargs)
+        report = self._tracker.admission_report
+        if isinstance(report, dict):
+            retrieval_report = report.get("retrieval_hint_report")
+            if isinstance(retrieval_report, dict):
+                raw_observations = (
+                    execution_receipt.get("retrieval_hint_observations")
+                    if isinstance(execution_receipt, Mapping)
+                    else getattr(
+                        execution_receipt, "retrieval_hint_observations", None
+                    )
+                )
+                telemetry, validation = apply_hint_observation_envelope(
+                    retrieval_report.get("telemetry"),
+                    raw_observations,
+                    task_id=str(retrieval_report.get("task_id") or ""),
+                    attempt_id=str(retrieval_report.get("attempt_id") or ""),
+                    query_evidence_hash=str(
+                        retrieval_report.get("query_evidence_hash") or ""
+                    ),
+                )
+                retrieval_report["telemetry"] = telemetry
+                retrieval_report["observation_validation"] = {
+                    "valid": validation.get("valid") is True,
+                    "blockers": list(validation.get("blockers") or []),
+                    "observation_hash": str(
+                        validation.get("observation_hash") or ""
+                    ),
+                }
+                retrieval_report["observation_status"] = telemetry.get(
+                    "observation_status", "MISSING"
+                )
+                report["retrieval_hint_report"] = seal_retrieval_hint_report(
+                    retrieval_report
+                )
         self._tracker.receipt = build_worker_consumption_receipt(
             package,
             prompt=prompt,
@@ -172,11 +332,19 @@ class ExecutionCoordinator(_BaseExecutionCoordinator):
         finalization: Any,
         preparation: Any = None,
         model_call_gate: Any = None,
+        repository_query_evidence_validator: Callable[[Mapping[str, Any]], Any]
+        | None = None,
     ) -> None:
         tracker = _ConsumptionTracker()
-        contract_port = _ContextAwareContractPort(contract, tracker)
+        state_port = _ContextAwareStatePort(state, tracker)
+        contract_port = _ContextAwareContractPort(
+            contract,
+            tracker,
+            state_port,
+            repository_query_evidence_validator,
+        )
         super().__init__(
-            _ContextAwareStatePort(state, tracker),
+            state_port,
             contract_port,
             _ContextAwareWorkerPort(worker, tracker),
             target,
