@@ -203,6 +203,42 @@ def test_invalid_unknown_and_budget_gates_match_donor_contract(tmp_path):
     assert ports[2].calls == [] and ports[3].calls == []
 
 
+def test_attempt_budget_resolution_failure_fails_closed_before_submit(tmp_path):
+    state = {
+        "task_id": "task-1",
+        "status": "FINAL_BLOCK",
+        "attempt_id": "attempt-1",
+        "cleanup_decision": "TARGET_CLEANED",
+        "attempts": [{"attempt_id": "attempt-1"}],
+        "request": {"task_id": "task-1", "attempt_id": "attempt-1"},
+    }
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(state))
+    trace = []
+
+    class FailingBudgetContract(Contract):
+        def maximum_attempts(self, request):
+            self.calls.append("budget")
+            self.trace.append("budget")
+            raise RuntimeError("attempt budget unavailable")
+
+    ports = (
+        JsonState(path, trace),
+        FailingBudgetContract(trace=trace),
+        Dispatch(trace),
+        Submit(trace),
+    )
+    svc = RetryService(*ports)
+
+    result = svc.retry_task("task-1")
+
+    assert result["retry"]["decision"] == "BLOCK"
+    assert result["retry"]["blocker"] == "ATTEMPT_BUDGET_UNAVAILABLE"
+    assert ports[2].calls == []
+    assert ports[3].calls == []
+    assert trace == ["read", "budget"]
+
+
 def test_status_sets_are_bound_to_frozen_donor():
     assert RETRYABLE_TASK_STATUSES == {"FINAL_BLOCK", "CANCELLED"}
     assert INTEGRATION_INTERMEDIATE_STATUSES == {
