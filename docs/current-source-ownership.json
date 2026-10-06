@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "7026cb60b9f8c69f78b4377adcf395c798913b41",
+  "source_head": "0ef59fb5d304e6746d57353aa2c8361f0775bd6d",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -796,10 +796,17 @@
     },
     {
       "path": "nexus_runtime/task_retry/__init__.py",
-      "sha256": "c9689ef366b41a63569d55d27f23add12c5385d8c2f9e447d8e639d66c730d2f",
-      "canonical_owner": "runtime retry",
-      "donor": "accepted task-retry candidate",
-      "lineage_status": "known"
+      "sha256": "6c37c9dda68bb53acc1f36ffb50b0858b41b41ce01a4a3ae3c4d8f87d8b67f2e",
+      "canonical_owner": "runtime retry/reconciliation",
+      "donor": "repository-local Issue #81 bounded verifier-driven reconciliation source canary",
+      "lineage_status": "integrated_pending_acceptance"
+    },
+    {
+      "path": "nexus_runtime/task_retry/bounded_reconciliation.py",
+      "sha256": "c676156811896019a466c7fd765c259c74d9cbdc4a6f43e8ccf522253889c978",
+      "canonical_owner": "runtime retry/reconciliation",
+      "donor": "repository-local Issue #81 bounded verifier-driven reconciliation source canary",
+      "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/task_retry/ports.py",
@@ -810,10 +817,10 @@
     },
     {
       "path": "nexus_runtime/task_retry/retry_service.py",
-      "sha256": "e1c2eb60e385868a29b1b501dec1c68e6ea04c8f746c3d871e462bd4a0b692af",
-      "canonical_owner": "runtime retry",
-      "donor": "accepted task-retry candidate",
-      "lineage_status": "known"
+      "sha256": "2fb3d020648cb7213939383d555427ac5bdde71487e1d752f12abe61f87945ac",
+      "canonical_owner": "runtime retry/reconciliation",
+      "donor": "repository-local Issue #81 bounded verifier-driven reconciliation source canary",
+      "lineage_status": "integrated_pending_acceptance"
     },
     {
       "path": "nexus_runtime/execution_coordination/__init__.py",

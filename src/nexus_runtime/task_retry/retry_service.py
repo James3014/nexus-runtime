@@ -4,6 +4,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .bounded_reconciliation import (
+    REPAIR_BUDGET_EXHAUSTED,
+    build_repair_request_metadata,
+    evaluate_bounded_reconciliation,
+)
 from .ports import (
     MissingRetryBindingError,
     RetryContractPort,
@@ -199,10 +204,30 @@ class RetryService:
                 },
             }
         repair_dispatch = None
+        reconciliation_decision = None
         if str(state.get("acceptance_decision") or "") == "REPAIRABLE":
             planner = request.get("planner_output")
             if not isinstance(planner, Mapping):
                 return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": "WORKFORCE_ADMISSION_BINDING_MISSING"}}
+            reconciliation_decision = evaluate_bounded_reconciliation(
+                state,
+                state.get("verifier_residual"),
+            )
+            if not reconciliation_decision.eligible:
+                decision = (
+                    "BLOCKED_REPAIR_BUDGET_EXHAUSTED"
+                    if reconciliation_decision.disposition == REPAIR_BUDGET_EXHAUSTED
+                    else "BLOCKED_BOUNDED_RECONCILIATION"
+                )
+                return {
+                    **state,
+                    "retry": {
+                        **meta,
+                        "decision": decision,
+                        "blocker": reconciliation_decision.reason,
+                        "bounded_reconciliation": reconciliation_decision.to_dict(),
+                    },
+                }
             try:
                 repair_dispatch = self.dispatch.validate_repair(request)
             except RuntimeError as exc:
@@ -257,6 +282,13 @@ class RetryService:
                     "canonical_dispatch_envelope": fresh.get("canonical_dispatch_envelope"),
                 }
             )
+        if reconciliation_decision is not None:
+            retry_request = dict(retry_request)
+            retry_request["bounded_reconciliation"] = build_repair_request_metadata(
+                reconciliation_decision,
+                predecessor_attempt_id=str(state.get("attempt_id") or ""),
+                successor_attempt_id=str(retry_request.get("attempt_id") or ""),
+            )
         result = dict(self.submission.submit(retry_request))
         result["retry"] = {
             **meta,
@@ -266,6 +298,10 @@ class RetryService:
             "new_idempotency_key": result.get("idempotency_key"),
             "attempts": len(result.get("attempts") or ()),
         }
+        if reconciliation_decision is not None:
+            result["retry"]["bounded_reconciliation"] = dict(
+                retry_request["bounded_reconciliation"]
+            )
         return result
 
     @staticmethod
