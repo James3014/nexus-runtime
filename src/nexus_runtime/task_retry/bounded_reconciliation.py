@@ -290,8 +290,11 @@ def _current_repair_round(request: Mapping[str, Any]) -> int:
         raise BoundedReconciliationError(
             "existing bounded_reconciliation metadata is malformed"
         )
+    raw_round = previous.get("repair_round", 0)
+    if isinstance(raw_round, bool):
+        raise BoundedReconciliationError("existing repair_round is malformed")
     try:
-        value = int(previous.get("repair_round", 0))
+        value = int(raw_round)
     except (TypeError, ValueError) as exc:
         raise BoundedReconciliationError(
             "existing repair_round is malformed"
@@ -360,7 +363,12 @@ def evaluate_bounded_reconciliation(
             packet_sha=packet.packet_sha256,
             current_round=current_round,
         )
-    if state.get("active_effect_count") != 0:
+    active_effect_count = state.get("active_effect_count")
+    if (
+        isinstance(active_effect_count, bool)
+        or not isinstance(active_effect_count, int)
+        or active_effect_count != 0
+    ):
         return _ineligible(
             "active_predecessor_effect_not_proven_zero",
             packet_sha=packet.packet_sha256,
@@ -382,6 +390,18 @@ def evaluate_bounded_reconciliation(
             current_round=current_round,
         )
 
+    try:
+        candidate_sha256 = _sha256(
+            identity.get("candidate_sha256"),
+            "candidate_identity.candidate_sha256",
+        )
+    except BoundedReconciliationError:
+        return _ineligible(
+            "candidate_identity_sha256_invalid",
+            packet_sha=packet.packet_sha256,
+            current_round=current_round,
+        )
+
     bindings = (
         (packet.task_id, state.get("task_id"), "task_id"),
         (
@@ -392,7 +412,7 @@ def evaluate_bounded_reconciliation(
         (packet.candidate_id, identity.get("candidate_id"), "candidate_id"),
         (
             packet.candidate_sha256,
-            _sha256(identity.get("candidate_sha256"), "candidate_identity.candidate_sha256"),
+            candidate_sha256,
             "candidate_sha256",
         ),
         (
