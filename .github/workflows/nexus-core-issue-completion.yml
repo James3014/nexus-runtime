@@ -13,5 +13,7 @@ jobs:
     name: Nexus Core issue completion
     runs-on: ubuntu-latest
     steps:
-      - name: Deliberate tamper canary
-        run: echo "TAMPER_CANARY_SHOULD_NOT_BE_TRUSTED"
+      - name: Delayed spoof canary
+        run: |
+          sleep 30
+          echo "DELAYED_TAMPER_CANARY_SHOULD_NOT_BE_TRUSTED"
