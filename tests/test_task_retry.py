@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from nexus_runtime.task_retry import RetryService
+from nexus_runtime.task_retry import (
+    CLEAN_SEMANTIC_REJECT,
+    RetryService,
+    VerifierResidualPacket,
+)
 from nexus_runtime.task_retry.retry_service import (
     INTEGRATION_INTERMEDIATE_STATUSES,
     RETRYABLE_TASK_STATUSES,
@@ -507,4 +511,157 @@ def test_envelope_none_request_with_state_mapping_is_invalid(tmp_path):
     )
     result = svc.retry_task("task-1")
     assert result["retry"]["blocker"] == "WORKFORCE_DISPATCH_ENVELOPE_INVALID"
+    assert ports[3].calls == []
+
+
+def _bounded_repair_state(*, failure_class=CLEAN_SEMANTIC_REJECT, repair_round=0):
+    candidate_sha = "a" * 64
+    packet = VerifierResidualPacket.build(
+        task_id="task-1",
+        predecessor_attempt_id="attempt-1",
+        candidate_id="candidate-1",
+        candidate_sha256=candidate_sha,
+        source_revision="source-1",
+        verifier_id="verifier-1",
+        verifier_version="v1",
+        verifier_receipt_ref="receipt://verifier/1",
+        failure_class=failure_class,
+        residual_family="behavioral_residual",
+        failed_invariants=("INV-1",),
+        counterexample_refs=("evidence://1",),
+        repair_target="IMPLEMENTATION",
+        claim_ceiling="SOURCE_CANARY_ONLY",
+    )
+    request = {
+        "task_id": "task-1",
+        "attempt_id": "attempt-1",
+        "planner_output": {"treatment": "bounded_repair"},
+        "canonical_dispatch_envelope": {"attempt_id": "attempt-1"},
+    }
+    if repair_round:
+        request["bounded_reconciliation"] = {"repair_round": repair_round}
+    return {
+        "task_id": "task-1",
+        "status": "FINAL_BLOCK",
+        "attempt_id": "attempt-1",
+        "cleanup_decision": "TARGET_CLEANED",
+        "attempts": [],
+        "acceptance_decision": "REPAIRABLE",
+        "has_unresolved_external_effect": False,
+        "active_effect_count": 0,
+        "candidate_identity": {
+            "candidate_id": "candidate-1",
+            "candidate_sha256": candidate_sha,
+            "source_revision": "source-1",
+        },
+        "verifier_identity": {
+            "verifier_id": "verifier-1",
+            "verifier_version": "v1",
+            "receipt_ref": "receipt://verifier/1",
+        },
+        "verifier_residual": packet.to_dict(),
+        "request": request,
+    }, packet
+
+
+def test_repairable_retry_submits_one_fresh_successor_with_bound_residual(tmp_path):
+    state, packet = _bounded_repair_state()
+    svc, ports = service(tmp_path, state)
+
+    result = svc.retry_task("task-1")
+
+    assert result["retry"]["decision"] == "REUSED_TASK_ID"
+    assert result["attempt_id"] == "attempt-2"
+    assert ports[3].calls == ["submit"]
+    submitted = ports[3].request
+    assert submitted["attempt_id"] == "attempt-2"
+    assert submitted["provider"] == "fixture"
+    assert submitted["model"] == "fixture-model"
+    assert submitted["worker_id"] == "worker-1"
+    assert submitted["repair_worker_id"] == "worker-1"
+    bounded = submitted["bounded_reconciliation"]
+    assert bounded["predecessor_attempt_id"] == "attempt-1"
+    assert bounded["successor_attempt_id"] == "attempt-2"
+    assert bounded["residual_packet_sha256"] == packet.packet_sha256
+    assert bounded["repair_round"] == 1
+    assert bounded["max_repair_rounds"] == 1
+    assert bounded["required_post_repair_gate"] == "EXTERNAL_VERIFIER"
+    assert bounded["replan_on_exhaustion"] == "REQUEST_ONLY"
+    assert bounded["runtime_is_planner_authority"] is False
+    assert bounded["runtime_is_completion_authority"] is False
+    assert result["retry"]["bounded_reconciliation"] == bounded
+
+
+@pytest.mark.parametrize(
+    "failure_class",
+    [
+        "MALFORMED_STRUCTURED_OUTPUT",
+        "HYGIENE_FAILURE",
+        "CORE_EVIDENCE_FAILURE",
+        "OUTCOME_UNKNOWN",
+        "VERIFIER_ENVIRONMENT_FAILURE",
+    ],
+)
+def test_repairable_retry_hard_failure_never_submits(tmp_path, failure_class):
+    state, _ = _bounded_repair_state(failure_class=failure_class)
+    svc, ports = service(tmp_path, state)
+
+    result = svc.retry_task("task-1")
+
+    assert result["retry"]["decision"] == "BLOCKED_BOUNDED_RECONCILIATION"
+    assert result["retry"]["blocker"].startswith("failure_class_not_semantic:")
+    assert ports[3].calls == []
+
+
+def test_repairable_retry_requires_no_unknown_or_active_predecessor_effect(tmp_path):
+    for field, value in (
+        ("has_unresolved_external_effect", True),
+        ("active_effect_count", 1),
+    ):
+        state, _ = _bounded_repair_state()
+        state[field] = value
+        svc, ports = service(tmp_path, state)
+
+        result = svc.retry_task("task-1")
+
+        assert result["retry"]["decision"] == "BLOCKED_BOUNDED_RECONCILIATION"
+        assert ports[3].calls == []
+
+
+def test_repairable_retry_second_round_is_budget_exhausted_without_submit(tmp_path):
+    state, _ = _bounded_repair_state(repair_round=1)
+    svc, ports = service(tmp_path, state)
+
+    result = svc.retry_task("task-1")
+
+    assert result["retry"]["decision"] == "BLOCKED_REPAIR_BUDGET_EXHAUSTED"
+    decision = result["retry"]["bounded_reconciliation"]
+    assert decision["disposition"] == "REPAIR_BUDGET_EXHAUSTED"
+    assert decision["required_next_gate"] == "REPLAN_REQUEST"
+    assert decision["replan_requested"] is True
+    assert decision["runtime_is_planner_authority"] is False
+    assert ports[3].calls == []
+
+
+def test_repairable_retry_missing_residual_fails_closed_without_submit(tmp_path):
+    state, _ = _bounded_repair_state()
+    state.pop("verifier_residual")
+    svc, ports = service(tmp_path, state)
+
+    result = svc.retry_task("task-1")
+
+    assert result["retry"]["decision"] == "BLOCKED_BOUNDED_RECONCILIATION"
+    assert result["retry"]["blocker"].startswith("residual_packet_invalid:")
+    assert ports[3].calls == []
+
+
+def test_repairable_retry_preserves_existing_missing_planner_binding_gate(tmp_path):
+    state, _ = _bounded_repair_state()
+    state["request"] = {"task_id": "task-1"}
+    svc, ports = service(tmp_path, state)
+
+    result = svc.retry_task("task-1")
+
+    assert result["retry"]["decision"] == "BLOCK"
+    assert result["retry"]["blocker"] == "WORKFORCE_ADMISSION_BINDING_MISSING"
     assert ports[3].calls == []
