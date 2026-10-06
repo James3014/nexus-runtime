@@ -206,6 +206,9 @@ class RetryService:
         repair_dispatch = None
         reconciliation_decision = None
         if str(state.get("acceptance_decision") or "") == "REPAIRABLE":
+            planner = request.get("planner_output")
+            if not isinstance(planner, Mapping):
+                return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": "WORKFORCE_ADMISSION_BINDING_MISSING"}}
             reconciliation_decision = evaluate_bounded_reconciliation(
                 state,
                 state.get("verifier_residual"),
@@ -225,9 +228,6 @@ class RetryService:
                         "bounded_reconciliation": reconciliation_decision.to_dict(),
                     },
                 }
-            planner = request.get("planner_output")
-            if not isinstance(planner, Mapping):
-                return {**state, "retry": {**meta, "decision": "BLOCK", "blocker": "WORKFORCE_ADMISSION_BINDING_MISSING"}}
             try:
                 repair_dispatch = self.dispatch.validate_repair(request)
             except RuntimeError as exc:
