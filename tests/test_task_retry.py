@@ -203,7 +203,7 @@ def test_invalid_unknown_and_budget_gates_match_donor_contract(tmp_path):
     assert ports[2].calls == [] and ports[3].calls == []
 
 
-def test_attempt_budget_resolution_failure_fails_closed_before_submit(tmp_path):
+def test_attempt_budget_resolution_failure_fails_closed_before_submit_omitted_canary(tmp_path):
     state = {
         "task_id": "task-1",
         "status": "FINAL_BLOCK",
