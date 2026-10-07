@@ -16,11 +16,28 @@ def test_atomic_roundtrip_and_restart(tmp_path):
 
 def test_archive_selection(tmp_path):
     root = tmp_path / "state"
-    (tmp_path / "nexus-state-archive").mkdir()
-    (tmp_path / "nexus-state-archive" / "t--attempt-a.json").write_text(
-        json.dumps({"task_id": "t", "status": "DONE", "updated_at": "2"})
+    archive = tmp_path / "nexus-state-archive"
+    archive.mkdir()
+    (archive / "t--attempt-a.json").write_text(
+        json.dumps(
+            {
+                "task_id": "t",
+                "status": "DONE",
+                "updated_at": "2026-10-05T01:00:00Z",
+            }
+        )
     )
-    assert ExecutionStateStore(root).read_snapshot("t")["updated_at"] == "2"
+    (archive / "t--attempt-b.json").write_text(
+        json.dumps(
+            {
+                "task_id": "t",
+                "status": "DONE",
+                "updated_at": "2026-10-05T02:00:00Z",
+            }
+        )
+    )
+    snapshot = ExecutionStateStore(root).read_snapshot("t")
+    assert snapshot["updated_at"] == "2026-10-05T02:00:00Z"
 
 
 def test_corrupt_state_denied(tmp_path):

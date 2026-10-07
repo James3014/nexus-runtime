@@ -1,7 +1,7 @@
 {
   "schema": "nexus.runtime.source_ownership.v1",
   "repository": "nexus-runtime",
-  "source_head": "0ef59fb5d304e6746d57353aa2c8361f0775bd6d",
+  "source_head": "8fafa877029044bf050251421057a9afda07ef97",
   "entries": [
     {
       "path": "nexus_context_prototype/__init__.py",
@@ -817,7 +817,7 @@
     },
     {
       "path": "nexus_runtime/task_retry/retry_service.py",
-      "sha256": "2fb3d020648cb7213939383d555427ac5bdde71487e1d752f12abe61f87945ac",
+      "sha256": "a9eb1efa96aa7af8d64f7bd296de1d573bf559de7d63b81b2e0b0bab0d41a917",
       "canonical_owner": "runtime retry/reconciliation",
       "donor": "repository-local Issue #81 bounded verifier-driven reconciliation source canary",
       "lineage_status": "integrated_pending_acceptance"
