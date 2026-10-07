@@ -1,6 +1,53 @@
-version = 1
+version = 2
 base_ref = "origin/main"
 allowed_patterns = ["**"]
 deletion_policy = "FORBID"
-verifier_command = ["env", "PYTHONPATH=src", "uv", "run", "--no-project", "--with", "pytest==9.0.2", "--with", "pytest-asyncio==1.3.0", "--with", "anyio==4.12.1", "--with", "pydantic==2.13.5", "--with", "PyYAML==6.0.3", "--with", "nexus-learning @ git+https://github.com/James3014/nexus-learning.git@d09f05b942f35236562ae26e7b718d111368b0b1", "python", "-m", "pytest", "-q", "tests", "--ignore=tests/test_context_hub.py", "--ignore=tests/test_local_ast.py", "--ignore=tests/test_task_retry.py", "--ignore=tests/test_memory_adapters.py", "--ignore=tests/integration/test_owner_workflow.py"]
+universe_generation = 1
+
+[[materials]]
+id = "learning-revision"
+observe_command = [
+  "uv", "run", "--no-project",
+  "--with", "nexus-learning @ git+https://github.com/James3014/nexus-learning.git@33acad4332b382fac1196c8ea8a8d0f5b543661e",
+  "python", "scripts/ci/nexus_core_observe_learning_revision.py",
+]
+timeout_seconds = 300
+logical_subject_id = "dependency/nexus-learning"
+evidence_kind = "resolved-dependency"
+requirement_mode = "REQUIRED"
+applicability = "APPLICABLE"
+expected_identity = "git-commit:33acad4332b382fac1196c8ea8a8d0f5b543661e"
+
+[[verifiers]]
+id = "retry-budget-fail-closed"
+command = [
+  "uv", "run", "--no-project",
+  "--with", "pytest==9.0.2",
+  "--with", "pytest-asyncio==1.3.0",
+  "--with", "anyio==4.12.1",
+  "--with", "pydantic==2.13.5",
+  "--with", "PyYAML==6.0.3",
+  "--with", "nexus-learning @ git+https://github.com/James3014/nexus-learning.git@33acad4332b382fac1196c8ea8a8d0f5b543661e",
+  "bash", "-lc",
+  "set -euo pipefail; test \"$(python scripts/ci/nexus_core_observe_learning_revision.py)\" = \"git-commit:33acad4332b382fac1196c8ea8a8d0f5b543661e\"; PYTHONPATH=src python -m pytest -q tests/test_task_retry.py::test_attempt_budget_resolution_failure_fails_closed_before_submit",
+]
+timeout_seconds = 600
+logical_subject_id = "retry/budget-resolution-fail-closed"
+evidence_kind = "negative-control"
+requirement_mode = "REQUIRED"
+applicability = "APPLICABLE"
+required_material_ids = ["learning-revision"]
+
+[[verifiers]]
+id = "full-installed-package-suite"
+command = [
+  "bash",
+  "scripts/ci/nexus_core_full_installed_suite.sh",
+  "33acad4332b382fac1196c8ea8a8d0f5b543661e",
+]
 timeout_seconds = 1800
+logical_subject_id = "runtime/full-installed-package-suite"
+evidence_kind = "test-result"
+requirement_mode = "REQUIRED"
+applicability = "APPLICABLE"
+required_material_ids = ["learning-revision"]
