@@ -33,42 +33,10 @@ def test_kernel_namespace_exists():
     importlib.import_module("nexus_runtime.kernel.events.effect_journal")
 
 
-def test_p6c_alias_is_same_object():
-    assert importlib.import_module("nexus_runtime_p6c_candidate") is importlib.import_module(
-        "nexus_runtime.kernel"
-    )
-    assert importlib.import_module(
-        "nexus_runtime_p6c_candidate.services.online_payload_contract"
-    ) is importlib.import_module("nexus_runtime.kernel.services.online_payload_contract")
-
-
-def test_p6c_alias_from_import():
-    from nexus_runtime.kernel import build_runtime as b
-    from nexus_runtime_p6c_candidate import build_runtime as a
-
-    assert a is b
-
-
 def test_support_namespace_exists():
     importlib.import_module("nexus_runtime.support")
     local_ast = importlib.import_module("nexus_runtime.support.local_ast")
     assert hasattr(local_ast, "RuntimeASTExtractor")
-
-
-def test_support_alias_is_same_object():
-    assert importlib.import_module("nexus_runtime_support_candidate") is importlib.import_module(
-        "nexus_runtime.support"
-    )
-    assert importlib.import_module(
-        "nexus_runtime_support_candidate.local_ast"
-    ) is importlib.import_module("nexus_runtime.support.local_ast")
-
-
-def test_support_alias_from_import():
-    from nexus_runtime.support.composition import build_runtime_exports as b
-    from nexus_runtime_support_candidate.composition import build_runtime_exports as a
-
-    assert a is b
 
 
 def test_context_store_namespace_exists():
@@ -79,22 +47,6 @@ def test_context_store_namespace_exists():
     assert hasattr(store, "ContextStore")
 
 
-def test_context_prototype_alias_is_same_object():
-    assert importlib.import_module("nexus_context_prototype") is importlib.import_module(
-        "nexus_runtime.context_store"
-    )
-    assert importlib.import_module("nexus_context_prototype.store") is importlib.import_module(
-        "nexus_runtime.context_store.store"
-    )
-
-
-def test_context_prototype_alias_from_import():
-    from nexus_runtime.context_store import ContextContinuityService as b
-    from nexus_context_prototype import ContextContinuityService as a
-
-    assert a is b
-
-
 def test_planning_namespace_exists():
     planner = importlib.import_module("nexus_runtime.planning.engine.capability_planner")
     assert hasattr(planner, "CapabilityPlanner")
@@ -103,18 +55,17 @@ def test_planning_namespace_exists():
     assert policy.is_file()
     assert policy.as_posix().endswith("config/model_workforce.yaml")
 
-
-def test_planning_alias_is_same_object():
-    assert importlib.import_module("nexus_planning_candidate") is importlib.import_module(
-        "nexus_runtime.planning"
-    )
-    assert importlib.import_module(
-        "nexus_planning_candidate.engine.capability_planner"
-    ) is importlib.import_module("nexus_runtime.planning.engine.capability_planner")
+OLD_NAMESPACES = (
+    "nexus_runtime_p6c_candidate",
+    "nexus_runtime_support_candidate",
+    "nexus_context_prototype",
+    "nexus_planning_candidate",
+)
 
 
-def test_planning_alias_from_import():
-    from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner as b
-    from nexus_planning_candidate.engine.capability_planner import CapabilityPlanner as a
-
-    assert a is b
+@pytest.mark.parametrize("name", OLD_NAMESPACES)
+def test_old_namespaces_removed(name):
+    if SRC is None:
+        pytest.skip("GAP: repository root not available")
+    assert importlib.util.find_spec(name) is None
+    assert not (SRC / name).exists()
