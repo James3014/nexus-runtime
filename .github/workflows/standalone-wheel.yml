@@ -40,7 +40,7 @@ jobs:
           set -euo pipefail
           venv="$RUNNER_TEMP/runtime-wheel-venv/bin/python"
           "$venv" -m pip install --requirement requirements/standalone-wheel-ci.txt
-          learning_sha=33acad4332b382fac1196c8ea8a8d0f5b543661e
+          learning_sha=1eb7229366b2856d6691c76236a50c5380dcf7d3
           "$venv" -m pip install --no-build-isolation \
             "nexus-learning @ git+https://github.com/James3014/nexus-learning.git@$learning_sha"
           observed_learning="$("$venv" scripts/ci/nexus_core_observe_learning_revision.py)"
