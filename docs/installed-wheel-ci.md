@@ -15,10 +15,9 @@ isolation disabled after those pins are present. It does not check out or
 install Nexus-new and makes no provider or model calls. The supported CI claim
 is POSIX on Python 3.11; Windows and other Python versions are untested.
 
-The existing full-suite workflow remains the controlled donor-comparison job.
-Its donor tests are excluded from standalone acceptance because they explicitly
-load the historical `/private/tmp/astra-production-integrated-20260909`
-checkout. `tests/integration/test_owner_workflow.py` is owner integration and
+The frozen-donor comparison tests and their CI provisioning were retired in
+Phase 4a under owner decision D2, so nothing is deselected from standalone
+acceptance. `tests/integration/test_owner_workflow.py` is owner integration and
 is not standalone PASS; any controlled owner run must use reviewed exact owner
 pins and a mandatory import preflight, with missing owner dependencies reported
 as a blocked or skipped integration result rather than PASS.
@@ -26,8 +25,7 @@ as a blocked or skipped integration result rather than PASS.
 The standalone probe is deliberately fail-closed: an available legacy import,
 a source-tree import, a broken installed export, a failed test, or a failed
 mandatory dependency check exits nonzero. Every top-level test module is
-collected; exactly five donor comparison nodes are removed by name, while the
-standalone retry status-set assertion remains.
+collected with no deselections, including the retry status-set assertion.
 
 Owner integration is controlled separately with a concrete preflight in a
 separate environment. The reviewed source pins are nexus-core

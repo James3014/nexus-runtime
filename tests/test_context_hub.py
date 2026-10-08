@@ -8,7 +8,6 @@ from typing import ClassVar
 import pytest
 
 from nexus_runtime.context_hub import ContextHub, ContextHubDependencies
-from _donor import require_donor_root
 
 
 @dataclass
@@ -250,96 +249,6 @@ def test_assemble_context_threshold_is_strict_and_uses_handoff_defaults(tmp_path
     assert "--- COMPACT HISTORY ---" in below_boundary
     assert len(pruned) == 1
 
-
-def test_extracted_packs_match_frozen_donor_for_identical_ports(tmp_path):
-    """Differentially compare complete pack dictionaries against donor 471."""
-    import json
-    import os
-    import subprocess
-
-    donor_root = require_donor_root()
-    import sys
-
-    state = State()
-    memory = {"reminders": ["phase"], "total_sources": 1}
-    wiki = {"context": "wiki:parser failure", "selected_sources": []}
-    knowledge = Knowledge()
-    extracted = ContextHubDependencies(
-        state_reader=lambda: state,
-        text_reader=lambda name="program.md": "rules:program.md",
-        memory_reader=lambda _phase: memory,
-        wiki_reader=lambda _query, max_results=3: wiki,
-        renderer=lambda _state, aggression=0.0: "toon-summary",
-        dialogue_pruner=lambda _history: "pruned-history",
-        compactor=lambda value, confidence=0.5: {"task_id": value.get("task_id")},
-        knowledge_reader=knowledge,
-        clock=lambda: "fixed",
-    )
-    candidate = ContextHub(deps=extracted)
-
-    def normalized(value):
-        value = dict(value)
-        value.pop("timestamp", None)
-        return value
-
-    # The donor imports legacy package modules at module scope. Run it in a
-    # subprocess so sys.path/sys.modules stay clean for isolation assertions.
-    donor_script = """
-import importlib.util, json
-from pathlib import Path
-from types import SimpleNamespace
-
-donor_path = Path("__DONOR_ROOT__") / "nexus/core/context_hub.py"
-spec = importlib.util.spec_from_file_location("frozen_context_hub", donor_path)
-donor_module = importlib.util.module_from_spec(spec)
-assert spec and spec.loader
-spec.loader.exec_module(donor_module)
-class State:
-    task_id = "task-1"
-    metadata = {"task_description": "parser repair", "chat_history": ["one", "two"]}
-    steps_history = [SimpleNamespace(summary="researched", phase="X", status="completed", metadata={})]
-    tdd_status = "green"
-    superpowers_plan = {}
-    def get_conversation_metadata(self):
-        return {"conversation_id": "conv-1", "user_goal": "repair parser", "current_question": "how?", "needs_research": False}
-class Knowledge:
-    def recommend_skills(self, summary, hotspots): return ["skill:parser"]
-    def inject_wisdom_prior(self, summary, hotspots): return "prior"
-class Diagnosis:
-    summary = "parser failure"
-    pseudo_flows = ["inspect", "repair"]
-    hotspots = ["parser.py"]
-class Research:
-    key_findings = ["fixture finding"]
-state = State(); memory = {"reminders": ["phase"], "total_sources": 1}; wiki = {"context": "wiki:parser failure", "selected_sources": []}; knowledge = Knowledge()
-class StateIO:
-    def load_global_state(self): return state
-class TextStore:
-    def load_program_rules(self, _name="program.md"): return "rules:program.md"
-donor = donor_module.ContextHub.__new__(donor_module.ContextHub)
-donor.state_io = StateIO(); donor._text_store = TextStore(); donor.memory_service = SimpleNamespace(aggregate_memory=lambda: memory); donor.knowledge_injector = knowledge; donor.belief_engine = None; donor.run_dir = None
-donor._retrieve_wiki_context = lambda _query, max_results=3: wiki; donor._inject_memory_reminders = lambda _phase: memory; donor.load_program_rules = lambda md_path="program.md": "rules:program.md"
-donor_module.ToonRenderer = SimpleNamespace(render=lambda _state, aggression=0.0: "toon-summary"); donor_module.prune_dialogue = lambda _history: "pruned-history"
-out = {"feature": donor.assemble_feature_pack({"steps": ["inspect"]}), "diag": donor.assemble_diag_pack([{"file": "parser.py", "message": "bad"}], "parser failure"), "conversation": donor.assemble_conversation_pack(), "research": donor.assemble_research_pack("parser", [{"fact": 1}]), "repair": donor.assemble_repair_pack(Diagnosis(), [{"reflection": 1}, {"reflection": 2}, {"reflection": 3}], Research())}
-print(json.dumps(out, sort_keys=True, default=str))
-"""
-    donor_script = donor_script.replace("__DONOR_ROOT__", str(donor_root))
-    donor_env = dict(os.environ)
-    donor_env["PYTHONPATH"] = str(donor_root)
-    proc = subprocess.run(
-        [sys.executable, "-c", donor_script],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=donor_env,
-    )
-    donor_packs = json.loads(proc.stdout)
-
-    assert normalized(candidate.assemble_feature_pack({"steps": ["inspect"]})) == normalized(donor_packs["feature"])
-    assert candidate.assemble_diag_pack([{"file": "parser.py", "message": "bad"}], "parser failure") == donor_packs["diag"]
-    assert normalized(candidate.assemble_conversation_pack()) == normalized(donor_packs["conversation"])
-    assert candidate.assemble_research_pack("parser", [{"fact": 1}]) == donor_packs["research"]
-    assert candidate.assemble_repair_pack(Diagnosis(), [{"reflection": 1}, {"reflection": 2}, {"reflection": 3}], Research()) == donor_packs["repair"]
 
 def test_context_hub_denies_insufficient_budget_and_failed_adapter_receipt(tmp_path):
     h = hub(tmp_path)
