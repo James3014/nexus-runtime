@@ -42,7 +42,7 @@ Do not import `Nexus-new` governance wholesale. Cross-repository policy is not m
 2. Keep repository source, accepted package/pin, installed artifact, loaded service, runtime witness, and production claim as separate evidence clocks.
 3. Preserve explicit composition. Do not introduce implicit provider, host, deployment target, backend, or owner selection as a shortcut.
 4. Preserve single-owner boundaries. Do not create a second/third route authority, verifier, Completion authority, Learning authority, Repository Intelligence implementation, or external execution owner.
-5. Compatibility namespaces and extracted lineage may only be removed or collapsed with current caller evidence and explicit scope. Do not delete compatibility code merely because a newer canonical name exists.
+5. Compatibility namespaces and extracted lineage may only be removed or collapsed with current caller evidence and explicit scope. Do not delete compatibility code merely because a newer canonical name exists. Caller evidence is satisfied when the PR body pastes `git grep` results over the seven family repositories (Nexus-new, nexus-core, devspace, nexus-open-swe-runtime, nexus-learning, nexus-opencli-reviewer, repository-intelligence-engine) at `origin/main` showing zero importers of the removed names (owner decision D1, 2026-10-08).
 6. A host override of planner/runtime contracts must remain complete and fail closed. Do not silently combine incompatible partial owner families.
 7. Cross-repository mutation requires separate explicit authority in the target repository and must follow that repository's own `AGENTS.md` or equivalent contract.
 8. Do not self-authorize merge, release, deployment, host activation, or production claims.
