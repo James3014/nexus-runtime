@@ -176,7 +176,7 @@ contacting a provider.
 
 The `nexus_runtime_candidate` forwarding namespace was removed in Phase 1 (owner
 decision D1); the public composition binds the current
-`nexus_runtime_p6c_candidate` implementation. No current source should create a
+`nexus_runtime.kernel` implementation (formerly `nexus_runtime_p6c_candidate`, kept as an import alias). No current source should create a
 second algorithm merely to replace that former compatibility name.
 
 ## Owner workflow integration

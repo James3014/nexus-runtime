@@ -295,6 +295,13 @@
       "sha256": "8f7d3ee9688562bd2b8de68d67747a30301d5d2d7fe73ac8af1e7a5f38ef9d2c"
     },
     {
+      "canonical_owner": "runtime",
+      "donor": "none (new runtime-authored compatibility alias, Phase 2)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/_compat_aliases.py",
+      "sha256": "30612a261d0e0aca15deb2146ee5ce9aa7b520ee0eb8257445ee8b7a0e089770"
+    },
+    {
       "canonical_owner": "runtime context",
       "donor": "accepted context-hub/task-context candidate",
       "lineage_status": "known",
@@ -384,6 +391,118 @@
       "lineage_status": "integrated_pending_acceptance",
       "path": "nexus_runtime/handoff_lineage.py",
       "sha256": "15a5196246b0d8f0cc28a520b59e99c7ecfc6c4186e8736157664745c5d5a480"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/__init__.py",
+      "sha256": "7286de5b367bf4e8a9ae423438a2dfed7dad297cdb995e2365ca74c464fcb096"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/events/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/events/contracts.py",
+      "sha256": "acef2fd0935d92173f8ba3189f8e06805e5b258d4f2e7e908ee8907ea5893def"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/events/effect_journal.py",
+      "sha256": "1cd2e16f53340864697c3fa9287dbe40c6826dde083e101fc3588ef46214567f"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/events/log_store.py",
+      "sha256": "73c371a7ce42852007f0896d8e913c07ab4a203ae4d05f3dcb34de30c537bc61"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/events/state_owner_manifest.py",
+      "sha256": "9ace0a06412431ed5d307e02e4b21516e586bcc0650b1f465c3f4448d898b01f"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/events/transport.py",
+      "sha256": "f81af5f6c5c772a9ce9dc0cf60e70138bd4ef8a9e6a33f26c2c91184a55d57fc"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/events/writer_generation.py",
+      "sha256": "46e0180583e20c95c5693ca3861e342be4a41c7df4bd72ae45ecfbf938760dff"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/feedback/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/feedback/contracts.py",
+      "sha256": "634dd9318775ea476e18ca6230a3c2e798818ca8dc85cb41946ace7ce5fb78ee"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/orchestrator/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/orchestrator/writer_quiescence.py",
+      "sha256": "4502fad71080a2db12a9cc347e0c37c93b820ace296884a504ddecb7a7bd0481"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/ports.py",
+      "sha256": "9f9d976e53302b916de6e97d06eb172ce2aae758867f87c408d45de45a9834d0"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/runtime.py",
+      "sha256": "ca0b08605e44b9b5c83f91393ee667686219b798d86357b7f674f8939e1c1f32"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/services/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "runtime",
+      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/services/online_payload_contract.py",
+      "sha256": "4aba8466bbf0fadf67fadbd2acd1e493897dc8f0ccea81c4d592c5226bed0c90"
     },
     {
       "canonical_owner": "memory adapter",
@@ -548,115 +667,10 @@
     },
     {
       "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
+      "donor": "none (new runtime-authored compatibility alias, Phase 2)",
       "lineage_status": "known",
       "path": "nexus_runtime_p6c_candidate/__init__.py",
-      "sha256": "7286de5b367bf4e8a9ae423438a2dfed7dad297cdb995e2365ca74c464fcb096"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/events/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/events/contracts.py",
-      "sha256": "acef2fd0935d92173f8ba3189f8e06805e5b258d4f2e7e908ee8907ea5893def"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/events/effect_journal.py",
-      "sha256": "94f894a0268c70647287eabbb3cc7ebac5e72b286d14aabfc5d007669f1e60e9"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/events/log_store.py",
-      "sha256": "cc91ebba16bc8434fa3b27041943cf9ce82ba60054d5269fac8d78012173d980"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/events/state_owner_manifest.py",
-      "sha256": "165144d70db4a497aeb1a39556eddbdd67fd1c8154684c7776cd33e04886ff50"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/events/transport.py",
-      "sha256": "3ce4c55f1b56051c231187b7c1aafd6b0c24db5d57f4cd511c6e30b8b3ef8b87"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/events/writer_generation.py",
-      "sha256": "46e0180583e20c95c5693ca3861e342be4a41c7df4bd72ae45ecfbf938760dff"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/feedback/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/feedback/contracts.py",
-      "sha256": "634dd9318775ea476e18ca6230a3c2e798818ca8dc85cb41946ace7ce5fb78ee"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/orchestrator/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/orchestrator/writer_quiescence.py",
-      "sha256": "58acc0efd6cc8da030f3724631b63e332af2b2b425b07665c063c306a91ed3b7"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/ports.py",
-      "sha256": "df641899d8ea757d5c854d0443e9541c324635c6cc6d2d323e8f75973cb0ba9c"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/runtime.py",
-      "sha256": "ca0b08605e44b9b5c83f91393ee667686219b798d86357b7f674f8939e1c1f32"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/services/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/services/online_payload_contract.py",
-      "sha256": "4aba8466bbf0fadf67fadbd2acd1e493897dc8f0ccea81c4d592c5226bed0c90"
+      "sha256": "09acca174e82eda7208e54a53b3dbf1f52e59cb7d4e81fc5375c989709444e43"
     },
     {
       "canonical_owner": "runtime support",
@@ -670,7 +684,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime_support_candidate/composition.py",
-      "sha256": "7d56f205caf38412dcc0dcd8d4d9075a55c41ca34068f5a6c2861feb28635d1c"
+      "sha256": "c2058500405de1f4a489f1d53da0887494ceb4f0b5193b953e77e195970825cd"
     },
     {
       "canonical_owner": "runtime support",
@@ -782,7 +796,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime_support_candidate/services/online_nexus_context.py",
-      "sha256": "0e19df2e5375f7fe8ba6416bc2134903f30dee711152d80bc4ddb7d921ae9d5d"
+      "sha256": "085fc646b0603b1d9b97c88848d686f6fa331f25f08bba8cdbde38231edaa30b"
     },
     {
       "canonical_owner": "runtime support",
@@ -794,7 +808,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "85f89423b55d6caf393bb1228f2cd0b1b4aff97a",
-  "source_tree": "56b8f07df006976505f0866142154d8cb1e88560",
+  "source_head": "6a6cab5d5049c2b329b0d6ae5de7c6732c3202bd",
+  "source_tree": "72318a1106a0c3362710ba3b5ece7841f11decdb",
   "unknown_lineage": []
 }
