@@ -7,6 +7,7 @@ case "$learning_sha" in
   *) echo "invalid nexus-learning SHA" >&2; exit 2 ;;
 esac
 
+export TMPDIR=/tmp  # colima virtiofs sandbox mount cannot hold the donor export (symlinks)
 repo_root="$(pwd -P)"
 tmp_root="$(mktemp -d)"
 cleanup() {
