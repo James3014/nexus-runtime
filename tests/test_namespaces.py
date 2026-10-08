@@ -69,3 +69,27 @@ def test_support_alias_from_import():
     from nexus_runtime_support_candidate.composition import build_runtime_exports as a
 
     assert a is b
+
+
+def test_context_store_namespace_exists():
+    pkg = importlib.import_module("nexus_runtime.context_store")
+    assert hasattr(pkg, "ContextContinuityService")
+    assert hasattr(pkg, "Scope")
+    store = importlib.import_module("nexus_runtime.context_store.store")
+    assert hasattr(store, "ContextStore")
+
+
+def test_context_prototype_alias_is_same_object():
+    assert importlib.import_module("nexus_context_prototype") is importlib.import_module(
+        "nexus_runtime.context_store"
+    )
+    assert importlib.import_module("nexus_context_prototype.store") is importlib.import_module(
+        "nexus_runtime.context_store.store"
+    )
+
+
+def test_context_prototype_alias_from_import():
+    from nexus_runtime.context_store import ContextContinuityService as b
+    from nexus_context_prototype import ContextContinuityService as a
+
+    assert a is b
