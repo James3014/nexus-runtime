@@ -1,20 +1,6 @@
 {
   "entries": [
     {
-      "canonical_owner": "runtime",
-      "donor": "none (new runtime-authored compatibility alias, Phase 2)",
-      "lineage_status": "known",
-      "path": "nexus_context_prototype/__init__.py",
-      "sha256": "1771466aafcc22e52fa3c4a0b4532e64220d796b4005061106e303ecf0e4f248"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "none (new runtime-authored compatibility alias, Phase 2)",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/__init__.py",
-      "sha256": "56f8925d2b8b1200c3cc1bb1da13ccdb8c461a9baee4fce4aeed665e59dcb820"
-    },
-    {
       "canonical_owner": "runtime context",
       "donor": "runtime public composition; latest placement exports from Compute Fabric G4 Issue #38",
       "lineage_status": "integrated_pending_acceptance",
@@ -811,25 +797,11 @@
       "lineage_status": "integrated_pending_acceptance",
       "path": "nexus_runtime/workflow_checkpoint.py",
       "sha256": "cf409fa2227ee41dd5d7673e6cd0f1045f800405a34f156d8a474f968fd060b3"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "none (new runtime-authored compatibility alias, Phase 2)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_p6c_candidate/__init__.py",
-      "sha256": "09acca174e82eda7208e54a53b3dbf1f52e59cb7d4e81fc5375c989709444e43"
-    },
-    {
-      "canonical_owner": "runtime",
-      "donor": "none (new runtime-authored compatibility alias, Phase 2)",
-      "lineage_status": "known",
-      "path": "nexus_runtime_support_candidate/__init__.py",
-      "sha256": "35240c8d3bd9c80e6f7ab18020304e93ad33b431e9b8e734419e959415d36fa5"
     }
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "ba66c38f84c70cfa86c6c5ac514efbbc1da4a2f1",
-  "source_tree": "25621d388d07cca104983dc81e523609343604ab",
+  "source_head": "320e602d4a399e232cc02a2a3afe859ab7027635",
+  "source_tree": "625eea58110377701101d8ca3c106916171dbf18",
   "unknown_lineage": []
 }
