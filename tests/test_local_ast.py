@@ -23,4 +23,3 @@ def test_local_ast_invoker_rejects_root_escape_and_parse_errors(tmp_path: Path):
     assert parsed["response"]["nodes"] == []
     assert parsed["response"]["edges"] == []
     assert parsed["response"]["risks"] == ["ast_parse_error:SyntaxError"]
-
