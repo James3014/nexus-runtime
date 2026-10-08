@@ -77,13 +77,6 @@ print(f"runtime_exports={exports}")
     selected = sorted(path.name for path in tests.glob("test_*.py"))
     if not selected:
         raise SystemExit("standalone_test_collection_empty")
-    deselected = [
-        "test_context_hub.py::test_extracted_packs_match_frozen_donor_for_identical_ports",
-        "test_task_retry.py::test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequence",
-        "test_local_ast.py::test_exported_local_ast_matches_donor_for_nodes_edges_and_risks",
-        "test_local_ast.py::test_local_ast_node_budget_and_public_edge_limit_match_donor",
-        "test_local_ast.py::test_local_ast_hash_and_missing_file_risk_match_donor",
-    ]
     junit.parent.mkdir(parents=True, exist_ok=True)
     run(
         [
@@ -92,7 +85,6 @@ print(f"runtime_exports={exports}")
             "pytest",
             "-q",
             *selected,
-            *[item for node in deselected for item in ("--deselect", node)],
             f"--junitxml={junit}",
         ],
         env=env,

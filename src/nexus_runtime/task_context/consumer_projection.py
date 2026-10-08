@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from nexus_planning_candidate.services.capability_evidence_bundle import (
+from nexus_runtime.planning.services.capability_evidence_bundle import (
     BUNDLE_SCHEMA,
     CONSUMER_PAYLOAD_SCHEMA,
     MAX_CONSUMER_PAYLOAD_CHARS,

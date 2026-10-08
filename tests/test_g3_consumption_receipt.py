@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from nexus_planning_candidate.services.capability_evidence_bundle import (
+from nexus_runtime.planning.services.capability_evidence_bundle import (
     build_capability_evidence_bundle,
 )
 from nexus_runtime.execution_coordination import ExecutionCoordinator, WorkerOutcome

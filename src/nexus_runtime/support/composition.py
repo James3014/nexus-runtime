@@ -1,0 +1,257 @@
+"""Explicit composition root for the real-binding runtime qualification wheel."""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Mapping
+
+from nexus_runtime.planning.composition import BUNDLED_POLICY_PATH
+from nexus_runtime.planning.engine.capability_contracts import (
+    EXECUTION_DEPTH_FULL,
+    EXECUTION_DEPTH_LIGHT,
+    EXECUTION_DEPTH_STANDARD,
+    ExecutionReplanAuthorization,
+    apply_execution_depth_floor,
+    next_execution_depth_after_failure,
+)
+from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner
+from nexus_runtime.planning.evidence.receipt_base import (
+    attach_r3_receipt_base,
+    build_execution_attempt_id,
+    validate_receipt_base,
+)
+from nexus_runtime.planning.services.capability_evidence_bundle import (
+    build_capability_evidence_bundle,
+)
+from nexus_runtime.planning.services.capability_evidence_bundle import (
+    consumer_view as _evidence_consumer_view,
+)
+from nexus_runtime.planning.services.capability_evidence_bundle import (
+    verify_capability_evidence_bundle as _verify_evidence_bundle,
+)
+from nexus_runtime.planning.services.model_workforce_policy import WorkforcePolicyLoader
+from nexus_runtime.planning.services.runtime_workforce_admission import (
+    RuntimeWorkforceAdmissionRecord,
+    _aggregate_hash,
+    _as_json_value,
+    _binding_payload,
+    _parse_demands,
+    _sha256_json,
+    evaluate_runtime_workforce_admission,
+)
+from nexus_runtime.kernel import bind_runtime, build_runtime
+from nexus_runtime.kernel.events.effect_journal import (
+    EffectDispatchPort,
+    EffectJournal,
+    EffectReconcilePort,
+    deterministic_effect_id,
+    operation_digest,
+)
+from nexus_runtime.kernel.events.state_owner_manifest import (
+    assert_owner_write,
+    read_manifest,
+)
+from nexus_runtime.kernel.events.writer_generation import read_generation
+from nexus_runtime.kernel.orchestrator.writer_quiescence import RuntimeWriterFactory
+from nexus_runtime.kernel.services.online_payload_contract import (
+    _ONLINE_NON_DELIVERY_MARKERS,
+    normalize_online_invoker_payload,
+    online_payload_indicates_non_delivery,
+)
+from .local_ast import RuntimeASTExtractor
+from .services.capability_registry import ensure_selected_coverage_invokers
+
+from .contracts.canonical_execution import CanonicalPlanningBundle, CanonicalTaskContext
+from .contracts.root_receipt import build_root_receipt
+from .contracts.unified_runtime_receipt import attach_failure_diagnostics
+from .engine.canonical_execution import plan_canonical_task_bundle, replan_canonical_task_bundle
+from .services.capability_registry import LOCAL_STAGE_CAPABILITIES, coverage_counts_from_receipt
+from .services.local_substitution import build_online_safe_local_forward
+from .services.online_execution_policy import (
+    decision_from_context,
+    physical_online_authorized,
+    resolve_online_execution_decision,
+)
+from .services.verified_assist_contract import (
+    assert_treatment_core_equal,
+    attach_verified_assist_to_forward,
+    build_treatment_fingerprint,
+    build_vap_from_local_receipt,
+    validate_vap_runtime_binding,
+)
+
+
+class UnsupportedAdapterError(RuntimeError):
+    """Raised when an intentionally omitted Local/AST adapter is requested."""
+
+
+class _LearningProjectionPort:
+    @staticmethod
+    def project_learning_entries(entries):
+        from nexus_learning.episode_projection import project_learning_entries
+        return project_learning_entries(entries)
+
+    @staticmethod
+    def semantic_projection_key(entry):
+        from nexus_learning.episode_projection import semantic_projection_key
+        return semantic_projection_key(entry)
+
+
+def _unsupported(name: str):
+    def raise_unsupported(*args: Any, **kwargs: Any) -> Any:
+        raise UnsupportedAdapterError(f"omitted_runtime_adapter:{name}")
+    return raise_unsupported
+
+def _runtime_projection_binding_missing(*args: Any, **kwargs: Any) -> Any:
+    raise ValueError("runtime_advisory_binding_missing")
+
+
+
+class MissingCapabilityBindingError(RuntimeError):
+    """Raised before Runtime effects when selected capability bindings are incomplete."""
+
+
+def _ensure_selected_coverage_invokers(
+    selected, existing, *, codeintel=None, prompt_compression_invoker=None,
+    default_capability_invokers=None,
+):
+    """Preserve the donor's default/override/explicit-skip coverage contract."""
+    return ensure_selected_coverage_invokers(
+        selected, existing, codeintel=codeintel,
+        prompt_compression_invoker=prompt_compression_invoker,
+        default_capability_invokers=default_capability_invokers,
+    )
+
+
+def build_runtime_exports(
+    *, policy_path: str | Path | None = None,
+    default_capability_invokers: Mapping[str, Any] | None = None,
+    planner_factory: Any = None,
+    canonical_planning_bundle_factory: Any = None,
+    canonical_task_context_factory: Any = None,
+    execution_replan_authorization_factory: Any = None,
+    plan_canonical_task_bundle_factory: Any = None,
+    replan_canonical_task_bundle_factory: Any = None,
+    advisory_route_from_local_response: Any = None,
+    hybrid_route_decision_from_payload: Any = None,
+    memory_retrieval_builder: Any = None,
+):
+    """Bind runtime implementations and optional explicit host capability adapters.
+
+    Precedence is packaged defaults, then these host defaults, then per-run
+    capability_invokers. None and an empty per-run map both retain defaults;
+    unknown selected names receive an explicit skip. Input maps are copied.
+    Without a host memory binding, standalone memory remains an explicit
+    unavailable/skip result; it never fabricates a successful memory search.
+    Host adapters must perform their own real effects and report their evidence.
+    """
+    host_defaults = dict(default_capability_invokers or {})
+
+    def selected_coverage(selected, existing, **kwargs):
+        return _ensure_selected_coverage_invokers(
+            selected, existing, default_capability_invokers=host_defaults, **kwargs
+        )
+    from nexus_runtime.memory import (
+        FindingsMemoryLessonStore,
+        LocalJsonlLessonStore,
+        MemoryRepositoryLessonStore,
+        MemoryRetrievalAdapter,
+        NexusCompositeLessonStore,
+    )
+    if policy_path is None:
+        policy_path = BUNDLED_POLICY_PATH
+    policy_path = Path(policy_path).expanduser().resolve()
+    if not policy_path.is_file():
+        raise FileNotFoundError(f"runtime_support_policy_missing:{policy_path}")
+    bindings = {
+        "CanonicalPlanningBundle": canonical_planning_bundle_factory or CanonicalPlanningBundle,
+        "CanonicalTaskContext": canonical_task_context_factory or CanonicalTaskContext,
+        "CapabilityPlanner": planner_factory if planner_factory is not None else CapabilityPlanner,
+        "EXECUTION_DEPTH_FULL": EXECUTION_DEPTH_FULL,
+        "EXECUTION_DEPTH_LIGHT": EXECUTION_DEPTH_LIGHT,
+        "EXECUTION_DEPTH_STANDARD": EXECUTION_DEPTH_STANDARD,
+        "ExecutionReplanAuthorization": execution_replan_authorization_factory or ExecutionReplanAuthorization,
+        "EffectDispatchPort": EffectDispatchPort,
+        "EffectJournal": EffectJournal,
+        "EffectReconcilePort": EffectReconcilePort,
+        "RuntimeWriterFactory": RuntimeWriterFactory,
+        "FindingsMemoryLessonStore": FindingsMemoryLessonStore,
+        "LOCAL_STAGE_CAPABILITIES": LOCAL_STAGE_CAPABILITIES,
+        "LocalJsonlLessonStore": LocalJsonlLessonStore,
+        "MemoryRepositoryLessonStore": MemoryRepositoryLessonStore,
+        "MemoryRetrievalAdapter": MemoryRetrievalAdapter,
+        "NexusCompositeLessonStore": NexusCompositeLessonStore,
+        "MemoryProjectionPort": _LearningProjectionPort(),
+        "RuntimeASTExtractor": RuntimeASTExtractor,
+        "RuntimeWorkforceAdmissionRecord": RuntimeWorkforceAdmissionRecord,
+        "WorkforcePolicyLoader": lambda: WorkforcePolicyLoader(policy_path=policy_path),
+        "_aggregate_hash": _aggregate_hash,
+        "_as_json_value": _as_json_value,
+        "_binding_payload": _binding_payload,
+        "_coverage_preview": coverage_counts_from_receipt,
+        "_evidence_consumer_view": _evidence_consumer_view,
+        "_parse_demands": _parse_demands,
+        "_sha256_json": _sha256_json,
+        "_verify_evidence_bundle": _verify_evidence_bundle,
+        "_ONLINE_NON_DELIVERY_MARKERS": _ONLINE_NON_DELIVERY_MARKERS,
+        "apply_execution_depth_floor": apply_execution_depth_floor,
+        "assert_treatment_core_equal": assert_treatment_core_equal,
+        "attach_failure_diagnostics": attach_failure_diagnostics,
+        "attach_r3_receipt_base": attach_r3_receipt_base,
+        "attach_verified_assist_to_forward": attach_verified_assist_to_forward,
+        "build_capability_evidence_bundle": build_capability_evidence_bundle,
+        "build_execution_attempt_id": build_execution_attempt_id,
+        "build_online_safe_local_forward": build_online_safe_local_forward,
+        "build_root_receipt": build_root_receipt,
+        "build_memory_retrieval_adapter": memory_retrieval_builder if memory_retrieval_builder is not None else build_memory_retrieval_adapter,
+        "build_treatment_fingerprint": build_treatment_fingerprint,
+        "build_vap_from_local_receipt": build_vap_from_local_receipt,
+        "decision_from_context": decision_from_context,
+        "ensure_selected_coverage_invokers": selected_coverage,
+        "evaluate_runtime_workforce_admission": evaluate_runtime_workforce_admission,
+        "next_execution_depth_after_failure": next_execution_depth_after_failure,
+        "assert_owner_write": assert_owner_write,
+        "deterministic_effect_id": deterministic_effect_id,
+        "normalize_online_invoker_payload": normalize_online_invoker_payload,
+        "online_payload_indicates_non_delivery": online_payload_indicates_non_delivery,
+        "operation_digest": operation_digest,
+        "plan_canonical_task_bundle": plan_canonical_task_bundle_factory or plan_canonical_task_bundle,
+        "physical_online_authorized": physical_online_authorized,
+        "read_generation": read_generation,
+        "read_manifest": read_manifest,
+        "replan_canonical_task_bundle": replan_canonical_task_bundle_factory or replan_canonical_task_bundle,
+        "resolve_online_execution_decision": resolve_online_execution_decision,
+        "validate_receipt_base": validate_receipt_base,
+        "advisory_route_from_local_response": advisory_route_from_local_response or _runtime_projection_binding_missing,
+        "hybrid_route_decision_from_payload": hybrid_route_decision_from_payload or _runtime_projection_binding_missing,
+        "validate_vap_runtime_binding": validate_vap_runtime_binding,
+    }
+    return build_runtime(bind_runtime(bindings))
+
+
+def build_memory_retrieval_adapter(
+    project_root: str | Path,
+    *,
+    local_path: str | Path | None = None,
+    findings_store: Any = None,
+    repository: Any = None,
+    projection_port: Any = None,
+    lessons_path: str | Path | None = None,
+):
+    """Construct memory with explicitly selected local and optional real backends."""
+    from nexus_runtime.memory import (
+        CanonicalLessonStore, FindingsMemoryLessonStore, LocalJsonlLessonStore,
+        MemoryRepositoryLessonStore, MemoryRetrievalAdapter, NexusCompositeLessonStore,
+    )
+    stores = [LocalJsonlLessonStore(Path(local_path or Path(project_root) / ".nexus/reports/learn/learning_closure.jsonl"))]
+    if findings_store is not None:
+        stores.append(FindingsMemoryLessonStore(project_root=Path(project_root), findings_store=findings_store))
+    if repository is not None:
+        stores.append(MemoryRepositoryLessonStore(project_root=Path(project_root), repository=repository))
+    if lessons_path is not None:
+        stores.append(CanonicalLessonStore(path=Path(lessons_path)))
+    else:
+        stores.append(CanonicalLessonStore(project_root=Path(project_root)))
+    return MemoryRetrievalAdapter(
+        store=NexusCompositeLessonStore(stores),
+        projection_port=projection_port or _LearningProjectionPort(),
+    )

@@ -11,18 +11,6 @@ from .budget import (
     build_context_budget_receipt,
     validate_context_budget_receipt,
 )
-from .consumer_projection import (
-    MODEL_CONTEXT_MARKER,
-    append_model_context_to_prompt,
-    build_online_context_package,
-    build_planner_consumer_context_package,
-    build_worker_context_package,
-    build_worker_context_package_with_admission,
-    extract_model_context_from_prompt,
-    project_runtime_exports_with_model_context,
-    serialize_model_context_package,
-    wrap_online_invoker,
-)
 from .consumption import (
     MODEL_CONTEXT_CONSUMPTION_RECEIPT_SCHEMA,
     OUTCOME_CONTRIBUTION_NOT_PROVEN,
@@ -197,3 +185,33 @@ __all__ = [
     "validate_source_materialization_projection",
     "wrap_online_invoker",
 ]
+
+
+# consumer_projection pulls in the planner family; resolve its names lazily so
+# consumer surfaces (continuity, budget, ...) do not pay for it.
+_LAZY_CONSUMER_PROJECTION = frozenset((
+    "MODEL_CONTEXT_MARKER",
+    "append_model_context_to_prompt",
+    "build_online_context_package",
+    "build_planner_consumer_context_package",
+    "build_worker_context_package",
+    "build_worker_context_package_with_admission",
+    "extract_model_context_from_prompt",
+    "project_runtime_exports_with_model_context",
+    "serialize_model_context_package",
+    "wrap_online_invoker",
+))
+
+
+def __getattr__(name: str):
+    if name in _LAZY_CONSUMER_PROJECTION:
+        from . import consumer_projection
+
+        value = getattr(consumer_projection, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

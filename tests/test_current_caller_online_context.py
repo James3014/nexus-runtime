@@ -7,7 +7,7 @@ from subprocess import TimeoutExpired
 from types import SimpleNamespace
 
 from nexus_runtime import build_runtime_exports
-from nexus_runtime_support_candidate.services.verified_assist_contract import (
+from nexus_runtime.support.services.verified_assist_contract import (
     attach_verified_assist_to_forward,
     build_verified_assist_packet,
 )

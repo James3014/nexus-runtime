@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from nexus_runtime_support_candidate.services.local_substitution import build_online_safe_local_forward
-from nexus_runtime_support_candidate.services.verified_assist_contract import (
+from nexus_runtime.support.services.local_substitution import build_online_safe_local_forward
+from nexus_runtime.support.services.verified_assist_contract import (
     ConsumptionRecord,
     assert_treatment_core_equal,
     attach_verified_assist_to_forward,
@@ -197,7 +197,7 @@ def test_self_claimed_consumed_without_physical_fields_denied() -> None:
 
 def test_tampered_consumption_proof_denies_credit() -> None:
     """Honest record from record_packet_consumption; mutating proof must fail re-verify."""
-    from nexus_runtime_support_candidate.services.verified_assist_contract import compute_consumption_proof
+    from nexus_runtime.support.services.verified_assist_contract import compute_consumption_proof
 
     pkt = _sample_packet()
     fragment = pkt.compact_injection()
@@ -258,7 +258,7 @@ def test_forged_physical_fields_with_fake_proof_denies_credit() -> None:
 
 def test_self_consistent_serialized_consumption_cannot_mint_credit() -> None:
     """A public self-hash verifies projection bytes but cannot prove the event."""
-    from nexus_runtime_support_candidate.services.verified_assist_contract import compute_consumption_proof
+    from nexus_runtime.support.services.verified_assist_contract import compute_consumption_proof
 
     fields = {
         "packet_hash": "a" * 64,
@@ -289,7 +289,7 @@ def test_self_consistent_serialized_consumption_cannot_mint_credit() -> None:
 
 def test_forged_physical_fields_with_recomputed_but_wrong_status_denies() -> None:
     """Even with consistent proof, non-consumed status must not credit."""
-    from nexus_runtime_support_candidate.services.verified_assist_contract import compute_consumption_proof
+    from nexus_runtime.support.services.verified_assist_contract import compute_consumption_proof
 
     fields = {
         "packet_hash": "a" * 64,

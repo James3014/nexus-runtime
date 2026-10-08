@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nexus_planning_candidate.engine.capability_planner import CapabilityPlanner
+from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner
 from nexus_runtime import build_runtime_exports
 
 
@@ -138,7 +138,7 @@ def test_actual_run_seals_materialization_and_exposes_request_schema():
 
 
 def test_actual_run_returns_structured_seal_failure_receipt(monkeypatch):
-    import nexus_runtime_support_candidate.composition as composition
+    import nexus_runtime.support.composition as composition
 
     monkeypatch.setattr(composition, "build_capability_evidence_bundle", lambda **_: {"tampered": True})
     exports = build_runtime_exports()

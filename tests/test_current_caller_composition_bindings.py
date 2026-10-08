@@ -7,13 +7,13 @@ from nexus_runtime import (
     PACKAGED_COMPATIBILITY,
     build_runtime_exports as build_public_runtime_exports,
 )
-from nexus_runtime_support_candidate.composition import build_runtime_exports
+from nexus_runtime.support.composition import build_runtime_exports
 
 
 def test_standalone_defaults_remain_package_owned():
     exports = build_runtime_exports()
-    assert exports.CapabilityPlanner.__module__.startswith("nexus_planning_candidate")
-    assert exports.ExecutionReplanAuthorization.__module__.startswith("nexus_planning_candidate")
+    assert exports.CapabilityPlanner.__module__.startswith("nexus_runtime.planning")
+    assert exports.ExecutionReplanAuthorization.__module__.startswith("nexus_runtime.planning")
 
 
 def test_public_standalone_binding_is_explicitly_compatibility_not_authority():
@@ -22,9 +22,9 @@ def test_public_standalone_binding_is_explicitly_compatibility_not_authority():
     assert exports.planner_binding.mode == PACKAGED_COMPATIBILITY
     assert exports.planner_binding.runtime_is_planner_authority is False
     assert exports.planner_binding.external_override is False
-    assert exports.planner_binding.planner_symbol.startswith("nexus_planning_candidate.")
-    assert exports.planner_binding.plan_symbol.startswith("nexus_runtime_support_candidate.")
-    assert exports.planner_binding.replan_symbol.startswith("nexus_runtime_support_candidate.")
+    assert exports.planner_binding.planner_symbol.startswith("nexus_runtime.planning.")
+    assert exports.planner_binding.plan_symbol.startswith("nexus_runtime.support.")
+    assert exports.planner_binding.replan_symbol.startswith("nexus_runtime.support.")
 
 
 def test_default_public_projection_preserves_planner_binding():

@@ -24,7 +24,7 @@ from nexus_runtime.memory import (
     MissingMemoryBindingError,
     NexusCompositeLessonStore,
 )
-from nexus_runtime_support_candidate import build_memory_retrieval_adapter, build_runtime_exports
+from nexus_runtime.support import build_memory_retrieval_adapter, build_runtime_exports
 
 
 class LearningProjectionPort:

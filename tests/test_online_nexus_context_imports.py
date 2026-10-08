@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 
-from nexus_runtime_support_candidate.services.online_nexus_context import (
+from nexus_runtime.support.services.online_nexus_context import (
     build_online_nexus_context,
     build_online_nexus_context_from_runtime,
     build_plan_gated_postflight_invokers,

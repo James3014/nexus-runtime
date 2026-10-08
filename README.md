@@ -22,7 +22,9 @@ The current Python source-ownership snapshot is bound to
 `6c875c4d06b05704b25ff4767a74906bde11040a`. That SHA is a source-scope anchor for
 the `src/**/*.py` hashes in `docs/current-source-ownership.json`, not a standing
 claim about the live repository HEAD. Later non-`src` commits do not invalidate
-the snapshot; any `src` mutation requires refreshing the ownership map.
+the snapshot; any `src` mutation requires refreshing the ownership map with
+`scripts/refresh_source_ownership.py` (run after committing `src`), which is
+verified by `tests/test_source_ownership.py`.
 
 The accepted runtime source line from PR #10 was merged at
 `39515b73a60fdf6322ee7e48a9f87ef681f46a26`, preserving accepted tree
@@ -97,7 +99,8 @@ from nexus_runtime.execution_coordination.ports import (
     ProcessOwnershipPort,
     ExecutionFinalizationPort,
 )
-from nexus_runtime_support_candidate import build_memory_retrieval_adapter
+# nexus_runtime.support (formerly nexus_runtime_support_candidate, kept as an import alias)
+from nexus_runtime.support import build_memory_retrieval_adapter
 
 exports = build_runtime_exports()
 memory = build_memory_retrieval_adapter("/path/to/project")
@@ -172,10 +175,10 @@ The test uses the real Planner/admission composition, writes a temporary
 candidate, verifies its bytes, retries once, and checks receipt lineage without
 contacting a provider.
 
-`nexus_runtime_candidate` remains a compatibility namespace for older callers;
-the public composition binds the current `nexus_runtime_p6c_candidate`
-implementation. No current source should create a second algorithm merely to
-replace that compatibility name.
+The `nexus_runtime_candidate` forwarding namespace was removed in Phase 1 (owner
+decision D1); the public composition binds the current
+`nexus_runtime.kernel` implementation (formerly `nexus_runtime_p6c_candidate`, kept as an import alias). No current source should create a
+second algorithm merely to replace that former compatibility name.
 
 ## Owner workflow integration
 

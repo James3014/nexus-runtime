@@ -18,7 +18,6 @@ from .bounded_decision import (
     classify_bounded_decision,
     validate_bounded_decision_response,
 )
-from .context_aware import ExecutionCoordinator
 from .coordinator import (
     EscalationDecision,
     WorkerEscalationPolicy,
@@ -94,3 +93,18 @@ __all__ = [
     "resolve_model_call_need",
     "validate_bounded_decision_response",
 ]
+
+
+# context_aware imports task_context.consumer_projection (planner family);
+# resolve ExecutionCoordinator lazily so the other contracts stay light.
+def __getattr__(name: str):
+    if name == "ExecutionCoordinator":
+        from .context_aware import ExecutionCoordinator
+
+        globals()[name] = ExecutionCoordinator
+        return ExecutionCoordinator
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))
