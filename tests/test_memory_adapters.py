@@ -11,7 +11,12 @@ from nexus_learning.episode_projection import (
     semantic_projection_key,
 )
 
+from nexus_learning.lessons import LessonStore as CanonicalLedger
+from nexus_learning.lessons import build_lesson
+from nexus_learning.state_root import LearningStateRoot
+
 from nexus_runtime.memory import (
+    CanonicalLessonStore,
     FindingsMemoryLessonStore,
     LocalJsonlLessonStore,
     MemoryRepositoryLessonStore,
@@ -184,3 +189,86 @@ def test_public_memory_builder_composes_explicit_findings_and_repository_ports(t
     )
     lessons = adapter.retrieve(query_text="parser", limit=5)
     assert {lesson.finding_id for lesson in lessons} == {"local-1", "finding-1"}
+
+
+def _append_lesson(project_root: Path, *, title: str, origin: str, polarity: str = "success") -> dict:
+    lesson = build_lesson(
+        title=title,
+        lesson_body=f"{title}: preserve parser evidence before retry",
+        source_episode_ids=[f"episode-{title}"],
+        source_task_ids=[f"task-{title}"],
+        evidence_refs=[f"receipt:{title}"],
+        outcome_polarity=polarity,
+        applies_when=["parser evidence"],
+        evidence_origin=origin,
+    )
+    assert CanonicalLedger(LearningStateRoot.from_project_root(project_root)).append(lesson)
+    return lesson
+
+
+def test_canonical_lesson_store_missing_ledger_is_empty_no_match(tmp_path: Path) -> None:
+    store_adapter = adapter(CanonicalLessonStore(project_root=tmp_path))
+    assert store_adapter.retrieve(query_text="parser", limit=5) == []
+    assert store_adapter.last_metadata["no_memory_match"] is True
+
+
+def test_canonical_lesson_store_returns_only_physical_lessons(tmp_path: Path) -> None:
+    physical = _append_lesson(tmp_path, title="parser physical", origin="physical", polarity="success")
+    _append_lesson(tmp_path, title="parser simulated", origin="simulated", polarity="failure")
+
+    lessons = adapter(CanonicalLessonStore(project_root=tmp_path)).retrieve(query_text="parser", limit=5)
+
+    assert [lesson.finding_id for lesson in lessons] == [physical["lesson_id"]]
+    assert lessons[0].provenance.startswith("lesson:")
+    assert lessons[0].provenance == f"lesson:{physical['lesson_id']}:receipt:parser physical"
+    assert lessons[0].pattern_type == "success"
+    assert lessons[0].task_id == "task-parser physical"
+    assert lessons[0].source == "canonical_lesson"
+
+
+def test_canonical_lesson_pattern_type_follows_failure_polarity(tmp_path: Path) -> None:
+    failed = _append_lesson(tmp_path, title="parser failed", origin="physical", polarity="failure")
+
+    lessons = adapter(CanonicalLessonStore(project_root=tmp_path)).retrieve(query_text="parser", limit=5)
+
+    assert [lesson.finding_id for lesson in lessons] == [failed["lesson_id"]]
+    assert lessons[0].pattern_type == "failure"
+
+
+def test_composite_returns_episode_and_canonical_lesson_rows(tmp_path: Path) -> None:
+    ledger = tmp_path / "lessons.jsonl"
+    write_jsonl(ledger, [row("local-1", "parser local evidence")])
+    canonical = _append_lesson(tmp_path, title="parser canonical", origin="physical")
+
+    lessons = adapter(
+        NexusCompositeLessonStore(
+            [LocalJsonlLessonStore(ledger), CanonicalLessonStore(project_root=tmp_path)]
+        )
+    ).retrieve(query_text="parser", limit=5)
+
+    assert {lesson.finding_id for lesson in lessons} == {"local-1", canonical["lesson_id"]}
+    assert all(lesson.provenance for lesson in lessons)
+
+
+def test_canonical_lesson_store_is_read_only(tmp_path: Path) -> None:
+    _append_lesson(tmp_path, title="parser readonly", origin="physical")
+    ledger = LearningStateRoot.from_project_root(tmp_path).lessons_path
+    before = ledger.stat().st_mtime_ns
+    content = ledger.read_bytes()
+
+    adapter(CanonicalLessonStore(project_root=tmp_path)).retrieve(query_text="parser", limit=5)
+
+    assert ledger.stat().st_mtime_ns == before
+    assert ledger.read_bytes() == content
+
+
+def test_public_memory_builder_includes_canonical_lesson_store(tmp_path: Path) -> None:
+    memory = build_memory_retrieval_adapter(tmp_path)
+    assert any(isinstance(store, CanonicalLessonStore) for store in memory.store.stores)
+
+
+def test_canonical_lesson_store_requires_exactly_one_binding(tmp_path: Path) -> None:
+    with pytest.raises(MissingMemoryBindingError):
+        CanonicalLessonStore()
+    with pytest.raises(MissingMemoryBindingError):
+        CanonicalLessonStore(project_root=tmp_path, path=tmp_path / "lessons.jsonl")
