@@ -702,6 +702,93 @@ class CanonicalEpisodicMemoryLessonStore:
         return selected[:limit] if limit and limit > 0 else selected
 
 
+class CanonicalLessonStore:
+    """Read-only adapter over the canonical nexus.learning_lesson.v1 ledger.
+
+    Lessons are read through nexus_learning.lessons; this class never opens the
+    ledger for writing and never mutates it. Only physical-evidence lessons are
+    returned (simulated lessons are not retrieval-eligible).
+    """
+
+    backend = "canonical_lesson"
+
+    def __init__(self, *, project_root: Path | None = None, path: Path | None = None) -> None:
+        if (project_root is None) == (path is None):
+            raise MissingMemoryBindingError(
+                "CanonicalLessonStore requires exactly one of project_root or path"
+            )
+        self.project_root = Path(project_root) if project_root is not None else None
+        self.path = Path(path) if path is not None else None
+        self.last_error = ""
+        self.last_metadata: dict[str, Any] = {}
+
+    def _resolve_path(self) -> Path:
+        if self.path is not None:
+            return self.path.expanduser().resolve()
+        from nexus_learning.state_root import LearningStateRoot
+
+        return LearningStateRoot.from_project_root(self.project_root).lessons_path
+
+    @staticmethod
+    def _to_row(hit: dict[str, Any], source_lesson: dict[str, Any]) -> dict[str, Any]:
+        lesson_id = str(hit.get("lesson_id") or "")
+        evidence_refs = [str(ref) for ref in hit.get("evidence_refs") or [] if str(ref).strip()]
+        first_ref = evidence_refs[0] if evidence_refs else ""
+        source_task_ids = [str(task) for task in source_lesson.get("source_task_ids") or [] if str(task).strip()]
+        row = dict(hit)
+        polarity = str(hit.get("classification") or hit.get("pattern_type") or "")
+        row.update(
+            {
+                "lesson_id": lesson_id,
+                "finding_id": lesson_id,
+                "summary": str(hit.get("summary") or ""),
+                "classification": polarity,
+                "pattern_type": polarity,
+                "source": "canonical_lesson",
+                "provenance": f"lesson:{lesson_id}:{first_ref}" if first_ref else f"lesson:{lesson_id}",
+                "task_id": source_task_ids[0] if source_task_ids else "",
+                "evidence_ref": first_ref,
+                "relevance_score": float(hit.get("relevance_score") or 0.0),
+                "title": str(hit.get("title") or ""),
+                "applies_when": list(hit.get("applies_when") or []),
+                "avoid_when": list(hit.get("avoid_when") or []),
+            }
+        )
+        return row
+
+    def query(self, *, query_text: str, limit: int) -> list[dict[str, Any]]:
+        self.last_error = ""
+        self.last_metadata = {
+            "backend": self.backend,
+            "query_attempted": True,
+            "query_succeeded": False,
+            "result_count": 0,
+            "error": "",
+        }
+        try:
+            from nexus_learning.lessons import load_lessons, retrieve_lessons
+
+            path = self._resolve_path()
+            if not path.exists():
+                self.last_metadata["query_succeeded"] = True
+                return []
+            lessons = load_lessons(path)
+            by_id = {str(lesson.get("lesson_id")): lesson for lesson in lessons}
+            hits = retrieve_lessons(
+                lessons, query_text=query_text, limit=limit, require_physical=True
+            )
+            rows = [
+                self._to_row(hit, by_id.get(str(hit.get("lesson_id")), {})) for hit in hits
+            ]
+        except Exception as exc:  # fail open: memory must never block the caller
+            self.last_error = exc.__class__.__name__
+            self.last_metadata["error"] = self.last_error
+            return []
+        self.last_metadata["query_succeeded"] = True
+        self.last_metadata["result_count"] = len(rows)
+        return rows
+
+
 class NexusCompositeLessonStore:
     """Composite Nexus memory read path with bounded, fail-open sources."""
 

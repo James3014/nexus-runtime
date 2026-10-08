@@ -6,6 +6,7 @@ package performs no discovery or I/O.
 """
 from .memory_retrieval_adapter import (
     CanonicalEpisodicMemoryLessonStore,
+    CanonicalLessonStore,
     FindingsMemoryLessonStore,
     LocalJsonlLessonStore,
     MemoryRepositoryLessonStore,
@@ -17,6 +18,7 @@ from .ports import MissingMemoryBindingError
 
 __all__ = [
     "CanonicalEpisodicMemoryLessonStore",
+    "CanonicalLessonStore",
     "FindingsMemoryLessonStore",
     "LocalJsonlLessonStore",
     "MemoryRepositoryLessonStore",
