@@ -4,6 +4,9 @@
 Existing owner/donor/lineage fields are preserved. New paths are appended to
 ``unknown_lineage`` so tests/test_source_ownership.py fails until a human
 assigns an owner.
+
+``--rename OLD/ NEW/`` (repeatable) carries owner fields from entries under
+OLD/ to NEW/ before matching, for one-off directory moves.
 """
 import hashlib
 import json
@@ -22,12 +25,31 @@ def git(*args):
     ).stdout.strip()
 
 
+def _renames(argv):
+    """Parse repeated ``--rename OLD/ NEW/`` prefix pairs (one-off path moves)."""
+    pairs, it = [], iter(argv)
+    for arg in it:
+        if arg != "--rename":
+            raise SystemExit(f"unknown argument: {arg}")
+        try:
+            pairs.append((next(it), next(it)))
+        except StopIteration:
+            raise SystemExit("--rename needs OLD/ NEW/")
+    return pairs
+
+
 def main():
+    renames = _renames(sys.argv[1:])
     if git("status", "--porcelain", "--", "src"):
         print("commit src changes first, then regenerate", file=sys.stderr)
         return 1
     doc = json.loads(DOC.read_text(encoding="utf-8"))
     old = {e["path"]: e for e in doc["entries"]}
+    for old_prefix, new_prefix in renames:
+        for path in [p for p in old if p.startswith(old_prefix)]:
+            moved = dict(old.pop(path))
+            moved["path"] = new_prefix + path[len(old_prefix):]
+            old[moved["path"]] = moved
     entries, unknown = [], []
     for p in sorted(SRC.rglob("*.py")):
         rel = p.relative_to(SRC)
