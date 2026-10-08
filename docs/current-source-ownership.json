@@ -1,39 +1,11 @@
 {
   "entries": [
     {
-      "canonical_owner": "runtime support",
-      "donor": "accepted support candidate",
+      "canonical_owner": "runtime",
+      "donor": "none (new runtime-authored compatibility alias, Phase 2)",
       "lineage_status": "known",
       "path": "nexus_context_prototype/__init__.py",
-      "sha256": "2e33180ddf790600448a4371638a9ea1a6f5c74419ba61cbedc5d02acb985f90"
-    },
-    {
-      "canonical_owner": "runtime support",
-      "donor": "accepted support candidate",
-      "lineage_status": "known",
-      "path": "nexus_context_prototype/access.py",
-      "sha256": "7789074ab05045091316e8e49ba8a53534d0b940cbf8362e704f1224e89093d2"
-    },
-    {
-      "canonical_owner": "runtime support",
-      "donor": "accepted support candidate",
-      "lineage_status": "known",
-      "path": "nexus_context_prototype/models.py",
-      "sha256": "557f32402b44f6a78fc92d4a73b39d856dbb4834eaf96f37e357c18d121608c4"
-    },
-    {
-      "canonical_owner": "runtime support",
-      "donor": "accepted support candidate",
-      "lineage_status": "known",
-      "path": "nexus_context_prototype/service.py",
-      "sha256": "73a874cd45a83ce1193efe0a2b400fad4feeacb71ba945dcb119a5d2c7fcc6c9"
-    },
-    {
-      "canonical_owner": "runtime support",
-      "donor": "accepted support candidate",
-      "lineage_status": "known",
-      "path": "nexus_context_prototype/store.py",
-      "sha256": "e8ad2d17b56d8567514974b00f7aa43d86fd3744f7d6aa6af214f8fe4814e57c"
+      "sha256": "1771466aafcc22e52fa3c4a0b4532e64220d796b4005061106e303ecf0e4f248"
     },
     {
       "canonical_owner": "planner/admission",
@@ -285,7 +257,7 @@
       "donor": "runtime public composition; latest placement exports from Compute Fabric G4 Issue #38",
       "lineage_status": "integrated_pending_acceptance",
       "path": "nexus_runtime/__init__.py",
-      "sha256": "aa5a750a0e4ebb54d0b1272ef86068f61a2dea2b8c3e4dba5f51458c2347ce8d"
+      "sha256": "dc0aff2c9ec8a3b0b5aefd67956734aa3fe8778fdce8b8b885fde7e60b1536de"
     },
     {
       "canonical_owner": "runtime context",
@@ -321,6 +293,41 @@
       "lineage_status": "known",
       "path": "nexus_runtime/context_hub/ports.py",
       "sha256": "05db349478affed866df40e3a9051540b2effd463c7cc8f8df2308625fe38d5e"
+    },
+    {
+      "canonical_owner": "runtime support",
+      "donor": "accepted support candidate",
+      "lineage_status": "known",
+      "path": "nexus_runtime/context_store/__init__.py",
+      "sha256": "2e33180ddf790600448a4371638a9ea1a6f5c74419ba61cbedc5d02acb985f90"
+    },
+    {
+      "canonical_owner": "runtime support",
+      "donor": "accepted support candidate",
+      "lineage_status": "known",
+      "path": "nexus_runtime/context_store/access.py",
+      "sha256": "7789074ab05045091316e8e49ba8a53534d0b940cbf8362e704f1224e89093d2"
+    },
+    {
+      "canonical_owner": "runtime support",
+      "donor": "accepted support candidate",
+      "lineage_status": "known",
+      "path": "nexus_runtime/context_store/models.py",
+      "sha256": "557f32402b44f6a78fc92d4a73b39d856dbb4834eaf96f37e357c18d121608c4"
+    },
+    {
+      "canonical_owner": "runtime support",
+      "donor": "accepted support candidate",
+      "lineage_status": "known",
+      "path": "nexus_runtime/context_store/service.py",
+      "sha256": "73a874cd45a83ce1193efe0a2b400fad4feeacb71ba945dcb119a5d2c7fcc6c9"
+    },
+    {
+      "canonical_owner": "runtime support",
+      "donor": "accepted support candidate",
+      "lineage_status": "known",
+      "path": "nexus_runtime/context_store/store.py",
+      "sha256": "e8ad2d17b56d8567514974b00f7aa43d86fd3744f7d6aa6af214f8fe4814e57c"
     },
     {
       "canonical_owner": "runtime execution coordination",
@@ -815,7 +822,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "5c8187fabc5b58b089a4ef12613aa29eca33d5fe",
-  "source_tree": "548d50d68235f6a6f8e6f5d0533878ac45f7b800",
+  "source_head": "a2223308825466b21dae9e5996956171e62c3172",
+  "source_tree": "587648d7bf3120e1c0cd87abc8d9b40a41074664",
   "unknown_lineage": []
 }
