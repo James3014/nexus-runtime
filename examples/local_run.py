@@ -6,7 +6,7 @@ import hashlib
 import tempfile
 from pathlib import Path
 
-from nexus_runtime_support_candidate import build_runtime_exports
+from nexus_runtime.support import build_runtime_exports
 
 
 def main() -> None:
