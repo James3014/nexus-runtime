@@ -6,12 +6,11 @@ from pathlib import Path
 
 from nexus_runtime_support_candidate import build_runtime_exports
 from nexus_runtime_support_candidate.local_ast import RuntimeASTExtractor
+from _donor import require_donor_root
 
 
 def _donor_extractor():
-    path = Path(
-        "/private/tmp/astra-production-integrated-20260909/nexus/services/local_heal/evidence_graph.py"
-    )
+    path = require_donor_root() / "nexus/services/local_heal/evidence_graph.py"
     spec = importlib.util.spec_from_file_location("donor_evidence_graph", path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

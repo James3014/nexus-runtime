@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from _donor import require_donor_root
+
 from nexus_runtime.task_retry import (
     CLEAN_SEMANTIC_REJECT,
     RetryService,
@@ -258,9 +260,7 @@ def test_ast_extracted_donor_retry_matches_all_gate_branches_and_positive_sequen
     from collections.abc import Mapping
     from types import SimpleNamespace
 
-    donor_file = Path(
-        "/private/tmp/astra-production-integrated-20260909/nexus/orchestrator/self_hosted_task_service.py"
-    )
+    donor_file = require_donor_root() / "nexus/orchestrator/self_hosted_task_service.py"
     tree = ast.parse(donor_file.read_text(encoding="utf-8"))
     method = next(
         node

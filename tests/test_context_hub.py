@@ -8,6 +8,7 @@ from typing import ClassVar
 import pytest
 
 from nexus_runtime.context_hub import ContextHub, ContextHubDependencies
+from _donor import require_donor_root
 
 
 @dataclass
@@ -255,6 +256,8 @@ def test_extracted_packs_match_frozen_donor_for_identical_ports(tmp_path):
     import json
     import os
     import subprocess
+
+    donor_root = require_donor_root()
     import sys
 
     state = State()
@@ -286,7 +289,7 @@ import importlib.util, json
 from pathlib import Path
 from types import SimpleNamespace
 
-donor_path = Path("/private/tmp/astra-production-integrated-20260909/nexus/core/context_hub.py")
+donor_path = Path("__DONOR_ROOT__") / "nexus/core/context_hub.py"
 spec = importlib.util.spec_from_file_location("frozen_context_hub", donor_path)
 donor_module = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
@@ -320,8 +323,9 @@ donor_module.ToonRenderer = SimpleNamespace(render=lambda _state, aggression=0.0
 out = {"feature": donor.assemble_feature_pack({"steps": ["inspect"]}), "diag": donor.assemble_diag_pack([{"file": "parser.py", "message": "bad"}], "parser failure"), "conversation": donor.assemble_conversation_pack(), "research": donor.assemble_research_pack("parser", [{"fact": 1}]), "repair": donor.assemble_repair_pack(Diagnosis(), [{"reflection": 1}, {"reflection": 2}, {"reflection": 3}], Research())}
 print(json.dumps(out, sort_keys=True, default=str))
 """
+    donor_script = donor_script.replace("__DONOR_ROOT__", str(donor_root))
     donor_env = dict(os.environ)
-    donor_env["PYTHONPATH"] = "/private/tmp/astra-production-integrated-20260909"
+    donor_env["PYTHONPATH"] = str(donor_root)
     proc = subprocess.run(
         [sys.executable, "-c", donor_script],
         check=True,

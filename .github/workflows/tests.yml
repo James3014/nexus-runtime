@@ -119,7 +119,7 @@ jobs:
           donor_sha=471a281badda342ccab26606e0c46cbca6867cbb
           donor_repo="$RUNNER_TEMP/nexus-new-donor.git"
           donor_stage="$RUNNER_TEMP/nexus-new-donor-export"
-          donor_locator=/private/tmp/astra-production-integrated-20260909
+          donor_locator="$RUNNER_TEMP/frozen-donor"
           test ! -e "$donor_repo"
           test ! -e "$donor_stage"
           test ! -e "$donor_locator"
@@ -130,16 +130,17 @@ jobs:
           donor_tree=$(git --git-dir="$donor_repo" rev-parse "$donor_sha^{tree}")
           mkdir -p "$donor_stage"
           git --git-dir="$donor_repo" archive "$donor_sha" | tar -x -C "$donor_stage"
-          sudo mkdir -p "$donor_locator"
-          sudo cp -a "$donor_stage/." "$donor_locator/"
-          sudo git -C "$donor_locator" init -q
-          sudo mkdir -p "$donor_locator/.git/objects/info"
-          echo "$donor_repo/objects" | sudo tee "$donor_locator/.git/objects/info/alternates" >/dev/null
-          sudo git -C "$donor_locator" update-ref refs/heads/frozen-donor "$donor_sha"
-          sudo git -C "$donor_locator" symbolic-ref HEAD refs/heads/frozen-donor
-          sudo git -C "$donor_locator" read-tree "$donor_sha"
-          test "$(sudo git -C "$donor_locator" rev-parse HEAD)" = "$donor_sha"
-          test "$(sudo git -C "$donor_locator" rev-parse HEAD^{tree})" = "$donor_tree"
+          mkdir -p "$donor_locator"
+          cp -a "$donor_stage/." "$donor_locator/"
+          git -C "$donor_locator" init -q
+          mkdir -p "$donor_locator/.git/objects/info"
+          echo "$donor_repo/objects" > "$donor_locator/.git/objects/info/alternates"
+          git -C "$donor_locator" update-ref refs/heads/frozen-donor "$donor_sha"
+          git -C "$donor_locator" symbolic-ref HEAD refs/heads/frozen-donor
+          git -C "$donor_locator" read-tree "$donor_sha"
+          test "$(git -C "$donor_locator" rev-parse HEAD)" = "$donor_sha"
+          test "$(git -C "$donor_locator" rev-parse HEAD^{tree})" = "$donor_tree"
+          echo "NEXUS_RUNTIME_FROZEN_DONOR_ROOT=$donor_locator" >> "$GITHUB_ENV"
 
       - name: Run full installed-package suite
         run: |
