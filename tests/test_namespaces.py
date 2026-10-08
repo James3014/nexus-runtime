@@ -24,3 +24,26 @@ def test_dead_forwarding_namespace_removed():
         pytest.skip("GAP: repository root not available")
     assert importlib.util.find_spec("nexus_runtime_candidate") is None
     assert not (SRC / "nexus_runtime_candidate").exists()
+
+
+def test_kernel_namespace_exists():
+    kernel = importlib.import_module("nexus_runtime.kernel")
+    for name in ("build_runtime", "bind_runtime", "RuntimeExports"):
+        assert hasattr(kernel, name), name
+    importlib.import_module("nexus_runtime.kernel.events.effect_journal")
+
+
+def test_p6c_alias_is_same_object():
+    assert importlib.import_module("nexus_runtime_p6c_candidate") is importlib.import_module(
+        "nexus_runtime.kernel"
+    )
+    assert importlib.import_module(
+        "nexus_runtime_p6c_candidate.services.online_payload_contract"
+    ) is importlib.import_module("nexus_runtime.kernel.services.online_payload_contract")
+
+
+def test_p6c_alias_from_import():
+    from nexus_runtime.kernel import build_runtime as b
+    from nexus_runtime_p6c_candidate import build_runtime as a
+
+    assert a is b
