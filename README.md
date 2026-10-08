@@ -22,7 +22,9 @@ The current Python source-ownership snapshot is bound to
 `6c875c4d06b05704b25ff4767a74906bde11040a`. That SHA is a source-scope anchor for
 the `src/**/*.py` hashes in `docs/current-source-ownership.json`, not a standing
 claim about the live repository HEAD. Later non-`src` commits do not invalidate
-the snapshot; any `src` mutation requires refreshing the ownership map.
+the snapshot; any `src` mutation requires refreshing the ownership map with
+`scripts/refresh_source_ownership.py` (run after committing `src`), which is
+verified by `tests/test_source_ownership.py`.
 
 The accepted runtime source line from PR #10 was merged at
 `39515b73a60fdf6322ee7e48a9f87ef681f46a26`, preserving accepted tree
