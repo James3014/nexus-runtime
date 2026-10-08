@@ -10,7 +10,7 @@ The public `nexus_runtime.build_runtime_exports()` exposes `planner_binding` wit
 
 Two modes are valid:
 
-- `PACKAGED_COMPATIBILITY` — standalone qualification uses the packaged `nexus_planning_candidate` implementation family. This preserves standalone behavior; no cross-repository source-parity check is run (retired in Phase 4a).
+- `PACKAGED_COMPATIBILITY` — standalone qualification uses the packaged `nexus_runtime.planning` implementation family (formerly `nexus_planning_candidate`, kept as an import alias). This preserves standalone behavior; no cross-repository source-parity check is run (retired in Phase 4a).
 - `EXTERNAL_COMPLETE_OVERRIDE` — a host supplies the complete planner-domain family: Planner, canonical planning bundle, task context, replan authorization, plan function, and replan function.
 
 In both modes:

@@ -23,7 +23,7 @@ It does not implicitly own or select:
 - arbitrary host activation or deployment;
 - protected merge, release, or production authority.
 
-Under owner decision D2 (2026-10-08) nexus-runtime is the planner *source* owner (package `nexus_planning_candidate`, to be renamed `nexus_runtime.planning` in Phase 2.4). Route/capability *decision* authority stays with Nexus-new through issue binding: planner behavior changes require a Nexus-new issue reference in the PR body. `runtime_is_planner_authority` therefore means decision authority, not source location, and remains `false`.
+Under owner decision D2 (2026-10-08) nexus-runtime is the planner *source* owner (package `nexus_runtime.planning`, formerly `nexus_planning_candidate`, kept as an import alias). Route/capability *decision* authority stays with Nexus-new through issue binding: planner behavior changes require a Nexus-new issue reference in the PR body. `runtime_is_planner_authority` therefore means decision authority, not source location, and remains `false`.
 
 ## Required reading before mutation
 
