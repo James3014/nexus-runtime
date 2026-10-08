@@ -16,6 +16,7 @@ print(json.dumps(sorted(m for m in sys.modules if m.startswith("nexus_"))))
 FORBIDDEN_PREFIXES = (
     "nexus_planning_candidate",
     "nexus_runtime_p6c_candidate",
+    "nexus_runtime.kernel",
     "nexus_runtime_support_candidate.composition",
 )
 
