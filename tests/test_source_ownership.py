@@ -67,3 +67,25 @@ def test_ownership_source_tree_matches_head():
 def test_no_unknown_lineage():
     _require_root()
     assert _doc()["unknown_lineage"] == []
+
+
+def test_refresh_rename_drops_stale_unknown_lineage_for_renamed_path():
+    import importlib.util
+
+    script = ROOT / "scripts" / "refresh_source_ownership.py"
+    if not script.is_file():
+        pytest.skip("GAP: refresh script not available")
+    spec = importlib.util.spec_from_file_location("_refresh_ownership", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    doc = {
+        "entries": [{"path": "old/a.py", "sha256": "x", "owner": "o"}],
+        # a prior run without --rename flagged the new path as unknown
+        "unknown_lineage": [{"path": "new/a.py", "sha256": "x"}],
+    }
+    files = {"new/a.py": "y"}
+    entries, unknown = mod.merge_entries(doc, files, [("old/", "new/")])
+    assert [e["path"] for e in entries] == ["new/a.py"]
+    assert entries[0]["owner"] == "o"
+    assert unknown == []

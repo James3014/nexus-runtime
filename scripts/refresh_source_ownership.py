@@ -38,12 +38,8 @@ def _renames(argv):
     return pairs
 
 
-def main():
-    renames = _renames(sys.argv[1:])
-    if git("status", "--porcelain", "--", "src"):
-        print("commit src changes first, then regenerate", file=sys.stderr)
-        return 1
-    doc = json.loads(DOC.read_text(encoding="utf-8"))
+def merge_entries(doc, files, renames=()):
+    """Return ``(entries, unknown)`` for ``files`` (path -> sha256) given the old ``doc``."""
     old = {e["path"]: e for e in doc["entries"]}
     for old_prefix, new_prefix in renames:
         for path in [p for p in old if p.startswith(old_prefix)]:
@@ -51,23 +47,37 @@ def main():
             moved["path"] = new_prefix + path[len(old_prefix):]
             old[moved["path"]] = moved
     entries, unknown = [], []
-    for p in sorted(SRC.rglob("*.py")):
-        rel = p.relative_to(SRC)
-        if "__pycache__" in rel.parts or any(x.endswith(".egg-info") for x in rel.parts):
-            continue
-        path = rel.as_posix()
-        digest = hashlib.sha256(p.read_bytes()).hexdigest()
+    for path, digest in files.items():
         if path in old:
             e = dict(old[path])
             e["sha256"] = digest
             entries.append(e)
         else:
             unknown.append({"path": path, "sha256": digest})
-    kept_unknown = [u for u in doc.get("unknown_lineage", []) if isinstance(u, dict)]
     seen = {u["path"] for u in unknown}
-    for u in kept_unknown:
-        if u.get("path") not in seen and (SRC / u["path"]).exists():
+    matched = {e["path"] for e in entries}
+    for u in doc.get("unknown_lineage", []):
+        if not isinstance(u, dict):
+            continue
+        path = u.get("path")
+        if path in files and path not in seen and path not in matched:
             unknown.append(u)
+    return entries, unknown
+
+
+def main():
+    renames = _renames(sys.argv[1:])
+    if git("status", "--porcelain", "--", "src"):
+        print("commit src changes first, then regenerate", file=sys.stderr)
+        return 1
+    doc = json.loads(DOC.read_text(encoding="utf-8"))
+    files = {}
+    for p in sorted(SRC.rglob("*.py")):
+        rel = p.relative_to(SRC)
+        if "__pycache__" in rel.parts or any(x.endswith(".egg-info") for x in rel.parts):
+            continue
+        files[rel.as_posix()] = hashlib.sha256(p.read_bytes()).hexdigest()
+    entries, unknown = merge_entries(doc, files, renames)
     doc["entries"] = entries
     doc["unknown_lineage"] = sorted(unknown, key=lambda u: u["path"])
     doc["source_tree"] = git("rev-parse", "HEAD:src")
