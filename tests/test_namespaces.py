@@ -47,3 +47,25 @@ def test_p6c_alias_from_import():
     from nexus_runtime_p6c_candidate import build_runtime as a
 
     assert a is b
+
+
+def test_support_namespace_exists():
+    importlib.import_module("nexus_runtime.support")
+    local_ast = importlib.import_module("nexus_runtime.support.local_ast")
+    assert hasattr(local_ast, "RuntimeASTExtractor")
+
+
+def test_support_alias_is_same_object():
+    assert importlib.import_module("nexus_runtime_support_candidate") is importlib.import_module(
+        "nexus_runtime.support"
+    )
+    assert importlib.import_module(
+        "nexus_runtime_support_candidate.local_ast"
+    ) is importlib.import_module("nexus_runtime.support.local_ast")
+
+
+def test_support_alias_from_import():
+    from nexus_runtime.support.composition import build_runtime_exports as b
+    from nexus_runtime_support_candidate.composition import build_runtime_exports as a
+
+    assert a is b
