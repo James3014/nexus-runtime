@@ -6007,6 +6007,75 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
         )
         return results, bundle
 
-    excluded = {'bindings', '_nexus_generated_bindings', 'RuntimeBindings', 'TransportBindings', 'require_complete_bindings'}
-    values = {k: v for k, v in locals().items() if k not in excluded and not k.startswith('__')}
+    __runtime_exports__: tuple[str, ...] = (
+        'CanonicalPlanningBundle',
+        'CanonicalTaskContext',
+        'CapabilityPlanner',
+        'EXECUTION_DEPTH_FULL',
+        'EXECUTION_DEPTH_LIGHT',
+        'EXECUTION_DEPTH_STANDARD',
+        'ExecutionReplanAuthorization',
+        'GATEWAY_INVOCATION_AUTHORITY_SCHEMA',
+        'LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA',
+        'LOCAL_ONLY_PROVIDERS',
+        'ONLINE_CLI_SPEC_REGISTRY',
+        'OnlineCliSpec',
+        'OnlineTransportBinding',
+        'RECEIPT_SCHEMA',
+        'REGISTERED_CLI_MODEL_BINDING_FLAGS',
+        'REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS',
+        'REQUEST_SCHEMA',
+        'RUNTIME_WORKFORCE_ADMISSION_RECORD_SCHEMA',
+        'RUNTIME_WORKFORCE_ADMISSION_SCHEMA',
+        'RuntimeWorkforceAdmissionRecord',
+        'SELECTION_COMPATIBILITY_DEFAULT',
+        'SELECTION_ENVIRONMENT_DEFAULT',
+        'SELECTION_EXPLICIT_REQUEST',
+        'SELECTION_INJECTED_TRANSPORT',
+        'SELECTION_PLANNER',
+        'TRANSPORT_GATEWAY_COMPATIBILITY',
+        'TRANSPORT_REGISTERED_CLI',
+        'TRANSPORT_STRUCTURED_CALLABLE',
+        'TRANSPORT_UNRESOLVED',
+        'UnifiedRuntime',
+        'UnifiedRuntimeRequest',
+        'WORKFORCE_ADMISSION_DECISION_SCHEMA',
+        'WorkforcePolicyLoader',
+        '_capability_evidence_summary',
+        'apply_execution_depth_floor',
+        'attach_failure_diagnostics',
+        'attach_r3_receipt_base',
+        'build_canonical_runtime_context',
+        'build_execution_attempt_id',
+        'build_execution_replan_request',
+        'build_local_ast_capability_invoker',
+        'build_local_memory_capability_invoker',
+        'build_local_search_ranking_capability_invoker',
+        'build_memory_retrieval_adapter',
+        'build_online_route',
+        'build_prompt_compression_capability_invoker',
+        'build_registered_online_invoker',
+        'build_structured_online_invoker',
+        'build_subprocess_online_invoker',
+        'canonical_execution_identity',
+        'evaluate_runtime_workforce_admission',
+        'execution_replan_request_authority_projection',
+        'extract_online_stage_payload',
+        'materialize_selected_capability_evidence',
+        'next_execution_depth_after_failure',
+        'normalize_online_invoker_payload',
+        'online_payload_indicates_non_delivery',
+        'plan_canonical_task_bundle',
+        'replan_canonical_task_bundle',
+        'resolve_online_transport_binding',
+        'resolve_registered_online_cli_spec',
+        'resolve_registered_provider_executable',
+        'validate_receipt_base',
+    )
+    _locals = locals()
+    values = {}
+    for name in __runtime_exports__:
+        if name not in _locals:
+            raise RuntimeError(f"runtime export missing: {name}")
+        values[name] = _locals[name]
     return RuntimeExports(values)
