@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from nexus_planning_candidate.engine.capability_aliases import normalize_capability_names
-from nexus_planning_candidate.engine.capability_contracts import (
+from nexus_runtime.planning.engine.capability_aliases import normalize_capability_names
+from nexus_runtime.planning.engine.capability_contracts import (
     CapabilityConstraints,
     CapabilitySignalSet,
     SkillSignalSet,

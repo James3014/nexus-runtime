@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nexus_planning_candidate.engine.capability_planner import CapabilityPlanner
+from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner
 from nexus_runtime import build_runtime_exports
 
 

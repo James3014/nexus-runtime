@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
-from nexus_planning_candidate.contracts.execution_identity import (
+from nexus_runtime.planning.contracts.execution_identity import (
     require_execution_topology,
     require_execution_world,
 )
@@ -477,7 +477,7 @@ class CapabilityReceipt:
             return False
 
         # Fail-closed: never default missing telemetry_source to "measured"
-        from nexus_planning_candidate.core.belief_contracts import _resolve_telemetry_source, _telemetry_numeric
+        from nexus_runtime.planning.core.belief_contracts import _resolve_telemetry_source, _telemetry_numeric
 
         source = _resolve_telemetry_source(self.telemetries)
         if source in ("unavailable", "estimated", "unknown"):
@@ -511,7 +511,7 @@ class CapabilityReceipt:
         }
         # RC product: additive receipt_base projection (JSON-safe; no class alias)
         try:
-            from nexus_planning_candidate.evidence.receipt_base import project_child_receipt_base
+            from nexus_runtime.planning.evidence.receipt_base import project_child_receipt_base
 
             base["receipt_base"] = project_child_receipt_base(
                 source_world="B",

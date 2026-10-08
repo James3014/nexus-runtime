@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nexus_planning_candidate.engine.harness_sensors import build_harness_preflight_sensor, build_semantic_failure_sensor
+from nexus_runtime.planning.engine.harness_sensors import build_harness_preflight_sensor, build_semantic_failure_sensor
 
 
 HIGH_COST_LITE_DOWNGRADE_CAPABILITIES = (

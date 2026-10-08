@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nexus_planning_candidate.engine.capability_contracts import PHASES
+from nexus_runtime.planning.engine.capability_contracts import PHASES
 
 
 def build_replan_trace(

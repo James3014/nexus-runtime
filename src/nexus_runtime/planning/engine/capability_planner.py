@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from nexus_planning_candidate.contracts.execution_identity import (
+from nexus_runtime.planning.contracts.execution_identity import (
     CanonicalExecutionTopology,
     require_execution_world,
 )
-from nexus_planning_candidate.contracts.workforce_admission import WorkforceDemand, WorkforceDemands
-from nexus_planning_candidate.core.lite_route_oracle import lite_route_safety_blockers
-from nexus_planning_candidate.engine.capability_contracts import (
+from nexus_runtime.planning.contracts.workforce_admission import WorkforceDemand, WorkforceDemands
+from nexus_runtime.planning.core.lite_route_oracle import lite_route_safety_blockers
+from nexus_runtime.planning.engine.capability_contracts import (
     CapabilityNode,
     CapabilityPlan,
     CapabilityScoringConfig,
@@ -16,24 +16,24 @@ from nexus_planning_candidate.engine.capability_contracts import (
     apply_execution_depth_floor,
     execution_depth_for_routing_tier,
 )
-from nexus_planning_candidate.engine.capability_signals import build_capability_constraints, build_capability_signals
-from nexus_planning_candidate.engine.harness_route_policy import (
+from nexus_runtime.planning.engine.capability_signals import build_capability_constraints, build_capability_signals
+from nexus_runtime.planning.engine.harness_route_policy import (
     apply_harness_cost_lane_policy,
     apply_harness_relevance_policy,
     apply_harness_sensor_policy,
     build_semantic_failure_snapshot,
 )
-from nexus_planning_candidate.engine.harness_sensors import build_harness_preflight_sensor
-from nexus_planning_candidate.engine.local_assist_recommendation import build_local_assist_recommendation
-from nexus_planning_candidate.engine.planner.ab_evaluator import build_decision_trace
-from nexus_planning_candidate.engine.planner.policy_applier import apply_learning_policy
-from nexus_planning_candidate.engine.planner.skill_mount_evidence import (
+from nexus_runtime.planning.engine.harness_sensors import build_harness_preflight_sensor
+from nexus_runtime.planning.engine.local_assist_recommendation import build_local_assist_recommendation
+from nexus_runtime.planning.engine.planner.ab_evaluator import build_decision_trace
+from nexus_runtime.planning.engine.planner.policy_applier import apply_learning_policy
+from nexus_runtime.planning.engine.planner.skill_mount_evidence import (
     build_skill_mount_evidence,
     runtime_policy_overlay_skill_requests,
 )
-from nexus_planning_candidate.engine.policy_evaluator import apply_signal_policies, apply_tier_policies
-from nexus_planning_candidate.engine.route_signal_adapter import build_replan_trace, build_signal_snapshot
-from nexus_planning_candidate.research.isolation_policy import decide_research_isolation
+from nexus_runtime.planning.engine.policy_evaluator import apply_signal_policies, apply_tier_policies
+from nexus_runtime.planning.engine.route_signal_adapter import build_replan_trace, build_signal_snapshot
+from nexus_runtime.planning.research.isolation_policy import decide_research_isolation
 
 PENDING_EXECUTOR_CAPABILITIES: set[str] = set()
 

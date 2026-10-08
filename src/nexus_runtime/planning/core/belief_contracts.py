@@ -178,7 +178,7 @@ class CapabilityReceipt:
         base["public_claim_allowed"] = False
         base["production_ready"] = False
         try:
-            from nexus_planning_candidate.evidence.receipt_base import project_child_receipt_base
+            from nexus_runtime.planning.evidence.receipt_base import project_child_receipt_base
 
             refs: list[str] = []
             eid = str(self.evidence_id or "").strip()

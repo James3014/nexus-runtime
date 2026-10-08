@@ -14,8 +14,8 @@ from nexus_runtime.support.contracts.canonical_execution import (
     ExecutionDecision,
     validate_canonical_execution_binding,
 )
-from nexus_planning_candidate.engine.capability_contracts import CapabilityPlan, ExecutionReplanAuthorization
-from nexus_planning_candidate.engine.capability_planner import CapabilityPlanner
+from nexus_runtime.planning.engine.capability_contracts import CapabilityPlan, ExecutionReplanAuthorization
+from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner
 
 
 def plan_canonical_task(

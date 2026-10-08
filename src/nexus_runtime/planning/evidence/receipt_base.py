@@ -15,7 +15,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from nexus_planning_candidate.evidence.claim_boundary import ClaimBoundary
+from nexus_runtime.planning.evidence.claim_boundary import ClaimBoundary
 
 RECEIPT_BASE_SCHEMA = "nexus.receipt_base.v1"
 RECEIPT_BASE_SCHEMA_VERSION = "1.0"
@@ -99,7 +99,7 @@ def resolve_shared_bundle_hash(
         computed = ""
 
     try:
-        from nexus_planning_candidate.services.capability_evidence_bundle import (
+        from nexus_runtime.planning.services.capability_evidence_bundle import (
             verify_capability_evidence_bundle,
         )
     except Exception as exc:  # noqa: BLE001
@@ -206,7 +206,7 @@ def resolve_consumer_payload_hash(
                 "shared_bundle_hash": str(seal.get("shared_bundle_hash") or ""),
             }
         try:
-            from nexus_planning_candidate.services.capability_evidence_bundle import hash_consumer_payloads
+            from nexus_runtime.planning.services.capability_evidence_bundle import hash_consumer_payloads
 
             recomputed = hash_consumer_payloads(payloads)
         except Exception as exc:  # noqa: BLE001
@@ -376,7 +376,7 @@ def resolve_consumer_payload_hash(
                 "shared_bundle_hash": "",
             }
         try:
-            from nexus_planning_candidate.services.capability_evidence_bundle import hash_consumer_payloads
+            from nexus_runtime.planning.services.capability_evidence_bundle import hash_consumer_payloads
 
             h = hash_consumer_payloads(items)
         except Exception:
@@ -1722,7 +1722,7 @@ def audit_product_receipt_coverage(
         except Exception as exc:  # noqa: BLE001
             samples["R4"] = {"error": str(exc)[:200]}
         try:
-            from nexus_planning_candidate.engine.capability_contracts import CapabilityReceipt as _EngCR
+            from nexus_runtime.planning.engine.capability_contracts import CapabilityReceipt as _EngCR
 
             r5 = _EngCR(
                 name="coverage_probe",

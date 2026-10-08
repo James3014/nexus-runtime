@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nexus_planning_candidate.research.isolation_contracts import (
+from nexus_runtime.planning.research.isolation_contracts import (
     ResearchGoalVisibility,
     ResearchIsolationDecision,
     ResearchIsolationLevel,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from nexus_planning_candidate.engine.capability_contracts import CapabilityNode, CapabilityScoringConfig
+from nexus_runtime.planning.engine.capability_contracts import CapabilityNode, CapabilityScoringConfig
 
 
 def build_decision_trace(

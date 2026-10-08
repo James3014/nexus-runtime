@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from nexus_planning_candidate.learning.shared_playbook import SharedPlaybookError, load_selected_shared_playbook
-from nexus_planning_candidate.learning.skill_catalog import SkillCatalog
+from nexus_runtime.planning.learning.shared_playbook import SharedPlaybookError, load_selected_shared_playbook
+from nexus_runtime.planning.learning.skill_catalog import SkillCatalog
 
 
 DEFAULT_SKILL_STATUS_REPORT = "docs/reports/NEXUS_SKILL_STATUS_2026-05-15.json"

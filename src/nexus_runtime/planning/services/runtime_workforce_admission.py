@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from nexus_planning_candidate.contracts.workforce_admission import (
+from nexus_runtime.planning.contracts.workforce_admission import (
     AdmissionDecision,
     WorkforceAdmissionDecision,
     WorkforceAdmissionRequest,

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from nexus_planning_candidate.services.capability_evidence_bundle import (
+from nexus_runtime.planning.services.capability_evidence_bundle import (
     build_capability_evidence_bundle,
 )
 from nexus_runtime import build_runtime_exports
@@ -704,7 +704,7 @@ def test_negative_1_arbitrary_caller_source_hash_cannot_create_valid_typed_bundl
 
 def test_negative_2_tampering_workspace_revision_or_task_statement_blocks_consumer_verification():
     """2. tampering workspace_revision or task_statement input at consumer verification blocks."""
-    from nexus_planning_candidate.services.capability_evidence_bundle import (
+    from nexus_runtime.planning.services.capability_evidence_bundle import (
         build_source_hash_subject,
         verify_capability_evidence_bundle,
     )
@@ -740,7 +740,7 @@ def test_negative_2_tampering_workspace_revision_or_task_statement_blocks_consum
 
 def test_negative_3_missing_or_unknown_source_hash_kind_blocks_typed_consumer_use():
     """3. missing/unknown source_hash_kind blocks typed consumer use."""
-    from nexus_planning_candidate.services.capability_evidence_bundle import (
+    from nexus_runtime.planning.services.capability_evidence_bundle import (
         build_source_hash_subject,
         compute_bundle_hash,
         verify_capability_evidence_bundle,
@@ -778,7 +778,7 @@ def test_negative_3_missing_or_unknown_source_hash_kind_blocks_typed_consumer_us
 
 def test_negative_4_statement_only_fallback_is_impossible_for_typed_kind():
     """4. statement-only fallback is impossible for typed kind."""
-    from nexus_planning_candidate.services.capability_evidence_bundle import (
+    from nexus_runtime.planning.services.capability_evidence_bundle import (
         build_source_hash_subject,
         compute_bundle_hash,
         verify_capability_evidence_bundle,
@@ -810,7 +810,7 @@ def test_negative_4_statement_only_fallback_is_impossible_for_typed_kind():
 
 def test_negative_5_resealing_around_substituted_source_hash_fails_closed():
     """5. re-sealing bundle_hash/baseline_hash around a substituted source_hash does not make it valid."""
-    from nexus_planning_candidate.services.capability_evidence_bundle import (
+    from nexus_runtime.planning.services.capability_evidence_bundle import (
         _hash_json,
         assert_consumer_bundle_intact,
         build_source_hash_subject,
@@ -876,7 +876,7 @@ def test_negative_6_raw_task_statement_absent_from_bundle_serialization():
 
 def test_negative_7_local_online_worker_preserve_same_root_bundle_identity_while_verifying_typed_hash():
     """7. Local/Online or Worker consumer paths preserve same root bundle identity while verifying typed source hash."""
-    from nexus_planning_candidate.services.capability_evidence_bundle import (
+    from nexus_runtime.planning.services.capability_evidence_bundle import (
         assert_same_root_bundle_hash,
     )
     bundle = _sealed_bundle("task-root-id", "repair the parser")
@@ -918,7 +918,7 @@ def test_online_consumer_missing_independent_workspace_revision_fails_closed():
 
 def test_negative_8_untyped_legacy_data_remains_intact_but_not_silently_labeled_verified_typed():
     """8. existing unaffected legacy paths/tests remain intact where explicitly compatible, but do not silently label untyped legacy data as verified typed source semantics."""
-    from nexus_planning_candidate.services.capability_evidence_bundle import (
+    from nexus_runtime.planning.services.capability_evidence_bundle import (
         _hash_json,
         compute_bundle_hash,
         record_consumption,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from nexus_planning_candidate.services.capability_evidence_bundle import (
+from nexus_runtime.planning.services.capability_evidence_bundle import (
     SOURCE_HASH_KIND,
     assert_consumer_bundle_intact,
     build_source_hash_subject,

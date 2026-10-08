@@ -4,8 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
-from nexus_planning_candidate.composition import BUNDLED_POLICY_PATH
-from nexus_planning_candidate.engine.capability_contracts import (
+from nexus_runtime.planning.composition import BUNDLED_POLICY_PATH
+from nexus_runtime.planning.engine.capability_contracts import (
     EXECUTION_DEPTH_FULL,
     EXECUTION_DEPTH_LIGHT,
     EXECUTION_DEPTH_STANDARD,
@@ -13,23 +13,23 @@ from nexus_planning_candidate.engine.capability_contracts import (
     apply_execution_depth_floor,
     next_execution_depth_after_failure,
 )
-from nexus_planning_candidate.engine.capability_planner import CapabilityPlanner
-from nexus_planning_candidate.evidence.receipt_base import (
+from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner
+from nexus_runtime.planning.evidence.receipt_base import (
     attach_r3_receipt_base,
     build_execution_attempt_id,
     validate_receipt_base,
 )
-from nexus_planning_candidate.services.capability_evidence_bundle import (
+from nexus_runtime.planning.services.capability_evidence_bundle import (
     build_capability_evidence_bundle,
 )
-from nexus_planning_candidate.services.capability_evidence_bundle import (
+from nexus_runtime.planning.services.capability_evidence_bundle import (
     consumer_view as _evidence_consumer_view,
 )
-from nexus_planning_candidate.services.capability_evidence_bundle import (
+from nexus_runtime.planning.services.capability_evidence_bundle import (
     verify_capability_evidence_bundle as _verify_evidence_bundle,
 )
-from nexus_planning_candidate.services.model_workforce_policy import WorkforcePolicyLoader
-from nexus_planning_candidate.services.runtime_workforce_admission import (
+from nexus_runtime.planning.services.model_workforce_policy import WorkforcePolicyLoader
+from nexus_runtime.planning.services.runtime_workforce_admission import (
     RuntimeWorkforceAdmissionRecord,
     _aggregate_hash,
     _as_json_value,

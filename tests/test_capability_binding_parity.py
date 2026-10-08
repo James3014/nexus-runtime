@@ -81,7 +81,7 @@ def test_standalone_memory_without_host_binding_does_not_claim_search_success():
 
 
 def test_export_instances_snapshot_and_isolate_host_defaults():
-    from nexus_planning_candidate.engine.capability_contracts import CapabilityPlan
+    from nexus_runtime.planning.engine.capability_contracts import CapabilityPlan
     from nexus_runtime.support import build_runtime_exports
 
     class MemoryPlanner:

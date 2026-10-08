@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 import yaml
 
-from nexus_planning_candidate.contracts.workforce_admission import (
+from nexus_runtime.planning.contracts.workforce_admission import (
     AdmissionDecision,
     WorkforceAdmissionDecision,
     WorkforceAdmissionRequest,

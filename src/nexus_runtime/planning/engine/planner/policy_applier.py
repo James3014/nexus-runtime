@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from nexus_planning_candidate.engine.capability_contracts import CapabilityNode
+from nexus_runtime.planning.engine.capability_contracts import CapabilityNode
 
 
 def apply_learning_policy(

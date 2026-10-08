@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
-from nexus_planning_candidate.engine.capability_planner import default_capability_nodes
+from nexus_runtime.planning.engine.capability_planner import default_capability_nodes
 
 # Whitelist skip reasons (receipt contract)
 SKIP_NOT_IMPLEMENTED = "not_implemented_mainchain_v1"

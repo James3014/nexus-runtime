@@ -12,12 +12,12 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from nexus_planning_candidate.contracts.execution_identity import (
+from nexus_runtime.planning.contracts.execution_identity import (
     require_execution_topology,
     require_execution_world,
     require_transport_ingress,
 )
-from nexus_planning_candidate.engine.capability_contracts import CapabilityPlan
+from nexus_runtime.planning.engine.capability_contracts import CapabilityPlan
 
 _CONTEXT_SCHEMA = "nexus.canonical_task_context.v2"
 _LEGACY_CONTEXT_SCHEMA = "nexus.canonical_task_context.v1"
