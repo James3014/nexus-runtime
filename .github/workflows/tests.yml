@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: James3014/nexus-learning
-          ref: 33acad4332b382fac1196c8ea8a8d0f5b543661e
+          ref: 1eb7229366b2856d6691c76236a50c5380dcf7d3
           path: .ci/nexus-learning
           fetch-depth: 1
           persist-credentials: false
