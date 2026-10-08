@@ -8,249 +8,11 @@
       "sha256": "1771466aafcc22e52fa3c4a0b4532e64220d796b4005061106e303ecf0e4f248"
     },
     {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "canonical_owner": "runtime",
+      "donor": "none (new runtime-authored compatibility alias, Phase 2)",
       "lineage_status": "known",
       "path": "nexus_planning_candidate/__init__.py",
-      "sha256": "6790b9cd92be36b2429e749ce5ba8f018755214bd648f5dbdbaf410df45f5f54"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/composition.py",
-      "sha256": "bb78248821d6b7e09534159bcb96aaeb0f6a0bf2ba4d6c4a333d9f90a143b659"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/contracts/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/contracts/execution_identity.py",
-      "sha256": "8c0d80e74920ec091d6fc35233e8f6b89bb660053176e446fc4c35a3fddb624f"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/contracts/workforce_admission.py",
-      "sha256": "d68abd6dce7aad5ba5718eb542ba3d25a78d597963e2a89ae1a83e0d1049f065"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/core/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/core/belief_contracts.py",
-      "sha256": "6c658039ee3744ba8d4998294c99715da2bc35a3b4120546a157fa4d255a49f3"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/core/lite_route_oracle.py",
-      "sha256": "c731e3b32c8349247917dda08d6689b44f6abf82d9d96e555e060349f095536e"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/capability_aliases.py",
-      "sha256": "50df412c83f71e7967347181bce9c22be5f87d26202a43ac0b5590375d2c74ed"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/capability_contracts.py",
-      "sha256": "37c004bbd91fc609715728f8c2fdc641efef41e522097da29779b49790b82f11"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/capability_planner.py",
-      "sha256": "ec2ce6f13db3709a9f441f0c226579cdf8e032b807228a1bd33738d953bd826b"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/capability_signals.py",
-      "sha256": "1d3f3cdb0f5c532a06d3d0ed1c27ad61e32619d2167d51b858cac4719e1d9aa6"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/harness_route_policy.py",
-      "sha256": "9d50fa6dd9be7aa9fe7dd77b0d8267d498aece8429905aecbbbf1844ffb97da0"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/harness_sensors.py",
-      "sha256": "e8c64058fe7ec5bc3d40387789d3fde21caa0603b9bb03f89cddc3c74f2ad5d3"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/local_assist_recommendation.py",
-      "sha256": "1e48bb65eacebfe9b1eadacf3c513131420d44ecabc69d5c10f09b71d0a90e64"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/planner/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/planner/ab_evaluator.py",
-      "sha256": "29769ba5c7f2372b3397f87662b4eef4284f25d0685f03adfcdc08a4008707b1"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/planner/policy_applier.py",
-      "sha256": "a33c5551023982ea926686f7d1a83d859a9f939ce574d99bf2880ef79f000f66"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/planner/skill_mount_evidence.py",
-      "sha256": "4e81d1e871aa0c5885986ed6fd061308cc4e27f5af88c0b61c151fe75a51986c"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/policy_evaluator.py",
-      "sha256": "b9d5d6705b69b064e6d8cc627d2d847eec9aaf043f88ce860818b3f5697d8a07"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/engine/route_signal_adapter.py",
-      "sha256": "b99d29d79db28c7e7d5ec03b3db871964ad43576233634d3c89abc1ba40fb9f2"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/evidence/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/evidence/claim_boundary.py",
-      "sha256": "5c48a3c8a9bcb99deb27b381f8efde21928d009f07561712e24e8d94ab7483e9"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/evidence/receipt_base.py",
-      "sha256": "1ec9899c518bc290ea3b4b0ba688a7e3beb28daf7f163dcc3f459a144c7c6153"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/learning/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/learning/shared_playbook.py",
-      "sha256": "0cecc1bbfbc9b830a142b1c2066171c110e6b645cd467e5f0237af5363583cab"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/learning/skill_catalog.py",
-      "sha256": "aae70678270a667d072402afbfcb3bb057f05dee90e10ae8d94748a96ff166e5"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/research/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/research/isolation_contracts.py",
-      "sha256": "fd87f9546035dda01397a407b89031684a5daf1cead4c81600fdf193d65eafbd"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/research/isolation_policy.py",
-      "sha256": "71247e9b0eed49d00e1469d9f6a4bfcb9838db72bd3aa5699ff949ff4755fd31"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/services/__init__.py",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/services/capability_evidence_bundle.py",
-      "sha256": "818c54c59afb273ca95b329914158f0b1b40a9f72d2a8fd7e27f03c814db08f3"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/services/model_workforce_policy.py",
-      "sha256": "c4d05525c3532ebe4b8de0de8a463838e6640df932ba9a39299603d1ae226f2a"
-    },
-    {
-      "canonical_owner": "planner/admission",
-      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
-      "lineage_status": "known",
-      "path": "nexus_planning_candidate/services/runtime_workforce_admission.py",
-      "sha256": "3a07bcce427941b7b8de1fc62e139da926f5d1d4e3cbc1262dc3f891148e2c89"
+      "sha256": "56f8925d2b8b1200c3cc1bb1da13ccdb8c461a9baee4fce4aeed665e59dcb820"
     },
     {
       "canonical_owner": "runtime context",
@@ -561,6 +323,251 @@
       "sha256": "2f66413810d40f851daa0ed38c417e41d5d1e46f0233bd8f2a206339802b69f1"
     },
     {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/__init__.py",
+      "sha256": "6790b9cd92be36b2429e749ce5ba8f018755214bd648f5dbdbaf410df45f5f54"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/composition.py",
+      "sha256": "bb78248821d6b7e09534159bcb96aaeb0f6a0bf2ba4d6c4a333d9f90a143b659"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/contracts/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/contracts/execution_identity.py",
+      "sha256": "8c0d80e74920ec091d6fc35233e8f6b89bb660053176e446fc4c35a3fddb624f"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/contracts/workforce_admission.py",
+      "sha256": "d68abd6dce7aad5ba5718eb542ba3d25a78d597963e2a89ae1a83e0d1049f065"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/core/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/core/belief_contracts.py",
+      "sha256": "64818ca073a667e9fae5ff2d0bee0c706bc0c0830b6b6d98121bb01aa40549a1"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/core/lite_route_oracle.py",
+      "sha256": "c731e3b32c8349247917dda08d6689b44f6abf82d9d96e555e060349f095536e"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/capability_aliases.py",
+      "sha256": "50df412c83f71e7967347181bce9c22be5f87d26202a43ac0b5590375d2c74ed"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/capability_contracts.py",
+      "sha256": "bf0b7fa164f5ac5bb13710340eb1cbd87287feac3bafdcece6cc63e8e53b3a08"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/capability_planner.py",
+      "sha256": "978bff968bcf46b5f61f6e8fd2fb043fe69c0712e60d497e2a42acc7ec1dec63"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/capability_signals.py",
+      "sha256": "662f82786d09ffd3775c02c50d11fca3abd7ac146905e379aab399ce222ef595"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/harness_route_policy.py",
+      "sha256": "894f018b6ca147f159fe25df4173d3fcfa10c3ea8226bd14e769e44f47e13e20"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/harness_sensors.py",
+      "sha256": "e8c64058fe7ec5bc3d40387789d3fde21caa0603b9bb03f89cddc3c74f2ad5d3"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/local_assist_recommendation.py",
+      "sha256": "1e48bb65eacebfe9b1eadacf3c513131420d44ecabc69d5c10f09b71d0a90e64"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/planner/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/planner/ab_evaluator.py",
+      "sha256": "f2fd93c564aad136f30aff23520625c712a0f639c07aeafe0dc3fd3e2cbe6f90"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/planner/policy_applier.py",
+      "sha256": "4a5fbc7612a5623663afbff6e4276b77d331c57fcc398d5e0119e82ce76a0d20"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/planner/skill_mount_evidence.py",
+      "sha256": "4bfa4e26bf07917c7355caa53cc1b079d1d24e0683741ca8f6fccabd63c65b71"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/policy_evaluator.py",
+      "sha256": "b9d5d6705b69b064e6d8cc627d2d847eec9aaf043f88ce860818b3f5697d8a07"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/engine/route_signal_adapter.py",
+      "sha256": "ee6ae685d6428ca9b4f7ac125a8416ecd3966205757bb850ab9f67d8a0653b02"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/evidence/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/evidence/claim_boundary.py",
+      "sha256": "5c48a3c8a9bcb99deb27b381f8efde21928d009f07561712e24e8d94ab7483e9"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/evidence/receipt_base.py",
+      "sha256": "f9586030981b482b464d41903c3819bed1f06ab7a055b77a0cd420c97ba05c82"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/learning/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/learning/shared_playbook.py",
+      "sha256": "0cecc1bbfbc9b830a142b1c2066171c110e6b645cd467e5f0237af5363583cab"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/learning/skill_catalog.py",
+      "sha256": "aae70678270a667d072402afbfcb3bb057f05dee90e10ae8d94748a96ff166e5"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/research/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/research/isolation_contracts.py",
+      "sha256": "fd87f9546035dda01397a407b89031684a5daf1cead4c81600fdf193d65eafbd"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/research/isolation_policy.py",
+      "sha256": "89c5f5462d51229d327c7d8ad3bbe269646a4c42ed1e35d9c8d169a2ab36d14d"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/services/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/services/capability_evidence_bundle.py",
+      "sha256": "818c54c59afb273ca95b329914158f0b1b40a9f72d2a8fd7e27f03c814db08f3"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/services/model_workforce_policy.py",
+      "sha256": "aae4f7d5e5679d1138e9a5cf2e34adb2fb9f6bfa6ba2f7eaa7db3f062f0f6fc0"
+    },
+    {
+      "canonical_owner": "planner/admission",
+      "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/services/runtime_workforce_admission.py",
+      "sha256": "d25c34bc0266bc87e53cce6e7134a0f8a86d99d4977c29646291731a165614ee"
+    },
+    {
       "canonical_owner": "runtime",
       "donor": "none (new runtime-authored compatibility alias, Phase 2)",
       "lineage_status": "known",
@@ -572,7 +579,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/composition.py",
-      "sha256": "c2058500405de1f4a489f1d53da0887494ceb4f0b5193b953e77e195970825cd"
+      "sha256": "70aa541a4783e1d3df3d095ef1625c82cf5d0095d0ad4205b3362432752335ca"
     },
     {
       "canonical_owner": "runtime support",
@@ -586,7 +593,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/contracts/canonical_execution.py",
-      "sha256": "d248f1399170c22d4bcbf758f82f1b94b6a15bcc4139f6fe32406839ad3fdaa6"
+      "sha256": "c7ac9a99f30eb30a06f51fabbf8f6c330c2423838746de7e0793a50d4093cf73"
     },
     {
       "canonical_owner": "runtime support",
@@ -614,7 +621,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/engine/canonical_execution.py",
-      "sha256": "c21a6fd4d96721e6cd37e8da179030a41ceb3272bf24e5fe9130bc26a8f32910"
+      "sha256": "341a061bf4441327fcdae7afbe1464ae343b2c6420d47f6fee6530282464489c"
     },
     {
       "canonical_owner": "runtime local AST support",
@@ -642,7 +649,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/services/capability_registry.py",
-      "sha256": "6720f69a6f2860a279ba9e93b15df566641188241d171fe48e1b001befd267b6"
+      "sha256": "9912f8a2258321f544a1cdbfb355744d2ecb32908d545359103869d37acb0198"
     },
     {
       "canonical_owner": "runtime support",
@@ -684,7 +691,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/services/online_nexus_context.py",
-      "sha256": "26ee3ecdabd59cddee452bf5db8e7a58a0c5efd56bb9d435314556afb6f2988a"
+      "sha256": "42b9351287a2f2d81aa47c6c6522024b7a69e332933cf58bd492a431502da4cc"
     },
     {
       "canonical_owner": "runtime support",
@@ -719,7 +726,7 @@
       "donor": "docs/task-context-provenance.json",
       "lineage_status": "integrated_pending_acceptance",
       "path": "nexus_runtime/task_context/consumer_projection.py",
-      "sha256": "f9110a0ea7c93ff436a52536e68e1684a0e343a37233fc4dbb7f7d22354e7ae0"
+      "sha256": "49cb9172cc3b25b025e053082a21339eb57c755a42bc05a8d21c212aeaabe472"
     },
     {
       "canonical_owner": "runtime context",
@@ -822,7 +829,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "a2223308825466b21dae9e5996956171e62c3172",
-  "source_tree": "587648d7bf3120e1c0cd87abc8d9b40a41074664",
+  "source_head": "4f2444bef2f4eb89c636031a4fb8be2d3d0247f4",
+  "source_tree": "bc0af39152e1df48e97d7383b8728c91f8fde887",
   "unknown_lineage": []
 }
