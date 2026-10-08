@@ -99,7 +99,7 @@ from nexus_runtime.execution_coordination.ports import (
     ProcessOwnershipPort,
     ExecutionFinalizationPort,
 )
-# nexus_runtime.support (formerly nexus_runtime_support_candidate, kept as an import alias)
+# nexus_runtime.support (formerly nexus_runtime_support_candidate; import alias removed in Phase 2.5)
 from nexus_runtime.support import build_memory_retrieval_adapter
 
 exports = build_runtime_exports()
@@ -177,7 +177,7 @@ contacting a provider.
 
 The `nexus_runtime_candidate` forwarding namespace was removed in Phase 1 (owner
 decision D1); the public composition binds the current
-`nexus_runtime.kernel` implementation (formerly `nexus_runtime_p6c_candidate`, kept as an import alias). No current source should create a
+`nexus_runtime.kernel` implementation (formerly `nexus_runtime_p6c_candidate`; import alias removed in Phase 2.5). No current source should create a
 second algorithm merely to replace that former compatibility name.
 
 ## Owner workflow integration
