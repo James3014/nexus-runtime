@@ -40,8 +40,8 @@ __all__ = (
 )
 
 _LAZY: dict[str, str] = {
-    "ContextContinuityService": "nexus_context_prototype",
-    "ContextStore": "nexus_context_prototype.store",
+    "ContextContinuityService": "nexus_runtime.context_store",
+    "ContextStore": "nexus_runtime.context_store.store",
     "ContextHub": "nexus_runtime.context_hub",
     "ContextHubDependencies": "nexus_runtime.context_hub",
     "ContextAssemblyContract": "nexus_runtime.task_context",

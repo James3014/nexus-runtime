@@ -6,8 +6,8 @@ def test_installed_package_imports_without_nexus_new_checkout():
 
 
 def test_context_checkpoint_search_and_readback(tmp_path):
-    from nexus_context_prototype import ContextContinuityService, Scope
-    from nexus_context_prototype.access import AllowAllFixturePolicy
+    from nexus_runtime.context_store import ContextContinuityService, Scope
+    from nexus_runtime.context_store.access import AllowAllFixturePolicy
 
     service = ContextContinuityService(
         tmp_path / "context",
@@ -40,7 +40,7 @@ def test_context_checkpoint_search_and_readback(tmp_path):
 
 
 def test_context_acl_denies_read_and_write(tmp_path):
-    from nexus_context_prototype import ContextContinuityService, Scope
+    from nexus_runtime.context_store import ContextContinuityService, Scope
 
     class DenyAll:
         def can_read(self, scope, principal):

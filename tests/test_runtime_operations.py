@@ -210,8 +210,8 @@ def test_empty_coverage_uses_defaults_and_noncallable_records_failure(tmp_path: 
 
 
 def test_context_reopens_persisted_checkpoint_and_denies_unknown_principal(tmp_path):
-    from nexus_context_prototype import ContextContinuityService, Scope
-    from nexus_context_prototype.access import AllowAllFixturePolicy
+    from nexus_runtime.context_store import ContextContinuityService, Scope
+    from nexus_runtime.context_store.access import AllowAllFixturePolicy
 
     scope = Scope("project", "repo", "task")
     root = tmp_path / "context"
