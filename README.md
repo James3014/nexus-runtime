@@ -99,7 +99,8 @@ from nexus_runtime.execution_coordination.ports import (
     ProcessOwnershipPort,
     ExecutionFinalizationPort,
 )
-from nexus_runtime_support_candidate import build_memory_retrieval_adapter
+# nexus_runtime.support (formerly nexus_runtime_support_candidate, kept as an import alias)
+from nexus_runtime.support import build_memory_retrieval_adapter
 
 exports = build_runtime_exports()
 memory = build_memory_retrieval_adapter("/path/to/project")
