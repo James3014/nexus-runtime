@@ -13,7 +13,7 @@ network = "bridge"
 id = "learning-revision"
 observe_command = [
   "uv", "run", "--no-project",
-  "--with", "nexus-learning @ git+https://github.com/James3014/nexus-learning.git@33acad4332b382fac1196c8ea8a8d0f5b543661e",
+  "--with", "nexus-learning @ git+https://github.com/James3014/nexus-learning.git@1eb7229366b2856d6691c76236a50c5380dcf7d3",
   "python", "scripts/ci/nexus_core_observe_learning_revision.py",
 ]
 timeout_seconds = 300
@@ -21,7 +21,7 @@ logical_subject_id = "dependency/nexus-learning"
 evidence_kind = "resolved-dependency"
 requirement_mode = "REQUIRED"
 applicability = "APPLICABLE"
-expected_identity = "git-commit:33acad4332b382fac1196c8ea8a8d0f5b543661e"
+expected_identity = "git-commit:1eb7229366b2856d6691c76236a50c5380dcf7d3"
 
 [[verifiers]]
 id = "retry-budget-fail-closed"
@@ -32,9 +32,9 @@ command = [
   "--with", "anyio==4.12.1",
   "--with", "pydantic==2.13.5",
   "--with", "PyYAML==6.0.3",
-  "--with", "nexus-learning @ git+https://github.com/James3014/nexus-learning.git@33acad4332b382fac1196c8ea8a8d0f5b543661e",
+  "--with", "nexus-learning @ git+https://github.com/James3014/nexus-learning.git@1eb7229366b2856d6691c76236a50c5380dcf7d3",
   "bash", "-c",
-  "set -euo pipefail; test \"$(python scripts/ci/nexus_core_observe_learning_revision.py)\" = \"git-commit:33acad4332b382fac1196c8ea8a8d0f5b543661e\"; PYTHONPATH=src python -m pytest -q tests/test_task_retry.py::test_attempt_budget_resolution_failure_fails_closed_before_submit",
+  "set -euo pipefail; test \"$(python scripts/ci/nexus_core_observe_learning_revision.py)\" = \"git-commit:1eb7229366b2856d6691c76236a50c5380dcf7d3\"; PYTHONPATH=src python -m pytest -q tests/test_task_retry.py::test_attempt_budget_resolution_failure_fails_closed_before_submit",
 ]
 timeout_seconds = 600
 logical_subject_id = "retry/budget-resolution-fail-closed"
@@ -48,7 +48,7 @@ id = "full-installed-package-suite"
 command = [
   "bash",
   "scripts/ci/nexus_core_full_installed_suite.sh",
-  "33acad4332b382fac1196c8ea8a8d0f5b543661e",
+  "1eb7229366b2856d6691c76236a50c5380dcf7d3",
 ]
 timeout_seconds = 1800
 logical_subject_id = "runtime/full-installed-package-suite"
