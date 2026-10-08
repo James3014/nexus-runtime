@@ -204,3 +204,5 @@ Earlier caller/worktree artifacts and `/private/tmp/...` XML results remain
 historical engineering evidence. They are not current physical witnesses merely
 because their paths appear in documentation. Use current Git/source/package and
 runtime readback for current claims.
+
+Verified by the Nexus Core two-job gate (container isolation, signed receipts) since 2026-10-09.
