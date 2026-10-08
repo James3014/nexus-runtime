@@ -43,5 +43,6 @@ runtime public entrypoints are `nexus_runtime.build_runtime_exports`,
 `nexus_runtime.ContextHub`, `nexus_runtime.ContextHubDependencies`, and the
 explicit memory builder in `nexus_runtime_support_candidate`. Planner/admission,
 context, memory, and external Core/Learning/Open SWE/repository services retain
-separate ownership boundaries. The compatibility namespace forwards to the
-current p6c runtime implementation and is not a second algorithm source.
+separate ownership boundaries. The `nexus_runtime_candidate` forwarding namespace
+was removed in Phase 1 (owner decision D1); the current p6c runtime
+implementation is the only algorithm source.

@@ -174,10 +174,10 @@ The test uses the real Planner/admission composition, writes a temporary
 candidate, verifies its bytes, retries once, and checks receipt lineage without
 contacting a provider.
 
-`nexus_runtime_candidate` remains a compatibility namespace for older callers;
-the public composition binds the current `nexus_runtime_p6c_candidate`
-implementation. No current source should create a second algorithm merely to
-replace that compatibility name.
+The `nexus_runtime_candidate` forwarding namespace was removed in Phase 1 (owner
+decision D1); the public composition binds the current
+`nexus_runtime_p6c_candidate` implementation. No current source should create a
+second algorithm merely to replace that former compatibility name.
 
 ## Owner workflow integration
 
