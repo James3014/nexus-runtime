@@ -278,14 +278,14 @@
       "donor": "accepted memory candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/memory/__init__.py",
-      "sha256": "08d6776fd1c6a1895e9e08e59927996e91503653bf8c2f9fd99a0e5c28962d58"
+      "sha256": "e05630b677b4e9e727a52def0b67fdc6a05eab984ddf26e81e6341f9f67a66d1"
     },
     {
       "canonical_owner": "memory adapter",
       "donor": "accepted memory candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/memory/memory_retrieval_adapter.py",
-      "sha256": "3ccba10dd5e1fef80f3da4961c6d367282d77a11db1e7cf1d67371139ae669bc"
+      "sha256": "821b42c1fbb556d42a5073a45667ead1c1c51da47e692febef91767dea31fbf8"
     },
     {
       "canonical_owner": "memory adapter",
@@ -579,7 +579,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/composition.py",
-      "sha256": "70aa541a4783e1d3df3d095ef1625c82cf5d0095d0ad4205b3362432752335ca"
+      "sha256": "18efe0444ff6f7d2dc778b978923e3f21df8dedcccd1dc2840cefd15e8668899"
     },
     {
       "canonical_owner": "runtime support",
@@ -829,7 +829,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "4f2444bef2f4eb89c636031a4fb8be2d3d0247f4",
-  "source_tree": "bc0af39152e1df48e97d7383b8728c91f8fde887",
+  "source_head": "ba66c38f84c70cfa86c6c5ac514efbbc1da4a2f1",
+  "source_tree": "25621d388d07cca104983dc81e523609343604ab",
   "unknown_lineage": []
 }
