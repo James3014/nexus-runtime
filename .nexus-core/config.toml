@@ -2,7 +2,12 @@ version = 2
 base_ref = "origin/main"
 allowed_patterns = ["**"]
 deletion_policy = "FORBID"
-universe_generation = 1
+universe_generation = 2
+
+[isolation]
+mode = "container"
+image = "ghcr.io/astral-sh/uv:python3.11-bookworm@sha256:58683a39536f1f4ed2e1dd79cf155edccfb47731aba8964bd0312aac942126cf"
+network = "bridge"
 
 [[materials]]
 id = "learning-revision"

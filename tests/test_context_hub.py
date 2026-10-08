@@ -286,7 +286,7 @@ import importlib.util, json
 from pathlib import Path
 from types import SimpleNamespace
 
-donor_path = Path("/private/tmp/astra-production-integrated-20260909/nexus/core/context_hub.py")
+donor_path = Path(__import__("os").environ["NEXUS_DONOR_ROOT"]) / "nexus/core/context_hub.py"
 spec = importlib.util.spec_from_file_location("frozen_context_hub", donor_path)
 donor_module = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
@@ -321,7 +321,9 @@ out = {"feature": donor.assemble_feature_pack({"steps": ["inspect"]}), "diag": d
 print(json.dumps(out, sort_keys=True, default=str))
 """
     donor_env = dict(os.environ)
-    donor_env["PYTHONPATH"] = "/private/tmp/astra-production-integrated-20260909"
+    donor_root = os.environ.get("NEXUS_DONOR_ROOT", "/private/tmp/astra-production-integrated-20260909")
+    donor_env["NEXUS_DONOR_ROOT"] = donor_root
+    donor_env["PYTHONPATH"] = donor_root
     proc = subprocess.run(
         [sys.executable, "-c", donor_script],
         check=True,
