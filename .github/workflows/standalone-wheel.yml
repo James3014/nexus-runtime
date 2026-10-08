@@ -55,7 +55,7 @@ jobs:
           echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
           "$venv" -m build --wheel --no-isolation --outdir "$RUNNER_TEMP/runtime-wheel-dist" .
           mkdir -p "$RUNNER_TEMP/runtime-wheel-tests"
-          cp tests/test_*.py "$RUNNER_TEMP/runtime-wheel-tests/"
+          cp tests/test_*.py tests/_donor.py "$RUNNER_TEMP/runtime-wheel-tests/"
 
       - name: Install wheel and run isolated acceptance
         run: |
