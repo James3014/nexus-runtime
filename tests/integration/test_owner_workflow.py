@@ -6,7 +6,7 @@ pytest.importorskip("nexus_learning")
 pytest.importorskip("product")
 pytest.importorskip("repository_intelligence")
 pytest.importorskip("nexus_open_swe_runtime")
-from nexus_runtime_support_candidate import build_runtime_exports
+from nexus_runtime.support import build_runtime_exports
 from nexus_learning.episode_projection import project_learning_entries
 from repository_intelligence.impact import analyze_change_impact, verify_change_impact_report
 from nexus_open_swe_runtime import cli as openswe_cli

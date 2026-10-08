@@ -356,7 +356,7 @@ def build_online_nexus_context(
         or _mapping(plan_map.get("signal_snapshot")).get("planner_decision_id")
         or plan_hash
     )
-    from nexus_runtime_support_candidate.services.capability_registry import project_online_execution_mode
+    from nexus_runtime.support.services.capability_registry import project_online_execution_mode
 
     consumer_execution_modes = {
         name: project_online_execution_mode(name) for name in selected
@@ -531,7 +531,7 @@ def build_online_nexus_context(
         "selected_capabilities": list(selected),
         "consumer_execution_modes": dict(consumer_execution_modes),
         "consumer_contract_source": (
-            "nexus_runtime_support_candidate.services.capability_registry.PLANNER_EXECUTION_CONTRACTS"
+            "nexus_runtime.support.services.capability_registry.PLANNER_EXECUTION_CONTRACTS"
         ),
         "prompt_sections_present": list(sections),
         "codeintel_present": codeintel_present,
@@ -604,7 +604,7 @@ def build_online_nexus_context_from_runtime(
         expected_packet_hash = ""
         packet: dict[str, Any] | None = None
         try:
-            from nexus_runtime_support_candidate.services.verified_assist_contract import validate_vap_runtime_binding
+            from nexus_runtime.support.services.verified_assist_contract import validate_vap_runtime_binding
 
             local_response = _mapping(local_stage.get("response"))
             packet_value = local_response.get("verified_assist_packet")
@@ -640,7 +640,7 @@ def build_online_nexus_context_from_runtime(
                 )
                 if not binding.get("ok"):
                     raise ValueError(str(binding.get("reason") or "vap_runtime_binding_failed"))
-            from nexus_runtime_support_candidate.services.local_substitution import build_online_safe_local_forward
+            from nexus_runtime.support.services.local_substitution import build_online_safe_local_forward
 
             safe = build_online_safe_local_forward(
                 local_stage,

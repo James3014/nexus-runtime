@@ -18,6 +18,7 @@ FORBIDDEN_PREFIXES = (
     "nexus_runtime_p6c_candidate",
     "nexus_runtime.kernel",
     "nexus_runtime_support_candidate.composition",
+    "nexus_runtime.support.composition",
 )
 
 

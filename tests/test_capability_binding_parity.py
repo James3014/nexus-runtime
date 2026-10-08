@@ -1,9 +1,9 @@
 """Donor default/override/skip semantics at the packaged composition boundary."""
 
-from nexus_runtime_support_candidate.composition import (
+from nexus_runtime.support.composition import (
     _ensure_selected_coverage_invokers,
 )
-from nexus_runtime_support_candidate.services.capability_registry import (
+from nexus_runtime.support.services.capability_registry import (
     SKIP_CALLER_OMITTED,
     ensure_selected_coverage_invokers,
 )
@@ -82,7 +82,7 @@ def test_standalone_memory_without_host_binding_does_not_claim_search_success():
 
 def test_export_instances_snapshot_and_isolate_host_defaults():
     from nexus_planning_candidate.engine.capability_contracts import CapabilityPlan
-    from nexus_runtime_support_candidate import build_runtime_exports
+    from nexus_runtime.support import build_runtime_exports
 
     class MemoryPlanner:
         def plan(self, **kwargs):

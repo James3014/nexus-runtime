@@ -7,7 +7,7 @@ composition boundary; this module does not mint route/capability authority.
 
 from __future__ import annotations
 
-from nexus_runtime_support_candidate.contracts.canonical_execution import (
+from nexus_runtime.support.contracts.canonical_execution import (
     CanonicalExecutionProjection,
     CanonicalPlanningBundle,
     CanonicalTaskContext,

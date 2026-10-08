@@ -17,7 +17,7 @@ import statistics
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
-from nexus_runtime_support_candidate.contracts.canonical_execution import validate_canonical_execution_identity
+from nexus_runtime.support.contracts.canonical_execution import validate_canonical_execution_identity
 
 PACKET_SCHEMA = "nexus.verified_assist_packet.v1"
 CONSUMPTION_SCHEMA = "nexus.verified_assist_consumption.v1"

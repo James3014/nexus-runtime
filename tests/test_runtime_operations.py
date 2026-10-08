@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from nexus_planning_candidate.engine.capability_planner import CapabilityPlanner
-from nexus_runtime_support_candidate import (
+from nexus_runtime.support import (
     build_runtime_exports,
 )
 

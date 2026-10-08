@@ -3,7 +3,7 @@
 Implementation lives in the support composition layer so dependency direction
 remains one-way while `nexus_runtime` re-exports the stable contract.
 """
-from nexus_runtime_support_candidate.planner_binding import (
+from nexus_runtime.support.planner_binding import (
     EXTERNAL_COMPLETE_OVERRIDE,
     PACKAGED_COMPATIBILITY,
     PLANNER_BINDING_SCHEMA,

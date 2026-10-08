@@ -13,7 +13,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
-from nexus_runtime_support_candidate.services.local_heal.interface import PhaseResult
+from nexus_runtime.support.services.local_heal.interface import PhaseResult
 
 WORLD_C_RECEIPT_SCHEMA = "nexus.world_c.pipeline_receipt.v1"
 WORLD_C_ADEQUACY_SCHEMA = "nexus.world_c.adequacy_projection.v1"
@@ -566,7 +566,7 @@ def build_world_c_adequacy_projection(
     root_hash = str(root.get("root_receipt_hash") or "")
 
     try:
-        from nexus_runtime_support_candidate.contracts.root_receipt import validate_root_receipt
+        from nexus_runtime.support.contracts.root_receipt import validate_root_receipt
 
         root_valid, root_reasons = validate_root_receipt(root)
     except Exception:  # pragma: no cover - defensive boundary for malformed input

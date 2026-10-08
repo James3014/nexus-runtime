@@ -1,6 +1,6 @@
 """Planner-aware Runtime export builder (moved out of the lazy package init)."""
 
-from nexus_runtime_support_candidate.composition import (
+from nexus_runtime.support.composition import (
     build_runtime_exports as _build_runtime_exports,
 )
 

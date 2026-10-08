@@ -1337,7 +1337,7 @@ def _node_meta(name: str) -> dict[str, Any]:
 
 def _has_physical_executor(name: str) -> bool:
     try:
-        from nexus_runtime_support_candidate.core.capability_executor_registry import get_executor
+        from nexus_runtime.support.core.capability_executor_registry import get_executor
 
         return get_executor(_resolve_executor_registry_key(name)) is not None
     except Exception:
@@ -1566,11 +1566,11 @@ def build_local_model_executor_invoker() -> CapabilityInvoker:
         try:
             from pathlib import Path
 
-            from nexus_runtime_support_candidate.services.local_heal.local_model_executor import (
+            from nexus_runtime.support.services.local_heal.local_model_executor import (
                 LocalModelExecutor,
                 LocalModelExecutorRequest,
             )
-            from nexus_runtime_support_candidate.services.local_heal.local_model_provider import (
+            from nexus_runtime.support.services.local_heal.local_model_provider import (
                 LocalModelProvider,
                 LocalModelProviderRequest,
                 LocalModelProviderResponse,
@@ -1732,8 +1732,8 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
     name = str(capability_name)
     registry_key = _resolve_executor_registry_key(name)
     try:
-        from nexus_runtime_support_candidate.core.belief_contracts import CapabilityExecutionPlan
-        from nexus_runtime_support_candidate.core.capability_executor_registry import get_executor
+        from nexus_runtime.support.core.belief_contracts import CapabilityExecutionPlan
+        from nexus_runtime.support.core.capability_executor_registry import get_executor
     except Exception:
         return None
 
@@ -2338,7 +2338,7 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
         consumer_payload: dict[str, Any] = {}
         if gate_passed:
             try:
-                from nexus_runtime_support_candidate.services.capability_evidence_bundle import (
+                from nexus_runtime.support.services.capability_evidence_bundle import (
                     extract_bounded_consumer_payload,
                 )
 
@@ -2486,7 +2486,7 @@ def build_default_mainchain_invokers(
     Does not hand-pick a partial set as "full Nexus". Every planner node name
     gets a handler. UnifiedRuntime only *runs* handlers for selected names.
     """
-    from nexus_runtime_support_candidate.services.online_nexus_context import (
+    from nexus_runtime.support.services.online_nexus_context import (
         build_codeintel_preflight_invoker,
         build_plan_gated_postflight_invokers,
     )

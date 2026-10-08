@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nexus_runtime_support_candidate import build_runtime_exports
+from nexus_runtime.support import build_runtime_exports
 
 
 def test_local_ast_invoker_rejects_root_escape_and_parse_errors(tmp_path: Path):

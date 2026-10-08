@@ -314,7 +314,7 @@ def build_online_safe_local_forward(
         or local_outputs.get("verified_assist_packet")
     )
     if raw_packet is not None:
-        from nexus_runtime_support_candidate.services.verified_assist_contract import attach_verified_assist_to_forward
+        from nexus_runtime.support.services.verified_assist_contract import attach_verified_assist_to_forward
 
         consume = bool(
             response.get("consume_verified_assist", payload.get("consume_verified_assist", True))

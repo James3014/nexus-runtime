@@ -6,7 +6,7 @@ import hashlib
 import json
 from typing import Any, Mapping
 
-from nexus_runtime_support_candidate.services.local_heal.world_c_receipt import validate_world_c_receipt
+from nexus_runtime.support.services.local_heal.world_c_receipt import validate_world_c_receipt
 
 ROOT_RECEIPT_SCHEMA = "nexus.root_receipt.v1"
 
