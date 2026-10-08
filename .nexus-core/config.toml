@@ -2,7 +2,12 @@ version = 2
 base_ref = "origin/main"
 allowed_patterns = ["**"]
 deletion_policy = "FORBID"
-universe_generation = 1
+universe_generation = 2
+
+[isolation]
+mode = "container"
+image = "ghcr.io/astral-sh/uv:python3.11-bookworm@sha256:58683a39536f1f4ed2e1dd79cf155edccfb47731aba8964bd0312aac942126cf"
+network = "bridge"
 
 [[materials]]
 id = "learning-revision"
@@ -28,7 +33,7 @@ command = [
   "--with", "pydantic==2.13.5",
   "--with", "PyYAML==6.0.3",
   "--with", "nexus-learning @ git+https://github.com/James3014/nexus-learning.git@33acad4332b382fac1196c8ea8a8d0f5b543661e",
-  "bash", "-lc",
+  "bash", "-c",
   "set -euo pipefail; test \"$(python scripts/ci/nexus_core_observe_learning_revision.py)\" = \"git-commit:33acad4332b382fac1196c8ea8a8d0f5b543661e\"; PYTHONPATH=src python -m pytest -q tests/test_task_retry.py::test_attempt_budget_resolution_failure_fails_closed_before_submit",
 ]
 timeout_seconds = 600

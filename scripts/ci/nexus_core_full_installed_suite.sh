@@ -7,6 +7,7 @@ case "$learning_sha" in
   *) echo "invalid nexus-learning SHA" >&2; exit 2 ;;
 esac
 
+export TMPDIR=/tmp  # colima virtiofs sandbox mount cannot hold the donor export (symlinks)
 repo_root="$(pwd -P)"
 tmp_root="$(mktemp -d)"
 cleanup() {
@@ -29,25 +30,26 @@ printf 'observed_learning=%s\n' "$observed_learning"
 donor_sha=471a281badda342ccab26606e0c46cbca6867cbb
 donor_repo="$tmp_root/nexus-new-donor.git"
 donor_stage="$tmp_root/nexus-new-donor-export"
-donor_locator=/private/tmp/astra-production-integrated-20260909
+donor_locator="$tmp_root/astra-donor"
 
-test ! -e "$donor_locator"
 git init --bare -q "$donor_repo"
 git -C "$donor_repo" fetch --quiet --no-tags --depth=1   https://github.com/James3014/Nexus-new.git "$donor_sha"
 test "$(git --git-dir="$donor_repo" rev-parse "$donor_sha^{commit}")" = "$donor_sha"
 donor_tree="$(git --git-dir="$donor_repo" rev-parse "$donor_sha^{tree}")"
 mkdir -p "$donor_stage"
 git --git-dir="$donor_repo" archive "$donor_sha" | tar -x -C "$donor_stage"
-sudo mkdir -p "$donor_locator"
-sudo cp -a "$donor_stage/." "$donor_locator/"
-sudo git -C "$donor_locator" init -q
-sudo mkdir -p "$donor_locator/.git/objects/info"
-printf '%s\n' "$donor_repo/objects" | sudo tee "$donor_locator/.git/objects/info/alternates" >/dev/null
-sudo git -C "$donor_locator" update-ref refs/heads/frozen-donor "$donor_sha"
-sudo git -C "$donor_locator" symbolic-ref HEAD refs/heads/frozen-donor
-sudo git -C "$donor_locator" read-tree "$donor_sha"
-test "$(sudo git -C "$donor_locator" rev-parse HEAD)" = "$donor_sha"
-test "$(sudo git -C "$donor_locator" rev-parse HEAD^{tree})" = "$donor_tree"
+mkdir -p "$donor_locator"
+cp -a "$donor_stage/." "$donor_locator/"
+git -c safe.directory='*' -C "$donor_locator" init -q
+mkdir -p "$donor_locator/.git/objects/info"
+printf '%s\n' "$donor_repo/objects" > "$donor_locator/.git/objects/info/alternates"
+git -c safe.directory='*' -C "$donor_locator" update-ref refs/heads/frozen-donor "$donor_sha"
+git -c safe.directory='*' -C "$donor_locator" symbolic-ref HEAD refs/heads/frozen-donor
+git -c safe.directory='*' -C "$donor_locator" read-tree "$donor_sha"
+test "$(git -c safe.directory='*' -C "$donor_locator" rev-parse HEAD)" = "$donor_sha"
+test "$(git -c safe.directory='*' -C "$donor_locator" rev-parse 'HEAD^{tree}')" = "$donor_tree"
 
+# The donor locator lives inside the verifier sandbox (no sudo, no runner paths).
+export NEXUS_DONOR_ROOT="$donor_locator"
 cd "$tmp_root"
 "$python_bin" -m pytest -q "$repo_root/tests"

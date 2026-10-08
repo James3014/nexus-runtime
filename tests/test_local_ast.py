@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -9,8 +10,9 @@ from nexus_runtime_support_candidate.local_ast import RuntimeASTExtractor
 
 
 def _donor_extractor():
-    path = Path(
-        "/private/tmp/astra-production-integrated-20260909/nexus/services/local_heal/evidence_graph.py"
+    path = (
+        Path(os.environ.get("NEXUS_DONOR_ROOT", "/private/tmp/astra-production-integrated-20260909"))
+        / "nexus/services/local_heal/evidence_graph.py"
     )
     spec = importlib.util.spec_from_file_location("donor_evidence_graph", path)
     module = importlib.util.module_from_spec(spec)
