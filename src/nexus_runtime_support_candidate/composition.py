@@ -38,21 +38,21 @@ from nexus_planning_candidate.services.runtime_workforce_admission import (
     _sha256_json,
     evaluate_runtime_workforce_admission,
 )
-from nexus_runtime_p6c_candidate import bind_runtime, build_runtime
-from nexus_runtime_p6c_candidate.events.effect_journal import (
+from nexus_runtime.kernel import bind_runtime, build_runtime
+from nexus_runtime.kernel.events.effect_journal import (
     EffectDispatchPort,
     EffectJournal,
     EffectReconcilePort,
     deterministic_effect_id,
     operation_digest,
 )
-from nexus_runtime_p6c_candidate.events.state_owner_manifest import (
+from nexus_runtime.kernel.events.state_owner_manifest import (
     assert_owner_write,
     read_manifest,
 )
-from nexus_runtime_p6c_candidate.events.writer_generation import read_generation
-from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import RuntimeWriterFactory
-from nexus_runtime_p6c_candidate.services.online_payload_contract import (
+from nexus_runtime.kernel.events.writer_generation import read_generation
+from nexus_runtime.kernel.orchestrator.writer_quiescence import RuntimeWriterFactory
+from nexus_runtime.kernel.services.online_payload_contract import (
     _ONLINE_NON_DELIVERY_MARKERS,
     normalize_online_invoker_payload,
     online_payload_indicates_non_delivery,

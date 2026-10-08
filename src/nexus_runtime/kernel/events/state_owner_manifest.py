@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
-from nexus_runtime_p6c_candidate.events.writer_generation import EventWriterGeneration, event_store_lock, read_generation
+from nexus_runtime.kernel.events.writer_generation import EventWriterGeneration, event_store_lock, read_generation
 
 SCHEMA = "nexus.state_owner_manifest.v1"
 MANIFEST_NAME = ".nexus/events/state_owner.manifest.v1.json"

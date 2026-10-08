@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from nexus_runtime_p6c_candidate.events.writer_generation import EventWriterGeneration, GenerationError, event_store_lock, read_generation
+from nexus_runtime.kernel.events.writer_generation import EventWriterGeneration, GenerationError, event_store_lock, read_generation
 
 SCHEMA = "nexus.runtime_effect_journal.v1"
 JOURNAL_NAME = "effect_journal.v1.json"

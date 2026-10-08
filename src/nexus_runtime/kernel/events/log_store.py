@@ -13,9 +13,9 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from nexus_runtime_p6c_candidate.events.state_owner_manifest import OwnerWriteContext, assert_owner_write
-from nexus_runtime_p6c_candidate.events.writer_generation import EventWriterGeneration, GenerationError, event_store_lock, manifest_path, read_generation
-from nexus_runtime_p6c_candidate.feedback.contracts import _CODE_RE, _REF_RE, AUTHORITY_FLAG_KEYS, DeveloperFeedbackDecision, _tokens
+from nexus_runtime.kernel.events.state_owner_manifest import OwnerWriteContext, assert_owner_write
+from nexus_runtime.kernel.events.writer_generation import EventWriterGeneration, GenerationError, event_store_lock, manifest_path, read_generation
+from nexus_runtime.kernel.feedback.contracts import _CODE_RE, _REF_RE, AUTHORITY_FLAG_KEYS, DeveloperFeedbackDecision, _tokens
 
 # The loaded event writer installs a context only for the publishing thread
 # and only for the duration of one append transaction.  Keeping this in the
@@ -67,7 +67,7 @@ class JsonlEventLogStore:
         project_root = Path(project_root).expanduser().resolve()
         initial_attach = initial_handle is not None
         if initial_attach:
-            from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import InitialWriterAttachment
+            from nexus_runtime.kernel.orchestrator.writer_quiescence import InitialWriterAttachment
             if not isinstance(initial_handle, InitialWriterAttachment):
                 raise GenerationError("INITIAL_ATTACHMENT_HANDLE_INVALID")
             if writer_factory is None or getattr(writer_generation, "generation", writer_generation) != initial_handle.generation:
@@ -86,7 +86,7 @@ class JsonlEventLogStore:
                 raise GenerationError("INITIAL_ATTACHMENT_NOT_REGISTERED") from exc
             if read_generation(project_root) != writer_generation:
                 raise GenerationError("INITIAL_ATTACHMENT_GENERATION_MISMATCH")
-            from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
+            from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
             manifest = read_manifest(project_root)
             if manifest is None or manifest.state != "COMMITTED" or manifest.manifest_sha256 != initial_handle.manifest_sha256:
                 raise GenerationError("INITIAL_ATTACHMENT_MANIFEST_MISMATCH")
@@ -95,7 +95,7 @@ class JsonlEventLogStore:
         if writer_factory is not None and owner_context is not None:
             raise GenerationError("EVENT_WRITER_CONTEXT_CONFLICT")
         if writer_factory is not None:
-            from nexus_runtime_p6c_candidate.events.transport import EventWriterFactory
+            from nexus_runtime.kernel.events.transport import EventWriterFactory
             if not isinstance(writer_factory, EventWriterFactory):
                 raise GenerationError("EVENT_WRITER_FACTORY_INVALID")
             factory_root = Path(writer_factory._adapter.root)
@@ -109,7 +109,7 @@ class JsonlEventLogStore:
         if self._writer_factory is not None and writer_factory is None:
             raise GenerationError("EVENT_WRITER_FACTORY_REQUIRED")
         if writer_factory is not None:
-            from nexus_runtime_p6c_candidate.events.transport import EventWriterFactory
+            from nexus_runtime.kernel.events.transport import EventWriterFactory
             if not isinstance(writer_factory, EventWriterFactory):
                 raise GenerationError("EVENT_WRITER_FACTORY_INVALID")
             validate_entry = writer_factory.validate_entry
@@ -181,7 +181,7 @@ class JsonlEventLogStore:
                         )
                     except Exception as exc:
                         raise GenerationError("INITIAL_ATTACHMENT_NOT_REGISTERED") from exc
-                    from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
+                    from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
                     locked_manifest = read_manifest(project_root)
                     if (
                         locked_manifest is None
@@ -276,7 +276,7 @@ class JsonlEventLogStore:
             context = current_event_owner_context() if owner_context is None else owner_context
             if context is None:
                 raise GenerationError("EVENT_WRITER_CONTEXT_REQUIRED")
-            from nexus_runtime_p6c_candidate.events.transport import EventWriterFactory
+            from nexus_runtime.kernel.events.transport import EventWriterFactory
             if not isinstance(self._writer_factory, EventWriterFactory):
                 raise GenerationError("EVENT_WRITER_FACTORY_INVALID")
             self._writer_factory.assert_context(context)
@@ -289,7 +289,7 @@ class JsonlEventLogStore:
             if context.binding.root.resolve() != self.event_log_path.parents[2].resolve():
                 raise GenerationError("OWNER_CONTEXT_ROOT_MISMATCH")
         if context is None:
-            from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
+            from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
             root = self.event_log_path.parents[2]
             installed = read_generation(root)
             if installed != self._writer_generation:
@@ -307,7 +307,7 @@ class JsonlEventLogStore:
                 active_context = self._owner_context if owner_context is None else owner_context
                 if self._writer_factory is not None:
                     active_context = current_event_owner_context() if owner_context is None else owner_context
-                    from nexus_runtime_p6c_candidate.events.transport import EventWriterFactory
+                    from nexus_runtime.kernel.events.transport import EventWriterFactory
                     if not isinstance(self._writer_factory, EventWriterFactory):
                         raise GenerationError("EVENT_WRITER_FACTORY_INVALID")
                     self._writer_factory.assert_context(active_context)

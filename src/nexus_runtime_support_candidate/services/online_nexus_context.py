@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
-from nexus_runtime_p6c_candidate.services.online_payload_contract import normalize_online_invoker_payload
+from nexus_runtime.kernel.services.online_payload_contract import normalize_online_invoker_payload
 
 SELECTION_EXPLICIT_REQUEST = "explicit_request"
 TRANSPORT_STRUCTURED_CALLABLE = "structured_callable"

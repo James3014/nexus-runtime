@@ -127,8 +127,8 @@ class InitialWriterAttachment:
             marker = None
         if marker is not None and _hash(marker) != self._marker_sha256:
             raise HoldConflict("initial attachment hold marker changed")
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
-        from nexus_runtime_p6c_candidate.events.writer_generation import read_generation
+        from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
+        from nexus_runtime.kernel.events.writer_generation import read_generation
         manifest = read_manifest(Path(self.root))
         installed = read_generation(Path(self.root))
         if (
@@ -717,8 +717,8 @@ class TaskStateWriterAdapter:
         selection_entry_id: str = "task-state",
         initial_attachment: InitialWriterAttachment | None = None,
     ) -> None:
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import StateOwnerBinding
-        from nexus_runtime_p6c_candidate.events.writer_generation import EventWriterGeneration
+        from nexus_runtime.kernel.events.state_owner_manifest import StateOwnerBinding
+        from nexus_runtime.kernel.events.writer_generation import EventWriterGeneration
 
         if not isinstance(registry, WriterRegistry):
             raise TypeError("registry is required")
@@ -761,8 +761,8 @@ class TaskStateWriterAdapter:
         operation_id: str | None = None,
         transaction_id: str | None = None,
     ) -> Any:
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import StateOwnerSelection, commit_owner_transaction, owner_transaction_guard, read_manifest
-        from nexus_runtime_p6c_candidate.events.writer_generation import event_store_lock
+        from nexus_runtime.kernel.events.state_owner_manifest import StateOwnerSelection, commit_owner_transaction, owner_transaction_guard, read_manifest
+        from nexus_runtime.kernel.events.writer_generation import event_store_lock
 
         task = _text(task_id, "task_id")
         destination = Path(self._path_for_task(task)).resolve()
@@ -869,8 +869,8 @@ class RuntimeWriterAdapter:
         loaded_identity: Callable[[str], WriterIdentity] | None = None,
         initial_attachment: InitialWriterAttachment | None = None,
     ) -> None:
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import StateOwnerBinding
-        from nexus_runtime_p6c_candidate.events.writer_generation import EventWriterGeneration
+        from nexus_runtime.kernel.events.state_owner_manifest import StateOwnerBinding
+        from nexus_runtime.kernel.events.writer_generation import EventWriterGeneration
 
         if not isinstance(registry, WriterRegistry):
             raise TypeError("registry is required")
@@ -967,8 +967,8 @@ class RuntimeWriterAdapter:
         operation_id: str | None = None,
         transaction_id: str | None = None,
     ) -> Any:
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import StateOwnerSelection, commit_owner_transaction, owner_transaction_guard, read_manifest
-        from nexus_runtime_p6c_candidate.events.writer_generation import event_store_lock
+        from nexus_runtime.kernel.events.state_owner_manifest import StateOwnerSelection, commit_owner_transaction, owner_transaction_guard, read_manifest
+        from nexus_runtime.kernel.events.writer_generation import event_store_lock
 
         task = _text(task_id, "task_id")
         if role not in {"runtime_receipt", "effect_journal"}:
@@ -1039,7 +1039,7 @@ class RuntimeWriterFactory:
             raise ValueError("effect_binding_incomplete")
         self._effect_binding = None
         if all(value is not None for value in supplied):
-            from nexus_runtime_p6c_candidate.events.effect_journal import EffectDispatchPort, EffectJournal, EffectReconcilePort
+            from nexus_runtime.kernel.events.effect_journal import EffectDispatchPort, EffectJournal, EffectReconcilePort
             if not isinstance(effect_journal, EffectJournal) or not isinstance(effect_dispatch, EffectDispatchPort) or not isinstance(effect_reconcile, EffectReconcilePort):
                 raise TypeError("effect_binding_types_invalid")
             if Path(effect_journal.project_root).resolve() != Path(adapter.root) or effect_journal.generation != adapter.writer_generation:
@@ -1057,7 +1057,7 @@ class RuntimeWriterFactory:
         binding = self._effect_binding
         if binding is None:
             return None
-        from nexus_runtime_p6c_candidate.events.effect_journal import EffectDispatchPort, EffectJournal, EffectReconcilePort
+        from nexus_runtime.kernel.events.effect_journal import EffectDispatchPort, EffectJournal, EffectReconcilePort
         if not isinstance(binding.journal, EffectJournal) or not isinstance(binding.dispatch, EffectDispatchPort) or not isinstance(binding.reconcile, EffectReconcilePort):
             raise UnknownWriter("effect binding types changed")
         if Path(binding.journal.project_root).resolve() != Path(self._adapter.root) or binding.journal.generation != self._adapter.writer_generation:
@@ -1080,8 +1080,8 @@ class RuntimeWriterFactory:
             if stat.S_ISLNK(marker_info.st_mode) or not stat.S_ISREG(marker_info.st_mode):
                 raise WriterAdmissionDenied("runtime writer hold marker is unsafe")
             raise WriterAdmissionDenied("runtime writer root is held")
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
-        from nexus_runtime_p6c_candidate.events.writer_generation import read_generation
+        from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
+        from nexus_runtime.kernel.events.writer_generation import read_generation
         manifest = read_manifest(Path(adapter.root))
         generation = read_generation(Path(adapter.root))
         if manifest is None or manifest.state != "COMMITTED" or manifest.owner_id != adapter.binding.owner_id:
@@ -1296,8 +1296,8 @@ class WriterRegistry:
             receipt = self._finalized.get(hold.cohort_id)
             if recovery_proof is None and (receipt is None or receipt[0] is not hold or receipt[2] == ""):
                 raise WriterAdmissionDenied("initial attachment requires finalized drain")
-            from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
-            from nexus_runtime_p6c_candidate.events.writer_generation import read_generation
+            from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
+            from nexus_runtime.kernel.events.writer_generation import read_generation
             manifest = read_manifest(Path(canonical))
             installed = read_generation(Path(canonical))
             if manifest is None or manifest.state != "COMMITTED" or installed is None:
@@ -1324,8 +1324,8 @@ class WriterRegistry:
 
     @staticmethod
     def _pre_activation_physical(root):
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
-        from nexus_runtime_p6c_candidate.events.writer_generation import read_generation
+        from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
+        from nexus_runtime.kernel.events.writer_generation import read_generation
 
         path = Path(root)
         info = path.stat()
@@ -1783,8 +1783,8 @@ class WriterRegistry:
                 raise WriterAdmissionDenied("recovery selected identity mismatch")
             previous = next(x for x in old if (x.root, x.role) == (identity.root, identity.role))
             if (identity.generation, identity.writer_id) != (previous.generation, previous.writer_id):
-                from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
-                from nexus_runtime_p6c_candidate.events.writer_generation import read_generation
+                from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
+                from nexus_runtime.kernel.events.writer_generation import read_generation
                 installed = read_generation(Path(identity.root))
                 manifest = read_manifest(Path(identity.root))
                 if installed is None or manifest is None or manifest.state != "COMMITTED" or (identity.generation, identity.writer_id) != (installed.generation, installed.writer_id) or (manifest.generation, manifest.writer_id) != (identity.generation, identity.writer_id):
@@ -1985,8 +1985,8 @@ class WriterRegistry:
             selected = tuple(x for x in self._writers.values() if x.identity.root in proof._roots)
             if {id(x) for x in selected} != {id(x) for x, _ in facts.selected}:
                 raise WriterAdmissionDenied("recovery reacquisition object vector changed")
-            from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
-            from nexus_runtime_p6c_candidate.events.writer_generation import read_generation
+            from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
+            from nexus_runtime.kernel.events.writer_generation import read_generation
             for observation in receipt.observations:
                 loaded = observation.loaded_identity
                 old = observation.previous_identity
@@ -2184,7 +2184,7 @@ class WriterRegistry:
                     raise WriterAdmissionDenied("release history anchor conflict")
                 self._history_pins[str(path)] = existing
             else:
-                from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
+                from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
                 latest = {root: read_manifest(Path(root)).manifest_sha256 for root in hold.roots}
                 data = dict(schema="writer-released-history/v1", contract=self._history_contract(intent), intent=intent, released=None, sessions=[], operations={}, latest_manifest=latest)
                 self._history_write(path, data, None)
@@ -2406,7 +2406,7 @@ class WriterRegistry:
             return replace(lease.observation, exited_at=terminal["exited_at"], durable_outcome=outcome)
         if row["phase"] != "ADMITTED" or _safe_bytes(Path(row["path"])) != _json_bytes(row["active"]):
             raise WriterAdmissionDenied("released terminal active CAS changed")
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
+        from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
         manifest = read_manifest(Path(lease.observation.identity.root))
         if manifest is None or manifest.state != "COMMITTED":
             raise WriterAdmissionDenied("released terminal physical manifest unavailable")
@@ -2824,8 +2824,8 @@ class WriterRegistry:
         Missing source-owned adapter observations remain UNKNOWN. F alone may
         consume these observations to decide all-root release.
         """
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import COMMITTED, read_manifest
-        from nexus_runtime_p6c_candidate.events.writer_generation import event_store_lock, read_generation
+        from nexus_runtime.kernel.events.state_owner_manifest import COMMITTED, read_manifest
+        from nexus_runtime.kernel.events.writer_generation import event_store_lock, read_generation
 
         with self._mutex:
             self._check_hold(hold)

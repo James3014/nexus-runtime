@@ -33,11 +33,11 @@ class EventWriterAdapter:
     """Operation-scoped event-log binding over an already loaded registry."""
 
     def __init__(self, registry, *, binding, writer_generation, root, writer_id, initial_attachment=None):
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import StateOwnerBinding
-        from nexus_runtime_p6c_candidate.events.writer_generation import EventWriterGeneration
-        from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import UnknownWriter
-        from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import WriterRegistry
-        from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import _root
+        from nexus_runtime.kernel.events.state_owner_manifest import StateOwnerBinding
+        from nexus_runtime.kernel.events.writer_generation import EventWriterGeneration
+        from nexus_runtime.kernel.orchestrator.writer_quiescence import UnknownWriter
+        from nexus_runtime.kernel.orchestrator.writer_quiescence import WriterRegistry
+        from nexus_runtime.kernel.orchestrator.writer_quiescence import _root
         if not isinstance(registry, WriterRegistry):
             raise TypeError('registry is required')
         if not isinstance(binding, StateOwnerBinding):
@@ -68,8 +68,8 @@ class EventWriterAdapter:
         return (info.st_dev, info.st_ino)
 
     def _identity(self):
-        from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import UnknownWriter
-        from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import WriterIdentity
+        from nexus_runtime.kernel.orchestrator.writer_quiescence import UnknownWriter
+        from nexus_runtime.kernel.orchestrator.writer_quiescence import WriterIdentity
         item = self.registry._writers.get((self.root, 'event_log', self.writer_id))
         if item is None or item.identity.generation != self.writer_generation.generation:
             if self._initial_attachment is not None:
@@ -84,10 +84,10 @@ class EventWriterAdapter:
         return item.identity
 
     def validate_entry(self):
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
-        from nexus_runtime_p6c_candidate.events.writer_generation import read_generation
-        from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import UnknownWriter
-        from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import WriterAdmissionDenied
+        from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
+        from nexus_runtime.kernel.events.writer_generation import read_generation
+        from nexus_runtime.kernel.orchestrator.writer_quiescence import UnknownWriter
+        from nexus_runtime.kernel.orchestrator.writer_quiescence import WriterAdmissionDenied
         if os.getpid() != self.registry._pid:
             raise UnknownWriter('event writer belongs to another process')
         if self._physical_identity() != self._root_identity:
@@ -112,7 +112,7 @@ class EventWriterAdapter:
         self._identity()
 
     def assert_context(self, context):
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import assert_owner_write
+        from nexus_runtime.kernel.events.state_owner_manifest import assert_owner_write
         lease = self._active_contexts.get(id(context))
         if lease is None:
             raise RuntimeError('event writer context is not active')
@@ -126,12 +126,12 @@ class EventWriterAdapter:
 
     @contextmanager
     def operation(self, event_id: str, *, operation_id: str | None=None, transaction_id: str | None=None):
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import StateOwnerSelection
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import commit_owner_transaction
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import owner_transaction_guard
-        from nexus_runtime_p6c_candidate.events.state_owner_manifest import read_manifest
-        from nexus_runtime_p6c_candidate.events.writer_generation import event_store_lock
-        from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import WriterAdmissionDenied
+        from nexus_runtime.kernel.events.state_owner_manifest import StateOwnerSelection
+        from nexus_runtime.kernel.events.state_owner_manifest import commit_owner_transaction
+        from nexus_runtime.kernel.events.state_owner_manifest import owner_transaction_guard
+        from nexus_runtime.kernel.events.state_owner_manifest import read_manifest
+        from nexus_runtime.kernel.events.writer_generation import event_store_lock
+        from nexus_runtime.kernel.orchestrator.writer_quiescence import WriterAdmissionDenied
         self.validate_entry()
         lease = self.registry.acquire(root=self.root, role='event_log', writer_id=self._identity().writer_id, operation_id=operation_id, transaction_id=transaction_id, generation=self.writer_generation.generation)
         prepared = False
@@ -226,7 +226,7 @@ def build_transport(bindings: TransportBindings) -> TransportExports:
     logger = logging.getLogger(__name__)
 
     if TYPE_CHECKING:
-        from nexus_runtime_p6c_candidate.orchestrator.writer_quiescence import InitialWriterAttachment
+        from nexus_runtime.kernel.orchestrator.writer_quiescence import InitialWriterAttachment
 
 
     SEMANTIC_EVENT_TYPES = frozenset({'audit_failed', 'learning_decision', 'evidence_accepted', 'healing_artifact_announced', 'lifecycle_hook', 'phase_transition', 'spec_bind', 'attempt_transition'})
