@@ -93,3 +93,28 @@ def test_context_prototype_alias_from_import():
     from nexus_context_prototype import ContextContinuityService as a
 
     assert a is b
+
+
+def test_planning_namespace_exists():
+    planner = importlib.import_module("nexus_runtime.planning.engine.capability_planner")
+    assert hasattr(planner, "CapabilityPlanner")
+    composition = importlib.import_module("nexus_runtime.planning.composition")
+    policy = Path(composition.BUNDLED_POLICY_PATH)
+    assert policy.is_file()
+    assert policy.as_posix().endswith("config/model_workforce.yaml")
+
+
+def test_planning_alias_is_same_object():
+    assert importlib.import_module("nexus_planning_candidate") is importlib.import_module(
+        "nexus_runtime.planning"
+    )
+    assert importlib.import_module(
+        "nexus_planning_candidate.engine.capability_planner"
+    ) is importlib.import_module("nexus_runtime.planning.engine.capability_planner")
+
+
+def test_planning_alias_from_import():
+    from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner as b
+    from nexus_planning_candidate.engine.capability_planner import CapabilityPlanner as a
+
+    assert a is b
