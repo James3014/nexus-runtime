@@ -16,7 +16,7 @@ IMPORT_LINES = [
     "import nexus_runtime.task_retry",  # nexus/orchestrator/runtime_retry_bridge.py
     "from nexus_runtime.execution_state import ExecutionStateStore",  # nexus/orchestrator/runtime_state_bridge.py, self_hosted_task_service.py
     "import nexus_runtime.task_context",  # nexus/orchestrator/self_hosted_task_service.py (lazy)
-    "from nexus_runtime_support_candidate.local_ast import RuntimeASTExtractor",  # nexus/services/local_heal/evidence_graph.py
+    "from nexus_runtime.support.local_ast import RuntimeASTExtractor",  # nexus/services/local_heal/evidence_graph.py (Phase 2.5)
     "from nexus_runtime import build_runtime_exports",  # nexus/services/runtime_compat.py
 ]
 
