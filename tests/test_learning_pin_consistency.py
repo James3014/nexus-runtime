@@ -1,16 +1,29 @@
 """The nexus-learning pin must agree across CI, nexus-core config, and docs."""
 
+import os
 import re
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+
+def _source_root() -> Path | None:
+    """Checkout root, or $GITHUB_WORKSPACE when tests are staged outside it."""
+    local_root = Path(__file__).resolve().parents[1]
+    if (local_root / ".nexus-core" / "config.toml").is_file():
+        return local_root
+    github_workspace = os.environ.get("GITHUB_WORKSPACE")
+    if github_workspace:
+        return Path(github_workspace).resolve()
+    return None
+
+
+ROOT = _source_root()
 
 
 def _read(rel: str) -> str:
-    path = ROOT / rel
-    if not path.is_file():
+    path = ROOT / rel if ROOT is not None else None
+    if path is None or not path.is_file():
         pytest.skip(f"GAP: {rel} not available")
     return path.read_text(encoding="utf-8")
 
