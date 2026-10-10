@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -89,3 +90,13 @@ def test_refresh_rename_drops_stale_unknown_lineage_for_renamed_path():
     assert [e["path"] for e in entries] == ["new/a.py"]
     assert entries[0]["owner"] == "o"
     assert unknown == []
+
+
+def test_source_head_agrees_between_docs_and_ownership_map():
+    _require_root()
+    doc_head = _doc()["source_head"]
+    pattern = re.compile(r"source-ownership snapshot is\s+(?:bound to|revision)\s+`([0-9a-f]{40})`")
+    for rel in ("README.md", "docs/EXTRACTION_STATUS.md"):
+        match = pattern.search((ROOT / rel).read_text(encoding="utf-8"))
+        assert match, f"{rel} does not state the source-ownership snapshot SHA"
+        assert match.group(1) == doc_head, f"{rel} says {match.group(1)}, ownership map says {doc_head}"
