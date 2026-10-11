@@ -43,9 +43,9 @@ _PATH_DIVERGENCES = {
             "from collections.abc import Callable\nfrom pathlib import Path\n",
         ),
         (
-            "    def __init__(self, nodes: dict[str, CapabilityNode] | None = None) -> None:\n"
-            "        self.nodes = nodes or default_capability_nodes()\n",
-            "    def __init__(\n"
+            ("    def __init__(self, nodes: dict[str, CapabilityNode] | None = None) -> None:\n"
+            "        self.nodes = nodes or default_capability_nodes()\n"),
+            ("    def __init__(\n"
             "        self,\n"
             "        nodes: dict[str, CapabilityNode] | None = None,\n"
             "        *,\n"
@@ -54,29 +54,29 @@ _PATH_DIVERGENCES = {
             "        self.nodes = nodes or default_capability_nodes()\n"
             "        # Explicit repository root for shared-playbook lookups; None records an\n"
             "        # unconfigured-root violation instead of guessing a search path.\n"
-            "        self._shared_playbook_root = shared_playbook_root\n",
+            "        self._shared_playbook_root = shared_playbook_root\n"),
         ),
         (
             "    @staticmethod\n    def _build_skill_mount_evidence(\n        *,",
             "    def _build_skill_mount_evidence(\n        self,\n        *,",
         ),
         (
-            "            selected_capabilities=selected_capabilities,\n        )\n\n"
-            "    @staticmethod\n    def _decide_routing_tier",
-            "            selected_capabilities=selected_capabilities,\n"
+            ("            selected_capabilities=selected_capabilities,\n        )\n\n"
+            "    @staticmethod\n    def _decide_routing_tier"),
+            ("            selected_capabilities=selected_capabilities,\n"
             "            shared_playbook_root=self._shared_playbook_root,\n        )\n\n"
-            "    @staticmethod\n    def _decide_routing_tier",
+            "    @staticmethod\n    def _decide_routing_tier"),
         ),
     ],
     "planning/engine/planner/skill_mount_evidence.py": [
         (
             "    selected_capabilities: list[str],\n) -> dict[str, Any]:\n    requested_skills",
-            "    selected_capabilities: list[str],\n    shared_playbook_root: Path | None = None,\n"
-            ") -> dict[str, Any]:\n    requested_skills",
+            ("    selected_capabilities: list[str],\n    shared_playbook_root: Path | None = None,\n"
+            ") -> dict[str, Any]:\n    requested_skills"),
         ),
         (
             "        try:\n            shared_playbook = load_selected_shared_playbook(skill_id, capability_mount)\n",
-            "        if shared_playbook_root is None:\n"
+            ("        if shared_playbook_root is None:\n"
             "            # Fail closed without crashing planning: never guess a root (cwd/package).\n"
             "            playbook_violations.append(\n"
             "                {\n"
@@ -91,24 +91,24 @@ _PATH_DIVERGENCES = {
             "        try:\n"
             "            shared_playbook = load_selected_shared_playbook(\n"
             "                skill_id, capability_mount, root=shared_playbook_root\n"
-            "            )\n",
+            "            )\n"),
         ),
     ],
     "planning/services/model_workforce_policy.py": [(
         'DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[2] / "nexus/config/model_workforce.yaml"',
-        "# Packaged policy (planning/config/model_workforce.yaml); identical to\n"
+        ("# Packaged policy (planning/config/model_workforce.yaml); identical to\n"
         "    # ``planning.composition.BUNDLED_POLICY_PATH``. Hosts may pass ``policy_path``.\n"
-        '    DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[1] / "config" / "model_workforce.yaml"',
+        '    DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[1] / "config" / "model_workforce.yaml"'),
     )],
     "planning/learning/shared_playbook.py": [
         ("DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]\n", ""),
         (
             "    return Path(root).resolve() if root is not None else DEFAULT_REPO_ROOT.resolve()",
-            "    # Fail closed: never guess a search root (cwd or package location); an implicit root\n"
+            ("    # Fail closed: never guess a search root (cwd or package location); an implicit root\n"
             "    # would let an attacker-controlled directory feed playbook data.\n"
             "    if root is None:\n"
             '        raise ValueError("shared_playbook root must be provided explicitly")\n'
-            "    return Path(root).resolve()",
+            "    return Path(root).resolve()"),
         ),
     ],
 }

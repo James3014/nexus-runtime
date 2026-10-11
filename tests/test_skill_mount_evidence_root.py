@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 
 from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner
-from nexus_runtime.planning.engine.planner.skill_mount_evidence import build_skill_mount_evidence
+from nexus_runtime.planning.engine.planner.skill_mount_evidence import (
+    build_skill_mount_evidence,
+)
 
 REASON = "SHARED_PLAYBOOK_ROOT_UNCONFIGURED"
 
@@ -58,10 +60,11 @@ def test_explicit_root_without_playbook_mounts_normally(tmp_path):
 
 def test_planner_forwards_root_and_plan_still_returns(tmp_path):
     report = str(_report(tmp_path, ["diagnose"]))
-    kwargs = dict(
-        task_desc="inspect", task_type="analysis", route={}, budget={"skill_status_report": report},
-        skills=[{"skill_id": "diagnose", "capability_id": "xray"}],
-    )
+    kwargs = {
+        "task_desc": "inspect", "task_type": "analysis", "route": {},
+        "budget": {"skill_status_report": report},
+        "skills": [{"skill_id": "diagnose", "capability_id": "xray"}],
+    }
     plan = CapabilityPlanner().plan(**kwargs)
     assert plan is not None
     assert CapabilityPlanner()._shared_playbook_root is None

@@ -7,6 +7,7 @@ import pytest
 from nexus_runtime.planning.engine import capability_planner as cp
 from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner
 
+
 def select(**kw):
     return CapabilityPlanner.mainchain_gate_selection(**kw)
 
