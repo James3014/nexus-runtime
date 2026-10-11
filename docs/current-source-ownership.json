@@ -306,7 +306,7 @@
       "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/runtime.py",
-      "sha256": "77e48fbaa8b9bddfa43be36a7b2d0deab4e5a4b66fa1a8744e315b20ec08a48e"
+      "sha256": "4a6ac4c30b220fbd216131835734e960bc3f29c31f3ee41f1180d230ad580e73"
     },
     {
       "canonical_owner": "runtime",
@@ -879,6 +879,6 @@
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
   "source_head": "8d45e51b04998ed7408b53e3503bc3cce5ac29fc",
-  "source_tree": "98bd790ba33d19804f1103965e5dbd6499f4ef6c",
+  "source_tree": "957cb0b26a455e3d19801b33d4f43cc827583597",
   "unknown_lineage": []
 }

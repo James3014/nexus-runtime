@@ -6,8 +6,6 @@ import pkgutil
 import re
 from pathlib import Path
 
-import pytest
-
 import nexus_runtime
 import nexus_runtime.kernel as kernel_pkg
 
@@ -70,7 +68,6 @@ def test_export_signatures_match_snapshot():
     assert _snapshot(nexus_runtime.build_runtime_exports()) == expected
 
 
-@pytest.mark.xfail(strict=True, reason="kernel unwrap in progress")
 def test_no_kernel_module_references_generated_bindings():
     offenders = []
     for info in pkgutil.iter_modules(kernel_pkg.__path__):
