@@ -228,6 +228,11 @@ class EffectJournal:
         if not isinstance(effect_id, str) or not effect_id: raise EffectJournalError("EFFECT_ID_REQUIRED")
         return self._locked(lambda data: dict(data["records"][effect_id]) if effect_id in data["records"] else None)
 
+    def unresolved_for_subject(self, subject: str) -> list[dict[str, Any]]:
+        """Return every non-COMPLETED record (PENDING/DISPATCHED/UNKNOWN/...) for ``subject``."""
+        if not isinstance(subject, str) or not subject: raise EffectJournalError("EFFECT_BINDING_REQUIRED")
+        return self._locked(lambda data: [dict(r) for r in data["records"].values() if r.get("subject") == subject and r.get("state") != "COMPLETED"])
+
     def transition(self, effect_id: str, state: str, *, result: Any = None, reason: str = "") -> dict[str, Any]:
         if state not in _STATES: raise EffectJournalError("EFFECT_STATE_INVALID")
         def action(data: dict[str, Any]) -> dict[str, Any]:

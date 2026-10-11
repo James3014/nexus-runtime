@@ -339,3 +339,77 @@ def test_real_planner_run_and_replan_successful_receipts(tmp_path):
     assert json.loads(local_receipt.read_text(encoding="utf-8"))["candidate_hashes"] == [
         "sha256:" + hashlib.sha256(candidate_path.read_bytes()).hexdigest()
     ]
+
+
+def test_replan_with_stripped_bindings_cannot_redispatch_unknown_effect(tmp_path: Path) -> None:
+    from nexus_runtime.kernel.events.effect_journal import (
+        EffectDispatchPort,
+        EffectJournal,
+        EffectReconcilePort,
+    )
+    from nexus_runtime.kernel.events.writer_generation import (
+        EventWriterGeneration,
+        install_generation,
+    )
+
+    exports = build_runtime_exports()
+    request = exports.UnifiedRuntimeRequest(
+        task_id="unk-effect",
+        workspace_revision="rev-1",
+        task_statement="bounded failed verifier trace",
+        task_type="repair",
+        route={
+            "recommended_flow": "direct",
+            "online_policy": "deny",
+            "workforce_admission_enabled": True,
+            "workforce_bindings": {
+                "online": {
+                    "worker_id": "agy_flash",
+                    "provider": "agy",
+                    "model": "gemini-3.6-flash-high",
+                    "controls": ["task_card", "allowed_files", "mandatory_commands", "independent_verification"],
+                }
+            },
+        },
+        online_enabled=True,
+        local_enabled=False,
+    )
+    gen = install_generation(tmp_path, EventWriterGeneration(1, "writer-a"))
+    journal = EffectJournal(tmp_path, gen)
+    dispatches: list[int] = []
+
+    def dispatch(op):
+        dispatches.append(len(dispatches) + 1)
+        if len(dispatches) == 1:
+            raise TimeoutError("connection lost after send: outcome unknown")
+        return op()
+
+    base = _failure_invokers(exports, request)
+    name = sorted(base)[0]
+
+    def effectful(ctx, _f=base[name]):
+        return _f(ctx)
+
+    effectful.effectful = True
+
+    def failed_verifier(ctx):
+        return {
+            "task_id": ctx["task_id"], "invoked": True, "status": "FAILED", "gate_passed": False,
+            "evidence_present": True, "evidence_refs": ["fixture:failed-verifier"],
+        }
+
+    kw = dict(
+        capability_invokers={**base, name: effectful},
+        verifier=failed_verifier,
+        effect_journal=journal,
+        effect_dispatch=EffectDispatchPort(dispatch),
+        effect_reconcile=EffectReconcilePort(lambda record: None),
+    )
+    first = exports.UnifiedRuntime().run(request, **kw)
+    assert [r["state"] for r in journal._locked(lambda d: list(d["records"].values()))] == ["UNKNOWN"]
+
+    tampered = dict(first)
+    tampered.pop("effect_journal_bindings", None)
+    with pytest.raises(ValueError, match="replan_effect_binding_incomplete"):
+        exports.UnifiedRuntime().run_replan(tampered, request, **kw)
+    assert dispatches == [1]
