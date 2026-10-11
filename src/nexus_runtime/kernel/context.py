@@ -44,8 +44,13 @@ def bind_context(ctx: KernelContext, fn: Callable[..., Any]) -> Callable[..., An
 
 def bind_class(ctx: KernelContext, cls: type) -> type:
     """Return a subclass of ``cls`` carrying ``ctx`` as ``_ctx``, indistinguishable by name and doc."""
-    return type(
-        cls.__name__,
-        (cls,),
-        {"_ctx": ctx, "__module__": cls.__module__, "__qualname__": cls.__qualname__, "__doc__": cls.__doc__},
-    )
+    namespace: dict[str, Any] = {
+        "_ctx": ctx,
+        "__module__": cls.__module__,
+        "__qualname__": cls.__qualname__,
+        "__doc__": cls.__doc__,
+    }
+    # Static methods that need the context declare it as an explicit first parameter.
+    for name in getattr(cls, "_ctx_static_methods", ()):
+        namespace[name] = staticmethod(bind_context(ctx, getattr(cls, name)))
+    return type(cls.__name__, (cls,), namespace)

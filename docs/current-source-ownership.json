@@ -180,7 +180,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/context.py",
-      "sha256": "90feedad200b023bf57090ece99919ff8549e6da09cf3df915bb56bf50912e6a"
+      "sha256": "52cef0faa9bfd3c7cc80a902d6c1b8b2e8d82ce1fb9bab41bdb2448617e24790"
     },
     {
       "canonical_owner": "runtime",
@@ -306,7 +306,7 @@
       "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/runtime.py",
-      "sha256": "ecffe21f1ffef486426a083c6539ec65c1c423511f619ad40ad96ce096d61d7e"
+      "sha256": "77e48fbaa8b9bddfa43be36a7b2d0deab4e5a4b66fa1a8744e315b20ec08a48e"
     },
     {
       "canonical_owner": "runtime",
@@ -328,6 +328,13 @@
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/transport.py",
       "sha256": "09ac3c9ca9a0955464c70425cb5b5795afe45730d8fd2f3f814b734d8842fdb9"
+    },
+    {
+      "canonical_owner": "runtime kernel",
+      "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/unified_runtime.py",
+      "sha256": "b18f9186b08bc3b10b326218e8373515a91252f582f928af4a79c8d56ae106b6"
     },
     {
       "canonical_owner": "memory adapter",
@@ -872,6 +879,6 @@
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
   "source_head": "8d45e51b04998ed7408b53e3503bc3cce5ac29fc",
-  "source_tree": "c60bb628f93699f5cd528635c7be0ff2228fe2c7",
+  "source_tree": "98bd790ba33d19804f1103965e5dbd6499f4ef6c",
   "unknown_lineage": []
 }
