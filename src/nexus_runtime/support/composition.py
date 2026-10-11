@@ -1,6 +1,7 @@
 """Explicit composition root for the real-binding runtime qualification wheel."""
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -134,6 +135,16 @@ def _planner_with_shared_playbook_root(root: Path):
     return _RootedCapabilityPlanner
 
 
+def _bind_playbook_root(func, root: Path):
+    @functools.wraps(func)
+    def bound(*args: Any, shared_playbook_root: Any = None, **kwargs: Any) -> Any:
+        if shared_playbook_root is not None and Path(shared_playbook_root) != root:
+            raise ValueError("shared_playbook_root_conflicts_with_bound_root")
+        return func(*args, shared_playbook_root=root, **kwargs)
+
+    return bound
+
+
 def build_runtime_exports(
     *, policy_path: str | Path | None = None,
     default_capability_invokers: Mapping[str, Any] | None = None,
@@ -159,9 +170,18 @@ def build_runtime_exports(
     """
     host_defaults = dict(default_capability_invokers or {})
     if shared_playbook_root is not None:
-        if planner_factory is not None:
+        if (
+            planner_factory is not None
+            or plan_canonical_task_bundle_factory is not None
+            or replan_canonical_task_bundle_factory is not None
+        ):
             raise ValueError("shared_playbook_root_conflicts_with_planner_factory")
         planner_factory = _planner_with_shared_playbook_root(Path(shared_playbook_root))
+    plan_bundle = plan_canonical_task_bundle_factory or plan_canonical_task_bundle
+    replan_bundle = replan_canonical_task_bundle_factory or replan_canonical_task_bundle
+    if shared_playbook_root is not None:
+        plan_bundle = _bind_playbook_root(plan_bundle, Path(shared_playbook_root))
+        replan_bundle = _bind_playbook_root(replan_bundle, Path(shared_playbook_root))
 
     def selected_coverage(selected, existing, **kwargs):
         return _ensure_selected_coverage_invokers(
@@ -231,11 +251,11 @@ def build_runtime_exports(
         "normalize_online_invoker_payload": normalize_online_invoker_payload,
         "online_payload_indicates_non_delivery": online_payload_indicates_non_delivery,
         "operation_digest": operation_digest,
-        "plan_canonical_task_bundle": plan_canonical_task_bundle_factory or plan_canonical_task_bundle,
+        "plan_canonical_task_bundle": plan_bundle,
         "physical_online_authorized": physical_online_authorized,
         "read_generation": read_generation,
         "read_manifest": read_manifest,
-        "replan_canonical_task_bundle": replan_canonical_task_bundle_factory or replan_canonical_task_bundle,
+        "replan_canonical_task_bundle": replan_bundle,
         "resolve_online_execution_decision": resolve_online_execution_decision,
         "validate_receipt_base": validate_receipt_base,
         "advisory_route_from_local_response": advisory_route_from_local_response or _runtime_projection_binding_missing,
