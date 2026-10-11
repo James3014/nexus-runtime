@@ -260,11 +260,18 @@
       "sha256": "9f9d976e53302b916de6e97d06eb172ce2aae758867f87c408d45de45a9834d0"
     },
     {
+      "canonical_owner": "runtime kernel",
+      "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/receipts.py",
+      "sha256": "f2f4e06ca8b73f3124974b460b0bad7f6493c09115a88fde6eaa340ca21fd8f4"
+    },
+    {
       "canonical_owner": "runtime",
       "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/runtime.py",
-      "sha256": "c32d39983869e5b9c9d927b4135a593ae633978bfb532e0092c894dc13adfd71"
+      "sha256": "f66b8fefea99ace7e81b24e77bc08c05c4e2d5c64548323ac18869e167af7258"
     },
     {
       "canonical_owner": "runtime",
@@ -823,6 +830,6 @@
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
   "source_head": "8d45e51b04998ed7408b53e3503bc3cce5ac29fc",
-  "source_tree": "6b12555bb8b02aab94122e28d6407b72fa0bedba",
+  "source_tree": "d1a4a31c1ad98d1a07b2d8a2ec30994a944f7d93",
   "unknown_lineage": []
 }
