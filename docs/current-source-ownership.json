@@ -267,11 +267,18 @@
       "sha256": "f2f4e06ca8b73f3124974b460b0bad7f6493c09115a88fde6eaa340ca21fd8f4"
     },
     {
+      "canonical_owner": "runtime kernel",
+      "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/kernel/replan.py",
+      "sha256": "7b73b065a46f450a10907ac384b1fd9a2187b23d6e2b5d5462e12497aa412a92"
+    },
+    {
       "canonical_owner": "runtime",
       "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/runtime.py",
-      "sha256": "f66b8fefea99ace7e81b24e77bc08c05c4e2d5c64548323ac18869e167af7258"
+      "sha256": "4e8da740ec039d4f3a3c860f7a900371a9ca78cd3b1a0b3423df83b74bea7e81"
     },
     {
       "canonical_owner": "runtime",
@@ -830,6 +837,6 @@
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
   "source_head": "8d45e51b04998ed7408b53e3503bc3cce5ac29fc",
-  "source_tree": "d1a4a31c1ad98d1a07b2d8a2ec30994a944f7d93",
+  "source_tree": "986ee85c4772212190e93650ce82dfb18213f5dc",
   "unknown_lineage": []
 }
