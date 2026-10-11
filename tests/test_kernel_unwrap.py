@@ -1,4 +1,5 @@
 """Characterization of the kernel unwrap (Phase 5a): exports, signatures, no generated bindings."""
+import os
 import importlib
 import inspect
 import json
@@ -9,7 +10,17 @@ from pathlib import Path
 import nexus_runtime
 import nexus_runtime.kernel as kernel_pkg
 
-ROOT = Path(__file__).resolve().parents[1]
+def _source_root() -> Path:
+    local_root = Path(__file__).resolve().parents[1]
+    if (local_root / "scripts" / "refresh_public_surface.py").is_file():
+        return local_root
+    github_workspace = os.environ.get("GITHUB_WORKSPACE")
+    if github_workspace:
+        return Path(github_workspace).resolve()
+    return local_root
+
+
+ROOT = _source_root()
 SNAPSHOT = ROOT / "docs" / "kernel-export-signatures.json"
 
 
