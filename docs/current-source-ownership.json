@@ -841,6 +841,13 @@
       "sha256": "0951f96bdbd88d9e403f65f029d2912659ec439c7598cd0ecd9af4dd2ca32cd7"
     },
     {
+      "canonical_owner": "runtime task lifecycle status vocabulary",
+      "donor": "Nexus-new nexus/orchestrator/self_hosted_task_service.py status sets (Phase 5b-1; membership only, copied not moved)",
+      "lineage_status": "integrated_pending_acceptance",
+      "path": "nexus_runtime/task_lifecycle.py",
+      "sha256": "d32ffb1a09c5774008e06caeda02824f08228bd4312f56374cc0d0a2392f3221"
+    },
+    {
       "canonical_owner": "runtime retry/reconciliation",
       "donor": "repository-local Issue #81 bounded verifier-driven reconciliation source canary",
       "lineage_status": "integrated_pending_acceptance",
@@ -878,7 +885,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "db9640941cf25525ef9171e559adaa83a4f0cb8e",
-  "source_tree": "911244915e8a0353914e85a156e9e6c173b59c92",
+  "source_head": "6192b95d36bf5b093041fef01f697de158ac51e7",
+  "source_tree": "d216e7663a1bbf0f1c946a8b16997cdb923d1ee8",
   "unknown_lineage": []
 }
