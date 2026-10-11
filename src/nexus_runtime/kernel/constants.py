@@ -1,24 +1,17 @@
 from __future__ import annotations
 
 
-
 REQUEST_SCHEMA = "nexus.unified_runtime.request.v1"
-
 
 RECEIPT_SCHEMA = "nexus.unified_runtime.receipt.v1"
 
-
 LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA = "nexus.local_model_invocation_authority.v1"
-
 
 RUNTIME_WORKFORCE_ADMISSION_SCHEMA = "nexus.runtime_workforce_admission.v1"
 
-
 RUNTIME_WORKFORCE_ADMISSION_RECORD_SCHEMA = "nexus.runtime_workforce_admission_record.v1"
 
-
 WORKFORCE_ADMISSION_DECISION_SCHEMA = "nexus.workforce_admission_decision.v1"
-
 
 GATEWAY_INVOCATION_AUTHORITY_SCHEMA = "nexus.gateway_invocation_authority.v1"
 
@@ -116,29 +109,20 @@ REGISTERED_CLI_MODEL_BINDING_FLAGS: dict[str, tuple[str, str]] = {
 
 LOCAL_ONLY_PROVIDERS: frozenset[str] = frozenset({"ollama"})
 
-
 TRANSPORT_STRUCTURED_CALLABLE = "structured_callable"
-
 
 TRANSPORT_REGISTERED_CLI = "registered_cli"
 
-
 TRANSPORT_GATEWAY_COMPATIBILITY = "gateway_compatibility"
-
 
 TRANSPORT_UNRESOLVED = "unresolved"
 
-
 SELECTION_EXPLICIT_REQUEST = "explicit_request"
-
 
 SELECTION_INJECTED_TRANSPORT = "injected_transport"
 
-
 SELECTION_ENVIRONMENT_DEFAULT = "environment_default"
 
-
 SELECTION_COMPATIBILITY_DEFAULT = "compatibility_default"
-
 
 SELECTION_PLANNER = "planner"

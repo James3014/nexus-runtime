@@ -173,7 +173,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/constants.py",
-      "sha256": "4c54f8a63850b7b886a94d6510641c127c755d106c2046cf80334794fbb682b9"
+      "sha256": "1c95ae995ddccfc3cc3819599977c15a7f058068d91ec6a75a8b51c5feab6960"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -879,6 +879,6 @@
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
   "source_head": "8d45e51b04998ed7408b53e3503bc3cce5ac29fc",
-  "source_tree": "957cb0b26a455e3d19801b33d4f43cc827583597",
+  "source_tree": "9824be0cfd518986f4c1654f71c755437a03248d",
   "unknown_lineage": []
 }
