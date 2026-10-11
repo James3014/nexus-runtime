@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from nexus_runtime.planning.engine.capability_contracts import ExecutionReplanAuthorization
+from nexus_runtime.planning.engine.capability_contracts import (
+    ExecutionReplanAuthorization,
+)
 from nexus_runtime.support import composition
 from nexus_runtime.support.composition import build_runtime_exports
 from nexus_runtime.support.contracts.canonical_execution import CanonicalTaskContext
@@ -62,12 +64,45 @@ def test_default_call_passes_none(recorded_roots):
     assert recorded_roots == [None]
 
 
-def test_replan_bundle_passes_explicit_root(recorded_roots, tmp_path):
+class _Stop(Exception):
+    pass
+
+
+def _auth(ctx):
+    return ExecutionReplanAuthorization(
+        task_id=ctx.task_id,
+        workspace_revision="rev-1",
+        source_planner_decision_id="decision-1",
+        source_replan_request_id="sha256:" + "a" * 64,
+        source_receipt_hash="b" * 64,
+        source_run_anchor_hash="c" * 64,
+        requested_execution_depth="FULL",
+    )
+
+
+@pytest.fixture
+def replan_roots(monkeypatch):
+    """Record the root handed to the planner, then stop before planning."""
+    roots = []
+
+    class Stopping:
+        def __init__(self, *args, **kwargs):
+            roots.append(kwargs.get("shared_playbook_root", "<absent>"))
+
+        def plan(self, **_kwargs):
+            raise _Stop
+
+    monkeypatch.setattr(seam, "CapabilityPlanner", Stopping)
+    return roots
+
+
+def test_replan_bundle_passes_explicit_root(replan_roots, tmp_path):
     ctx = _context()
-    auth = ExecutionReplanAuthorization.__new__(ExecutionReplanAuthorization)
-    object.__setattr__(auth, "task_id", ctx.task_id)
-    seam.replan_canonical_task_bundle(ctx, auth, shared_playbook_root=tmp_path)
-    assert recorded_roots == [tmp_path]
+    with pytest.raises(_Stop):
+        seam.replan_canonical_task_bundle(
+            ctx, _auth(ctx), shared_playbook_root=tmp_path
+        )
+    assert replan_roots == [tmp_path]
 
 
 def test_exports_bind_root_for_plan_and_replan(recorded_roots, tmp_path):
@@ -76,11 +111,14 @@ def test_exports_bind_root_for_plan_and_replan(recorded_roots, tmp_path):
     assert recorded_roots == [Path(tmp_path)]
     exports.plan_canonical_task_bundle(_context(), shared_playbook_root=tmp_path)
     assert recorded_roots[-1] == Path(tmp_path)
+
+
+def test_exports_bind_root_for_replan(replan_roots, tmp_path):
+    exports = build_runtime_exports(shared_playbook_root=tmp_path)
     ctx = _context()
-    auth = ExecutionReplanAuthorization.__new__(ExecutionReplanAuthorization)
-    object.__setattr__(auth, "task_id", ctx.task_id)
-    exports.replan_canonical_task_bundle(ctx, auth)
-    assert recorded_roots[-1] == Path(tmp_path)
+    with pytest.raises(_Stop):
+        exports.replan_canonical_task_bundle(ctx, _auth(ctx))
+    assert replan_roots == [Path(tmp_path)]
 
 
 def test_exports_preserve_function_identity(tmp_path):
@@ -89,17 +127,25 @@ def test_exports_preserve_function_identity(tmp_path):
         fn = getattr(exports, name)
         orig = getattr(seam, name)
         assert (fn.__module__, fn.__qualname__, fn.__doc__) == (
-            orig.__module__, orig.__qualname__, orig.__doc__,
+            orig.__module__,
+            orig.__qualname__,
+            orig.__doc__,
         )
 
 
 def test_conflicting_explicit_root_raises(tmp_path):
     exports = build_runtime_exports(shared_playbook_root=tmp_path)
     other = tmp_path / "other"
-    with pytest.raises(ValueError, match="shared_playbook_root_conflicts_with_bound_root"):
+    with pytest.raises(
+        ValueError, match="shared_playbook_root_conflicts_with_bound_root"
+    ):
         exports.plan_canonical_task_bundle(_context(), shared_playbook_root=other)
-    with pytest.raises(ValueError, match="shared_playbook_root_conflicts_with_bound_root"):
-        exports.replan_canonical_task_bundle(_context(), None, shared_playbook_root=other)
+    with pytest.raises(
+        ValueError, match="shared_playbook_root_conflicts_with_bound_root"
+    ):
+        exports.replan_canonical_task_bundle(
+            _context(), None, shared_playbook_root=other
+        )
 
 
 def test_without_root_exports_are_the_seam_functions():
@@ -108,8 +154,13 @@ def test_without_root_exports_are_the_seam_functions():
 
 
 @pytest.mark.parametrize(
-    "factory", ["plan_canonical_task_bundle_factory", "replan_canonical_task_bundle_factory"]
+    "factory",
+    ["plan_canonical_task_bundle_factory", "replan_canonical_task_bundle_factory"],
 )
 def test_root_with_planner_domain_factory_raises(tmp_path, factory):
-    with pytest.raises(ValueError, match="shared_playbook_root_conflicts_with_planner_factory"):
-        build_runtime_exports(shared_playbook_root=tmp_path, **{factory: lambda *a, **k: None})
+    with pytest.raises(
+        ValueError, match="shared_playbook_root_conflicts_with_planner_factory"
+    ):
+        build_runtime_exports(
+            shared_playbook_root=tmp_path, **{factory: lambda *a, **k: None}
+        )

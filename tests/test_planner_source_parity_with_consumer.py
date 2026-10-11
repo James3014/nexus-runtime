@@ -113,6 +113,49 @@ _PATH_DIVERGENCES = {
         "    # ``planning.composition.BUNDLED_POLICY_PATH``. Hosts may pass ``policy_path``.\n"
         '    DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[1] / "config" / "model_workforce.yaml"'),
     )],
+    "support/engine/canonical_execution.py": [
+        (
+            "from __future__ import annotations\n\n",
+            "from __future__ import annotations\n\nfrom pathlib import Path\n\n",
+        ),
+        (
+            "    context: CanonicalTaskContext,\n) -> tuple[ExecutionDecision",
+            "    context: CanonicalTaskContext,\n    *,\n    shared_playbook_root: Path | None = None,\n"
+            ") -> tuple[ExecutionDecision",
+        ),
+        (
+            "    bundle = plan_canonical_task_bundle(context)\n",
+            "    bundle = plan_canonical_task_bundle(context, shared_playbook_root=shared_playbook_root)\n",
+        ),
+        (
+            "def plan_canonical_task_bundle(context: CanonicalTaskContext) -> CanonicalPlanningBundle:\n",
+            "def plan_canonical_task_bundle(\n    context: CanonicalTaskContext,\n    *,\n"
+            "    shared_playbook_root: Path | None = None,\n) -> CanonicalPlanningBundle:\n",
+        ),
+        (
+            "    return _plan_canonical_task_bundle(context)\n",
+            "    return _plan_canonical_task_bundle(context, shared_playbook_root=shared_playbook_root)\n",
+        ),
+        (
+            "    authorization: ExecutionReplanAuthorization,\n) -> CanonicalPlanningBundle:",
+            "    authorization: ExecutionReplanAuthorization,\n    *,\n"
+            "    shared_playbook_root: Path | None = None,\n) -> CanonicalPlanningBundle:",
+        ),
+        (
+            "    return _plan_canonical_task_bundle(context, replan_authorization=authorization)\n",
+            "    return _plan_canonical_task_bundle(\n        context,\n        replan_authorization=authorization,\n"
+            "        shared_playbook_root=shared_playbook_root,\n    )\n",
+        ),
+        (
+            "    replan_authorization: ExecutionReplanAuthorization | None = None,\n) -> CanonicalPlanningBundle:",
+            "    replan_authorization: ExecutionReplanAuthorization | None = None,\n"
+            "    shared_playbook_root: Path | None = None,\n) -> CanonicalPlanningBundle:",
+        ),
+        (
+            "CapabilityPlanner().plan(",
+            "CapabilityPlanner(shared_playbook_root=shared_playbook_root).plan(",
+        ),
+    ],
     "planning/learning/shared_playbook.py": [
         ("DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]\n", ""),
         (

@@ -290,7 +290,7 @@
     },
     "plan_canonical_task_bundle": {
       "kind": "callable",
-      "signature": "(context: 'CanonicalTaskContext') -> 'CanonicalPlanningBundle'"
+      "signature": "(context: 'CanonicalTaskContext', *, shared_playbook_root: 'Path | None' = None) -> 'CanonicalPlanningBundle'"
     },
     "planner_binding": {
       "kind": "value",
@@ -298,7 +298,7 @@
     },
     "replan_canonical_task_bundle": {
       "kind": "callable",
-      "signature": "(context: 'CanonicalTaskContext', authorization: 'ExecutionReplanAuthorization') -> 'CanonicalPlanningBundle'"
+      "signature": "(context: 'CanonicalTaskContext', authorization: 'ExecutionReplanAuthorization', *, shared_playbook_root: 'Path | None' = None) -> 'CanonicalPlanningBundle'"
     },
     "resolve_online_transport_binding": {
       "kind": "callable",
