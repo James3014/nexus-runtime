@@ -103,7 +103,7 @@
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance",
       "path": "nexus_runtime/execution_coordination/coordinator.py",
-      "sha256": "d991e85557b879656f0f561fe1dc94c2445efba608d98d6e9b2d38b2570d927c"
+      "sha256": "cd0dd4ebc6d21684ab3d5d5bd70b7f9db6043d9be32e8865784dfe20676a99fb"
     },
     {
       "canonical_owner": "runtime execution coordination",
@@ -173,7 +173,7 @@
       "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/events/effect_journal.py",
-      "sha256": "1cd2e16f53340864697c3fa9287dbe40c6826dde083e101fc3588ef46214567f"
+      "sha256": "3615ffc3e13cca3715d83237cd2e5cf0d3eb84b559385d5e4f72187c37193218"
     },
     {
       "canonical_owner": "runtime",
@@ -243,7 +243,7 @@
       "donor": "frozen runtime extraction 471a281badda342ccab26606e0c46cbca6867cbb",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/runtime.py",
-      "sha256": "ca0b08605e44b9b5c83f91393ee667686219b798d86357b7f674f8939e1c1f32"
+      "sha256": "96a67cc2b215330642c89556f544d565e23d567b2325d2e6047b78f7ddc2f2ba"
     },
     {
       "canonical_owner": "runtime",
@@ -801,7 +801,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "8d45e51b04998ed7408b53e3503bc3cce5ac29fc",
-  "source_tree": "625eea58110377701101d8ca3c106916171dbf18",
+  "source_head": "c7538b6010fe14446f4bff388daf8f2290baf0e3",
+  "source_tree": "2ae5331fead29dbc28788e844bcebf9005eb9f34",
   "unknown_lineage": []
 }
