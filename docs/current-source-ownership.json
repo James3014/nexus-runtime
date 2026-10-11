@@ -299,7 +299,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/request.py",
-      "sha256": "8aae4bc1bc27b4f915407b0bfb45c79784c3ba4302156eb53c38027cb5d31026"
+      "sha256": "f15d13e0da48db20f4ce733ebb1da712268d0b8edb4f978d0f0a2493c8c679f1"
     },
     {
       "canonical_owner": "runtime",
@@ -885,7 +885,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "172835a4f669ce427f246d95f2b60caf0cd51d07",
-  "source_tree": "2725113013c99ee157e6c89507d86b37439e5146",
+  "source_head": "82b1d62559386a63684ce273384fcbb3fd2a382b",
+  "source_tree": "dca3024858e85b0c40bb10cfdd96cb62e8dc9417",
   "unknown_lineage": []
 }
