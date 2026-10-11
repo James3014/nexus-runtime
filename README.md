@@ -19,7 +19,7 @@ Live repository HEAD is intentionally not hard-coded here; read Git/GitHub when
 current revision identity matters.
 
 The current Python source-ownership snapshot is bound to
-`85ce6a28360015148a86535ad9bc6f5bbfa5060f`. That SHA is a source-scope anchor for
+`db9640941cf25525ef9171e559adaa83a4f0cb8e`. That SHA is a source-scope anchor for
 the `src/**/*.py` hashes in `docs/current-source-ownership.json`, not a standing
 claim about the live repository HEAD. Later non-`src` commits do not invalidate
 the snapshot; any `src` mutation requires refreshing the ownership map with
@@ -108,6 +108,8 @@ invoker = exports.build_local_memory_capability_invoker(
     "/path/to/project", adapter=memory
 )
 ```
+
+Hosts that mount shared playbooks pass `build_runtime_exports(shared_playbook_root=Path(...))` (or `CapabilityPlanner(shared_playbook_root=...)`); without it, playbook-backed skill mounts record `SHARED_PLAYBOOK_ROOT_UNCONFIGURED` and no cwd or package path is searched.
 
 `ContextHub` and `ContextHubDependencies` are public assembly contracts. Core,
 Learning, Open SWE, Repository Intelligence, and host backends remain explicitly
