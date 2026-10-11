@@ -77,3 +77,18 @@ def test_no_kernel_module_references_generated_bindings():
         if "_nexus_generated_bindings" in Path(module.__file__).read_text(encoding="utf-8"):
             offenders.append(info.name)
     assert offenders == []
+
+
+def test_builds_do_not_share_mutable_constants():
+    first = nexus_runtime.build_runtime_exports()
+    second = nexus_runtime.build_runtime_exports()
+    mutable = [n for n in first.names() if isinstance(getattr(first, n), (dict, list, set))]
+    assert "ONLINE_CLI_SPEC_REGISTRY" in mutable
+    for name in mutable:
+        a, b = getattr(first, name), getattr(second, name)
+        assert a is not b, name
+        assert a == b, name
+    registry_a = first.ONLINE_CLI_SPEC_REGISTRY
+    registry_b = second.ONLINE_CLI_SPEC_REGISTRY
+    registry_a["__probe__"] = {}
+    assert "__probe__" not in registry_b

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import copy
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -128,7 +129,9 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
     for name in _BOUND_EXPORTS:
         values[name] = getattr(ctx, name)
     for name in _CONSTANT_EXPORTS:
-        values[name] = getattr(constants, name)
+        value = getattr(constants, name)
+        # Fresh copy per build so consumers mutating an exported container never leak into the next build.
+        values[name] = copy.deepcopy(value) if isinstance(value, (dict, list, set)) else value
     for module, names in _PLAIN_EXPORTS:
         for name in names:
             values[name] = getattr(module, name)
