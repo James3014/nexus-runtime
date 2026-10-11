@@ -122,6 +122,18 @@ def _ensure_selected_coverage_invokers(
     )
 
 
+def _planner_with_shared_playbook_root(root: Path):
+    class _RootedCapabilityPlanner(CapabilityPlanner):
+        def __init__(self, nodes=None):
+            super().__init__(nodes, shared_playbook_root=root)
+
+    # Keep the packaged planner's public identity (planner_binding symbol).
+    _RootedCapabilityPlanner.__module__ = CapabilityPlanner.__module__
+    _RootedCapabilityPlanner.__name__ = CapabilityPlanner.__name__
+    _RootedCapabilityPlanner.__qualname__ = CapabilityPlanner.__qualname__
+    return _RootedCapabilityPlanner
+
+
 def build_runtime_exports(
     *, policy_path: str | Path | None = None,
     default_capability_invokers: Mapping[str, Any] | None = None,
@@ -134,6 +146,7 @@ def build_runtime_exports(
     advisory_route_from_local_response: Any = None,
     hybrid_route_decision_from_payload: Any = None,
     memory_retrieval_builder: Any = None,
+    shared_playbook_root: str | Path | None = None,
 ):
     """Bind runtime implementations and optional explicit host capability adapters.
 
@@ -145,6 +158,10 @@ def build_runtime_exports(
     Host adapters must perform their own real effects and report their evidence.
     """
     host_defaults = dict(default_capability_invokers or {})
+    if shared_playbook_root is not None:
+        if planner_factory is not None:
+            raise ValueError("shared_playbook_root_conflicts_with_planner_factory")
+        planner_factory = _planner_with_shared_playbook_root(Path(shared_playbook_root))
 
     def selected_coverage(selected, existing, **kwargs):
         return _ensure_selected_coverage_invokers(

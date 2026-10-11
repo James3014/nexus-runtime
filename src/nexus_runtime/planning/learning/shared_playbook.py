@@ -14,7 +14,6 @@ SHARED_PLAYBOOK_SCHEMA = "nexus.shared_playbook.v1"
 PLAYBOOK_TRACE_SCHEMA = "nexus.playbook_trace.v1"
 PROMOTION_RECORD_SCHEMA = "nexus.shared_playbook.promotion_record.v1"
 PROMOTION_RECORD_FILENAME = "promotion_record.json"
-DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_SHARED_PLAYBOOK_IDS = frozenset({"diagnose"})
 KNOWN_SHARED_WORKER_PLAYBOOKS = frozenset({
     "diagnose",
@@ -127,7 +126,11 @@ def _sha256(data: bytes) -> str:
 
 
 def _repo_root(root: str | Path | None) -> Path:
-    return Path(root).resolve() if root is not None else DEFAULT_REPO_ROOT.resolve()
+    # Fail closed: never guess a search root (cwd or package location); an implicit root
+    # would let an attacker-controlled directory feed playbook data.
+    if root is None:
+        raise ValueError("shared_playbook root must be provided explicitly")
+    return Path(root).resolve()
 
 
 def _skill_paths(skill_id: str, *, root: str | Path | None = None) -> tuple[Path, Path, Path]:

@@ -76,7 +76,9 @@ def get_freshness_evidence(last_verified_str: str) -> dict[str, Any]:
 class WorkforcePolicyLoader:
     """Fail-closed loader and admission evaluator for the model workforce policy."""
 
-    DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[2] / "nexus/config/model_workforce.yaml"
+    # Packaged policy (planning/config/model_workforce.yaml); identical to
+    # ``planning.composition.BUNDLED_POLICY_PATH``. Hosts may pass ``policy_path``.
+    DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[1] / "config" / "model_workforce.yaml"
 
     def __init__(self, policy_path: str | Path | None = None) -> None:
         if policy_path is None:
