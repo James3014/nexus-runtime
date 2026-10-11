@@ -16,7 +16,11 @@ if TYPE_CHECKING:
 class UnifiedRuntimeRequest:
     """Inputs shared by every provider route for one task."""
 
-    _ctx: ClassVar[KernelContext]
+    # Bound per exports object by ``bind_class``. Declared for type checkers only:
+    # a runtime ClassVar annotation would appear in ``__dataclass_fields__`` and
+    # break consumers that rebuild a request from that mapping.
+    if TYPE_CHECKING:
+        _ctx: ClassVar[KernelContext]
 
     task_id: str
     workspace_revision: str
