@@ -1,11 +1,23 @@
-import hashlib, json, tempfile
+import hashlib, importlib, json, os, tempfile
 from pathlib import Path
 import pytest
 
-pytest.importorskip("nexus_learning")
-pytest.importorskip("product")
-pytest.importorskip("repository_intelligence")
-pytest.importorskip("nexus_open_swe_runtime")
+OWNER_REQUIRED = os.environ.get("NEXUS_OWNER_REQUIRED", "").strip() == "1"
+
+
+def _owner(name):
+    # Local runs skip when an owner package is absent. With NEXUS_OWNER_REQUIRED=1
+    # the same absence fails collection, because a skip is not PASS (AGENTS.md).
+    if not OWNER_REQUIRED:
+        return pytest.importorskip(name)
+    try:
+        return importlib.import_module(name)
+    except ImportError as exc:
+        raise AssertionError(f"OWNER_DEPENDENCY_MISSING: {name}: {exc}") from exc
+
+
+for _owner_name in ("nexus_learning", "product", "repository_intelligence", "nexus_open_swe_runtime"):
+    _owner(_owner_name)
 from nexus_runtime.support import build_runtime_exports
 from nexus_learning.episode_projection import project_learning_entries
 from repository_intelligence.impact import analyze_change_impact, verify_change_impact_report
