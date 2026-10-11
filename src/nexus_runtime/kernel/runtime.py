@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
+from .context import KernelContext, bind_class, bind_context
 from .ports import RuntimeBindings, require_complete_bindings
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +14,8 @@ class RuntimeExports:
 
 def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
     _nexus_generated_bindings = require_complete_bindings(bindings, RuntimeBindings)
+    ctx = KernelContext(_nexus_generated_bindings)
+    # --- kernel bindings ---
     plan_canonical_task_bundle = _nexus_generated_bindings.plan_canonical_task_bundle
     build_memory_retrieval_adapter = _nexus_generated_bindings.build_memory_retrieval_adapter
     """Canonical task-scoped runtime seam for Online and Local execution.
