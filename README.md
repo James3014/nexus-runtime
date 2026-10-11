@@ -68,6 +68,11 @@ It does **not** implicitly own or select:
 - arbitrary production host activation;
 - protected merge, release, or deployment authority.
 
+The planner source is owned by `nexus_runtime.planning` (with the canonical
+execution modules under `nexus_runtime.support`); Nexus-new aliases its planner
+modules to this package (Nexus-new PR #1789). Consumers pass the repository root
+explicitly (`shared_playbook_root`, `build_runtime_exports(shared_playbook_root=...)`).
+
 The package still contains planner/admission implementation lineage required by
 accepted callers. Planner algorithm-source convergence across repositories is a
 separate ownership task; this repository must not be treated as permission to

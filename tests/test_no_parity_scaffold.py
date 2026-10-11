@@ -20,6 +20,7 @@ REMOVED_PATHS = (
     "docs/planner-source-lineage.json",
     "scripts/ci/verify_planner_source_parity.py",
     "tests/test_planner_source_parity.py",
+    "tests/test_planner_source_parity_with_consumer.py",
     "tests/test_planner_origin_repository.py",
     "tests/_donor.py",
     "tests/test_donor_locator.py",
