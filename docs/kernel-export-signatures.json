@@ -26,6 +26,7 @@
         "_apply_budget_downgrade": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', scoring: 'CapabilityScoringConfig', max_cost: 'int', safety_floor: 'set[str] | None' = None) -> 'tuple[dict[str, str], dict[str, list[str]], list[str], int]'",
         "_apply_candidate_factory_readiness_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', route: 'dict[str, Any]') -> 'None'",
         "_apply_learning_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', learning_policy: 'dict[str, Any]', enable: 'Any') -> 'None'",
+        "_apply_mainchain_gate_policy": "(self, *, signals: 'Any', task_type: 'str', routing_tier: 'str', enable: 'Callable[[str, str], None]') -> 'None'",
         "_apply_mutation_assurance_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', route: 'dict[str, Any]') -> 'None'",
         "_apply_research_evidence_demand_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', signals: 'Any') -> 'None'",
         "_apply_route_cost_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', route_cost_policy: 'dict[str, Any]', protected_capabilities: 'set[str] | None' = None) -> 'None'",
@@ -42,6 +43,7 @@
         "_default_s2t_shadow_profile": "(signals: 'Any') -> 'str'",
         "_runtime_policy_overlay_skill_requests": "(*, budget: 'dict[str, Any]', selected_capabilities: 'list[str]') -> 'list[dict[str, str]]'",
         "_score_s2t_policy_draft": "(self, *, route: 'dict[str, Any]', signals: 'Any', states: 'dict[str, str]', s2t_policy_draft: 'dict[str, Any]') -> 'dict[str, Any]'",
+        "mainchain_gate_selection": "(*, signals: 'Any', task_type: 'str', routing_tier: 'str') -> 'dict[str, list[str]]'",
         "plan": "(self, *, execution_world: 'str' = 'product_runtime', task_desc: 'str', task_type: 'str', route: 'dict[str, Any]', pillars: 'dict[str, Any] | None' = None, codeintel: 'dict[str, Any] | None' = None, phase_trace: 'dict[str, Any] | None' = None, budget: 'dict[str, Any] | None' = None, skills: 'list[dict[str, Any]] | None' = None, replan_authorization: 'ExecutionReplanAuthorization | None' = None) -> 'CapabilityPlan'"
       },
       "signature": "(nodes: 'dict[str, CapabilityNode] | None' = None) -> 'None'"

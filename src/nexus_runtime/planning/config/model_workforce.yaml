@@ -8,10 +8,10 @@ benchmark_harness: scripts/bench/experimental/model_workforce_three_arm.py
 route_authority: CapabilityPlanner
 provider_policy:
   mode: REGISTERED_PROVIDER_OPEN
-  registered_providers: [codex, gemini, agy, grok, openai, opencode, mimo, ollama, cline]
+  registered_providers: [codex, gemini, agy, grok, openai, opencli_chatgpt, opencode, mimo, ollama, cline]
   model_identity_source: workers
   local_models_are_selectable: true
-  configured_model_families: [opencode, mimo, grok, ollama, cline]
+  configured_model_families: [opencli_chatgpt, opencode, mimo, grok, ollama, cline]
   explicit_model_identity_required: true
   unknown_provider_behavior: FAIL_CLOSED
   adapter_preflight_required: true
@@ -311,6 +311,30 @@ workers:
       conditional_ceiling: L3
       experimental_ceiling: L4
       experimental_l4_admitted: false
+  opencli_chatgpt_balanced_web:
+    provider: opencli_chatgpt
+    model: opencli_chatgpt/balanced
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    roles: [bounded_candidate_generation]
+    preferred_context: nexus_bounded
+    default_route: false
+    requires: [task_card, isolated_directory, parser, focused_tests, verifier, independent_verification]
+    transport_contract:
+      opencli_version: '1.8.7'
+      browser_bridge_version: '1.0.24'
+      window: foreground
+      site_session: ephemeral
+      enforcement: external_intelligence_activation_and_runtime_identity
+    forbidden_actions: [route_authority, approval, integration, push, fallback_substitution, release, production_claim, public_claim]
+    calibration_evidence:
+      status: OWNER_APPROVED_CAMPAIGN_CONDITIONAL
+      model_revision: UNRESOLVED_MUTABLE_UI_ALIAS
+      campaign: open-swe-resident-five-repo-canary-20260908
+      global_promotion: false
+      conditional_ceiling: L1
+      claim_ceiling: CANDIDATE_ONLY
   grok_review:
     provider: grok
     model: grok-4.5
@@ -667,6 +691,10 @@ routing:
     campaign_routing:
       CAMPAIGN-NEXUS-LEARNING-CANONICAL-WIRING-01:
         fast_bounded_implementation: agy_flash_37_medium
+      open-swe-resident-five-repo-canary-20260908:
+        bounded_candidate_generation: opencli_chatgpt_balanced_web
+      github-issue-982-wave-b-20260919:
+        bounded_candidate_generation: opencode_mimo_free
     main_engineering: codex_luna
     independent_review: grok_review
     complex_milestone: codex_luna_when_available

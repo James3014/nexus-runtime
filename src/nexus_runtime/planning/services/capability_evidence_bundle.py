@@ -16,7 +16,6 @@ import hashlib
 import json
 from typing import Any, Mapping
 
-
 BUNDLE_SCHEMA = "nexus.capability_evidence_bundle.v1"
 VERDICT_SCHEMA = "nexus.capability_evidence_bundle_verdict.v1"
 SOURCE_HASH_KIND = "workspace_revision_task_statement_v1"
@@ -88,6 +87,15 @@ _ALLOWLISTED_OUTCOME_KEYS = frozenset(
         "evidence_id",
         "fields",  # nested body of an already-built consumer_payload
         "schema",
+        # #1579: bounded RIE knowledge-applicability view (codeintel subtype).
+        "knowledge_applicability",
+        "relation_counts",
+        "affected_artifact_refs",
+        "uncovered_change_refs",
+        "evidence_gaps",
+        "claim_ceiling",
+        "rie_claim_ceiling",
+        "report_schema",
     }
 )
 # Keys that indicate a payload still has usable outcome content for consumers.
@@ -107,6 +115,7 @@ _USABLE_FIELD_KEYS = frozenset(
         "file_sample",
         "task_linked_hash",
         "evidence_id",
+        "knowledge_applicability",
     }
 )
 _FORBIDDEN_PAYLOAD_KEYS = frozenset(
@@ -273,8 +282,6 @@ def extract_bounded_consumer_payload(
         return {}
     name = str(capability or "").strip()
     maps = _collect_receipt_maps(stage, response)
-    resp = maps[1] if len(maps) > 1 else (maps[0] if maps else {})
-
     candidates: list[Any] = []
     for m in maps:
         for key in ("consumer_payload", "evidence", "outcome"):
@@ -353,6 +360,7 @@ def extract_bounded_consumer_payload(
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
     if len(encoded) > MAX_CONSUMER_PAYLOAD_CHARS:
         # Truncate fields summary to fit — keep usable action/result when present.
+        fields_ka = body.get("knowledge_applicability")
         body = {
             "capability": name,
             "markers": markers,
@@ -360,8 +368,16 @@ def extract_bounded_consumer_payload(
             "result": _bound_str(body.get("result") or body.get("summary") or "bounded", limit=200),
             "truncated": True,
         }
+        # Keep the bounded #1579 knowledge view when it still fits; it is the
+        # evidence the fallback would otherwise silently discard.
+        ka = fields_ka
+        if isinstance(ka, Mapping) and ka:
+            body["knowledge_applicability"] = ka
         payload["fields"] = body
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+        if len(encoded) > MAX_CONSUMER_PAYLOAD_CHARS and "knowledge_applicability" in body:
+            body.pop("knowledge_applicability")
+            encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
         if len(encoded) > MAX_CONSUMER_PAYLOAD_CHARS:
             return {}
     payload["payload_hash"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()

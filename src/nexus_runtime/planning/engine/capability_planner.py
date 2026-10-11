@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from nexus_runtime.planning.contracts.execution_identity import (
@@ -36,6 +37,20 @@ from nexus_runtime.planning.engine.route_signal_adapter import build_replan_trac
 from nexus_runtime.planning.research.isolation_policy import decide_research_isolation
 
 PENDING_EXECUTOR_CAPABILITIES: set[str] = set()
+
+# #1737: explicit, deterministic mainchain gate selection (single decision point).
+# Code-mutation task classes (after stripping a ``public_`` prefix) always select
+# pregate + plan_quality_gate; plain bug/test/docs classes only via risk signals.
+MAINCHAIN_CODE_MUTATION_TASK_CLASSES: frozenset[str] = frozenset({
+    "feature",
+    "refactor",
+    "code_change",
+    "repair",
+    "platform_integration",
+})
+MAINCHAIN_CODE_MUTATION_TASK_PREFIXES: tuple[str, ...] = ("cross_module_refactor",)
+MAINCHAIN_HIGH_RISK_SCORE = 60
+MAINCHAIN_MULTI_STEP_CANDIDATES = 3
 
 def _cost_tier(cost: int) -> str:
     if cost >= 5:
@@ -821,6 +836,12 @@ class CapabilityPlanner:
         )
         self._apply_mutation_assurance_policy(states=states, reasons=reasons, route=route)
         self._apply_candidate_factory_readiness_policy(states=states, reasons=reasons, route=route)
+        self._apply_mainchain_gate_policy(
+            signals=signals,
+            task_type=task_type,
+            routing_tier=routing_tier,
+            enable=enable,
+        )
         self._apply_route_oracle_expected_contract(states=states, reasons=reasons, signals=signals)
         self._apply_research_evidence_demand_policy(states=states, reasons=reasons, signals=signals)
         self._apply_simple_hidden_contract_policy(states=states, reasons=reasons, signals=signals)
@@ -1454,6 +1475,59 @@ class CapabilityPlanner:
             if cap in states and states[cap] != "required":
                 states[cap] = "conditional"
                 reasons[cap].append("mutation_assurance_blind_spot_escalation")
+
+    @staticmethod
+    def mainchain_gate_selection(
+        *, signals: Any, task_type: str, routing_tier: str
+    ) -> dict[str, list[str]]:
+        """Return {gate: [reasons]} for pregate/plan_quality_gate/forecast_gate (#1737).
+
+        Pure function of task class and risk signals; the only place that decides
+        when the mainchain selects these gates.
+        """
+        task_base = str(task_type or "").lower().removeprefix("public_")
+        code_mutation = task_base in MAINCHAIN_CODE_MUTATION_TASK_CLASSES or task_base.startswith(
+            MAINCHAIN_CODE_MUTATION_TASK_PREFIXES
+        )
+        risk_score = getattr(signals, "risk_score", 0)
+        high_risk = (
+            risk_score >= MAINCHAIN_HIGH_RISK_SCORE
+            or getattr(signals, "risk_band", "") in {"high", "critical"}
+            or routing_tier == "L3_swarm_deep"
+        )
+        multi_step = (
+            getattr(signals, "cross_module", False)
+            or getattr(signals, "candidate_count", 1) >= MAINCHAIN_MULTI_STEP_CANDIDATES
+            or routing_tier == "L3_swarm_deep"
+        )
+        selection: dict[str, list[str]] = {}
+        if code_mutation:
+            selection.setdefault("pregate", []).append("mainchain_code_mutation_task_class")
+            selection.setdefault("plan_quality_gate", []).append(
+                "mainchain_code_mutation_task_class"
+            )
+        if high_risk:
+            selection.setdefault("pregate", []).append("mainchain_high_risk")
+            selection.setdefault("plan_quality_gate", []).append("mainchain_high_risk")
+            selection.setdefault("forecast_gate", []).append("mainchain_high_risk")
+        if multi_step and (code_mutation or high_risk):
+            selection.setdefault("forecast_gate", []).append("mainchain_multi_step")
+        return selection
+
+    def _apply_mainchain_gate_policy(
+        self,
+        *,
+        signals: Any,
+        task_type: str,
+        routing_tier: str,
+        enable: Callable[[str, str], None],
+    ) -> None:
+        selection = self.mainchain_gate_selection(
+            signals=signals, task_type=task_type, routing_tier=routing_tier
+        )
+        for gate, gate_reasons in selection.items():
+            for reason in gate_reasons:
+                enable(gate, reason)
 
     def _build_ssd_route_map(
         self,

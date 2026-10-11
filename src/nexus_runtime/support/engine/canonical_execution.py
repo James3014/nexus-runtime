@@ -1,9 +1,4 @@
-"""Packaged compatibility CanonicalTaskContext -> CapabilityPlanner seam.
-
-Standalone Runtime qualification uses this package-owned implementation. Canonical
-hosts may bind a complete external planner family through the public Runtime
-composition boundary; this module does not mint route/capability authority.
-"""
+"""Pure CanonicalTaskContext -> CapabilityPlanner -> projection seam."""
 
 from __future__ import annotations
 
@@ -21,13 +16,13 @@ from nexus_runtime.planning.engine.capability_planner import CapabilityPlanner
 def plan_canonical_task(
     context: CanonicalTaskContext,
 ) -> tuple[ExecutionDecision, CanonicalExecutionProjection]:
-    """Invoke the packaged compatibility planner once and project its decision."""
+    """Invoke the sole planner once and project only its immutable decision."""
     bundle = plan_canonical_task_bundle(context)
     return bundle.decision, bundle.projection
 
 
 def plan_canonical_task_bundle(context: CanonicalTaskContext) -> CanonicalPlanningBundle:
-    """Invoke the packaged compatibility planner and bind its exact plan."""
+    """Invoke the sole planner once and bind its exact plan for runtime use."""
     return _plan_canonical_task_bundle(context)
 
 
@@ -35,7 +30,7 @@ def replan_canonical_task_bundle(
     context: CanonicalTaskContext,
     authorization: ExecutionReplanAuthorization,
 ) -> CanonicalPlanningBundle:
-    """Create one fresh compatibility plan from an explicit verifier-bound replan."""
+    """Create one fresh canonical plan from an explicit verifier-bound replan."""
     if not isinstance(authorization, ExecutionReplanAuthorization):
         raise TypeError("authorization_must_be_ExecutionReplanAuthorization")
     if authorization.task_id != context.task_id:
