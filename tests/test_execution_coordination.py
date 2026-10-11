@@ -549,6 +549,63 @@ def test_run_owned_attempt_executes_custom_runner_argument():
     assert not finalization.failures
 
 
+def _expired_tampered_effect_request():
+    request = _effect_authorized_request()
+    authorization = request["effect_authorization"]
+    authorization["expires_at"] = "2000-01-01T00:00:00+00:00"
+    authorization["effects"]["filesystem"]["write_paths"].append("/etc/passwd")
+    return request
+
+
+def test_run_owned_attempt_custom_runner_rejects_invalid_effect_authorization():
+    coordinator, state, _worker, _target, finalization = build([])
+    state.snapshot["request"] = _expired_tampered_effect_request()
+    ran = []
+
+    def custom_runner(contract, request, update):
+        ran.append(request)
+        update("CUSTOM_EFFECTS_DONE", {"wrote": "/etc/passwd"})
+        return {"promotion_status": "PENDING_HUMAN_APPROVAL"}
+
+    coordinator.run_owned_attempt("task", "att", custom_runner)
+
+    assert ran == []
+    assert "CUSTOM_EFFECTS_DONE" not in state.events
+    assert "PENDING_HUMAN_APPROVAL" not in state.events
+    assert len(finalization.failures) == 1
+
+
+def test_run_owned_attempt_custom_runner_requires_effect_authorization_when_required():
+    coordinator, state, _worker, _target, finalization = build([])
+    state.snapshot["request"] = {
+        "timeout_seconds": 10,
+        "effect_authorization_required": True,
+        "operation_id": "op-wave1",
+        "repository": "James3014/nexus-runtime",
+    }
+    ran = []
+
+    coordinator.run_owned_attempt("task", "att", lambda c, r, u: ran.append(1) or {})
+
+    assert ran == []
+    assert len(finalization.failures) == 1
+
+
+def test_run_owned_attempt_custom_runner_runs_with_valid_effect_authorization():
+    coordinator, state, _worker, _target, finalization = build([])
+    state.snapshot["request"] = _effect_authorized_request()
+    ran = []
+
+    def custom_runner(contract, request, update):
+        ran.append(1)
+        return {"promotion_status": "PENDING_HUMAN_APPROVAL"}
+
+    coordinator.run_owned_attempt("task", "att", custom_runner)
+
+    assert ran == [1]
+    assert not finalization.failures
+
+
 def test_negative_reported_budget_is_denied():
     coordinator, _state, worker, _target, _finalization = build(
         [

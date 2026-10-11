@@ -1489,6 +1489,19 @@ class ExecutionCoordinator:
                     task_id, attempt_id, contract=contract, request=state["request"]
                 )
             else:
+                # The custom runner performs effects too: enforce the same effect
+                # authorization gate as execute_attempt before it runs.
+                self._ensure_effect_authorization(
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    request=state["request"],
+                    state=state,
+                    allow_create=(
+                        str(state.get("status")) == "SUBMITTED"
+                        and not state.get("executions")
+                        and state.get("execution") is None
+                    ),
+                )
                 result = custom_runner(contract, state["request"], update)
                 result = self.finalization.bound_custom_runner_values(result)
             current = self.state.read_snapshot(task_id) or {}

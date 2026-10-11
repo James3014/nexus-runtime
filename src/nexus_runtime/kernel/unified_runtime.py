@@ -179,6 +179,10 @@ class UnifiedRuntime:
             record = effect_journal.get(str(binding.get("effect_id"))) if effect_journal is not None else None
             if not isinstance(record, Mapping) or any(record.get(k) != binding.get(k) for k in ("operation_id", "effect_id", "request_digest", "generation", "state", "result_digest", "project_root")):
                 raise ValueError("replan_effect_binding_mismatch")
+        # receipt bindings are outside receipt_hash lineage: consult the journal itself so a
+        # stripped receipt cannot turn an UNKNOWN/unresolved effect into blind retry permission.
+        if effect_journal is not None and effect_journal.unresolved_for_subject(str(request.task_id)):
+            raise ValueError("replan_effect_binding_incomplete")
 
         if str(previous_receipt.get("task_id", "")) != str(request.task_id):
             raise ValueError("replan_task_id_mismatch")
