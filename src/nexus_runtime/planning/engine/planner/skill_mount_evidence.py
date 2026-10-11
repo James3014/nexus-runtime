@@ -80,6 +80,7 @@ def build_skill_mount_evidence(
     skills: list[dict[str, Any]],
     budget: dict[str, Any],
     selected_capabilities: list[str],
+    shared_playbook_root: Path | None = None,
 ) -> dict[str, Any]:
     requested_skills = [
         skill
@@ -149,8 +150,22 @@ def build_skill_mount_evidence(
         if capability_mount.startswith("reference:"):
             capability_mount = capability_mount.removeprefix("reference:")
         planner_selected_capability = capability_mount in selected_set or overlay_request
+        if shared_playbook_root is None:
+            # Fail closed without crashing planning: never guess a root (cwd/package).
+            playbook_violations.append(
+                {
+                    "skill_name": skill_id,
+                    "path": entry.path,
+                    "reason": "SHARED_PLAYBOOK_ROOT_UNCONFIGURED",
+                    "capability_mount": capability_mount,
+                    "capability": capability_mount,
+                }
+            )
+            continue
         try:
-            shared_playbook = load_selected_shared_playbook(skill_id, capability_mount)
+            shared_playbook = load_selected_shared_playbook(
+                skill_id, capability_mount, root=shared_playbook_root
+            )
         except SharedPlaybookError as exc:
             playbook_violations.append(
                 {

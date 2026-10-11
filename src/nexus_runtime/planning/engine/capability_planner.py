@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from nexus_runtime.planning.contracts.execution_identity import (
@@ -702,8 +703,16 @@ def default_capability_nodes() -> dict[str, CapabilityNode]:
 class CapabilityPlanner:
     """Dry-run constrained planner for Nexus capability composition."""
 
-    def __init__(self, nodes: dict[str, CapabilityNode] | None = None) -> None:
+    def __init__(
+        self,
+        nodes: dict[str, CapabilityNode] | None = None,
+        *,
+        shared_playbook_root: Path | None = None,
+    ) -> None:
         self.nodes = nodes or default_capability_nodes()
+        # Explicit repository root for shared-playbook lookups; None records an
+        # unconfigured-root violation instead of guessing a search path.
+        self._shared_playbook_root = shared_playbook_root
 
     def plan(
         self,
@@ -1229,8 +1238,8 @@ class CapabilityPlanner:
             selected_capabilities=selected_capabilities,
         )
 
-    @staticmethod
     def _build_skill_mount_evidence(
+        self,
         *,
         skills: list[dict[str, Any]],
         budget: dict[str, Any],
@@ -1240,6 +1249,7 @@ class CapabilityPlanner:
             skills=skills,
             budget=budget,
             selected_capabilities=selected_capabilities,
+            shared_playbook_root=self._shared_playbook_root,
         )
 
     @staticmethod
