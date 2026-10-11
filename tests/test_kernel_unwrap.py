@@ -25,7 +25,11 @@ def _sig(fn):
 def _describe(obj):
     if inspect.isclass(obj):
         methods = {}
-        for name, member in sorted(vars(obj).items()):
+        # A class bound to the kernel context is a synthetic subclass; describe the class it wraps.
+        defining = vars(obj)
+        if type(defining.get("_ctx")).__name__ == "KernelContext":
+            defining = vars(obj.__mro__[1])
+        for name, member in sorted(defining.items()):
             if name.startswith("__") and name != "__init__":
                 continue
             fn = member.__func__ if isinstance(member, (staticmethod, classmethod)) else member
