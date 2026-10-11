@@ -852,7 +852,14 @@
       "donor": "repository-local Issue #81 bounded verifier-driven reconciliation source canary",
       "lineage_status": "integrated_pending_acceptance",
       "path": "nexus_runtime/task_retry/__init__.py",
-      "sha256": "6c37c9dda68bb53acc1f36ffb50b0858b41b41ce01a4a3ae3c4d8f87d8b67f2e"
+      "sha256": "2880c9cc17d564fed1ac10e9a22d01d4016be26ebe06937de58b0dcb8efa96cc"
+    },
+    {
+      "canonical_owner": "runtime task retry",
+      "donor": "Nexus-new nexus/orchestrator runtime_retry_bridge._Contract.maximum_attempts (Phase 5b-2; pure logic copied, Nexus-new keeps its own copy until cutover)",
+      "lineage_status": "integrated_pending_acceptance",
+      "path": "nexus_runtime/task_retry/attempt_budget.py",
+      "sha256": "d213dc1e550e0e096689dcf5dfbca62472090bb89aa18a89237ef9a34fb13032"
     },
     {
       "canonical_owner": "runtime retry/reconciliation",
@@ -867,6 +874,13 @@
       "lineage_status": "known",
       "path": "nexus_runtime/task_retry/ports.py",
       "sha256": "1f1dd1fcd710748380c4217a7371d48872a3ba3c3f9eaada820f47fccf93b0e2"
+    },
+    {
+      "canonical_owner": "runtime task retry",
+      "donor": "Nexus-new nexus/orchestrator self_hosted_task_service._retry_request identity minting (Phase 5b-2; pure logic copied, Nexus-new keeps its own copy until cutover)",
+      "lineage_status": "integrated_pending_acceptance",
+      "path": "nexus_runtime/task_retry/retry_identity.py",
+      "sha256": "ca9910c51d9a018b33e17291c37f1f65cb2926b3d4ffbcdec1066a24fdfe842c"
     },
     {
       "canonical_owner": "runtime retry/reconciliation",
@@ -885,7 +899,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "fb9cd2983d5476fe411be261bc10725a8b595d4f",
-  "source_tree": "e903200e16cac178e08c9f43aa36dc3b215651c0",
+  "source_head": "8c74199ae8244754a9dd476c13a307edbff8994f",
+  "source_tree": "ebb982cc56e65a6707c6243dc8684c3b885ce337",
   "unknown_lineage": []
 }
