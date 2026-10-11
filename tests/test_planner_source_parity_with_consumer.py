@@ -12,7 +12,20 @@ from pathlib import Path
 
 import pytest
 
-PKG = Path(__file__).resolve().parents[1] / "src" / "nexus_runtime"
+
+
+def _source_root() -> Path:
+    """Checkout root, or $GITHUB_WORKSPACE when tests are staged outside it."""
+    local_root = Path(__file__).resolve().parents[1]
+    if (local_root / "src" / "nexus_runtime").is_dir():
+        return local_root
+    github_workspace = os.environ.get("GITHUB_WORKSPACE")
+    if github_workspace:
+        return Path(github_workspace).resolve()
+    return local_root
+
+
+PKG = _source_root() / "src" / "nexus_runtime"
 _SUPPORT_PAIRS = ("support/contracts/canonical_execution.py", "support/engine/canonical_execution.py")
 
 
