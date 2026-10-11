@@ -32,6 +32,31 @@ def _consumer_path(rel: str) -> str:
     return "nexus/" + rel[len("support/"):]
 
 
+# Intentional, documented divergences: package-relative paths (see
+# tests/test_no_repo_relative_paths.py). Each maps the consumer's repo-relative
+# snippet to the runtime's package-relative replacement; the consumer copy is
+# rewritten before comparison so the rest of the file must still match exactly.
+_PATH_DIVERGENCES = {
+    "planning/services/model_workforce_policy.py": [(
+        'DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[2] / "nexus/config/model_workforce.yaml"',
+        "# Packaged policy (planning/config/model_workforce.yaml); identical to\n"
+        "    # ``planning.composition.BUNDLED_POLICY_PATH``. Hosts may pass ``policy_path``.\n"
+        '    DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[1] / "config" / "model_workforce.yaml"',
+    )],
+    "planning/learning/shared_playbook.py": [
+        ("DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]\n", ""),
+        (
+            "    return Path(root).resolve() if root is not None else DEFAULT_REPO_ROOT.resolve()",
+            "    # Fail closed: never guess a search root (cwd or package location); an implicit root\n"
+            "    # would let an attacker-controlled directory feed playbook data.\n"
+            "    if root is None:\n"
+            '        raise ValueError("shared_playbook root must be provided explicitly")\n'
+            "    return Path(root).resolve()",
+        ),
+    ],
+}
+
+
 def _normalize(text: str) -> str:
     return re.sub(r"nexus_runtime\.(?:planning|support)\.", "nexus.", text)
 
@@ -58,7 +83,11 @@ def test_pair_count_is_27():
 def test_runtime_source_matches_consumer_copy(rel):
     root = _consumer_root()
     runtime = _normalize((PKG / rel).read_text(encoding="utf-8"))
-    assert runtime == _show(root, _consumer_path(rel))
+    consumer = _show(root, _consumer_path(rel))
+    for old, new in _PATH_DIVERGENCES.get(rel, []):
+        assert old in consumer, f"stale divergence entry for {rel}"
+        consumer = consumer.replace(old, new)
+    assert runtime == consumer
 
 
 def test_model_workforce_yaml_matches_consumer_copy():
