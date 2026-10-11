@@ -19,7 +19,11 @@ Planner-binding compatibility modules.
 Planner/support candidates retain their own historical provenance. The
 planner source-parity scaffold and frozen-donor parity tests were retired in
 Phase 4a under owner decision D2; the packaged planner in this repository is the
-source owner. Core,
+source owner. The planner source is owned by `nexus_runtime.planning` (ownership
+map `canonical_owner: runtime planning`); Nexus-new aliases its planner modules
+to this package (Nexus-new PR #1789), and the consumer-parity test was retired
+with that alias change. Consumers pass the repository root explicitly
+(`shared_playbook_root`, `build_runtime_exports(shared_playbook_root=...)`). Core,
 Learning, Open SWE, and repository intelligence remain external owners.
 
 The public package also exports ContextHub, task-context assembly,
