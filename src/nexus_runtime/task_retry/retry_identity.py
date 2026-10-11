@@ -41,7 +41,9 @@ def mint_retry_identity(
 
     attempt_id = f"attempt-{token}"
     action_id = f"action-{token}"
-    previous_key = str(state.get("idempotency_key") or request.get("idempotency_key") or task_id)
+    previous_key = str(
+        state.get("idempotency_key") or request.get("idempotency_key") or task_id
+    )
     base_key = previous_key.split(":retry-", 1)[0]
     suffix = f":retry-{token}"
     idempotency_key = f"{base_key[: max(1, _MAX_KEY_LENGTH - len(suffix))]}{suffix}"

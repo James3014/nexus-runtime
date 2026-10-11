@@ -38,7 +38,10 @@ TOKEN = "abc123"
 
 
 def test_task_id_precedence_and_strip() -> None:
-    assert mint_retry_identity({"task_id": "s"}, {"task_id": "r"}, token=TOKEN).task_id == "s"
+    assert (
+        mint_retry_identity({"task_id": "s"}, {"task_id": "r"}, token=TOKEN).task_id
+        == "s"
+    )
     assert mint_retry_identity({}, {"task_id": "r"}, token=TOKEN).task_id == "r"
     assert mint_retry_identity({"task_id": "  s  "}, {}, token=TOKEN).task_id == "s"
 
@@ -50,13 +53,25 @@ def test_task_id_missing() -> None:
 
 
 def test_ids_and_key_sources() -> None:
-    ident = mint_retry_identity({"task_id": "t", "idempotency_key": "sk"}, {"idempotency_key": "rk"}, token=TOKEN)
+    ident = mint_retry_identity(
+        {"task_id": "t", "idempotency_key": "sk"},
+        {"idempotency_key": "rk"},
+        token=TOKEN,
+    )
     assert isinstance(ident, RetryIdentity)
     assert ident.attempt_id == "attempt-abc123"
     assert ident.action_id == "action-abc123"
     assert ident.idempotency_key == "sk:retry-abc123"
-    assert mint_retry_identity({"task_id": "t"}, {"idempotency_key": "rk"}, token=TOKEN).idempotency_key == "rk:retry-abc123"
-    assert mint_retry_identity({"task_id": "t"}, {}, token=TOKEN).idempotency_key == "t:retry-abc123"
+    assert (
+        mint_retry_identity(
+            {"task_id": "t"}, {"idempotency_key": "rk"}, token=TOKEN
+        ).idempotency_key
+        == "rk:retry-abc123"
+    )
+    assert (
+        mint_retry_identity({"task_id": "t"}, {}, token=TOKEN).idempotency_key
+        == "t:retry-abc123"
+    )
     assert ident.to_dict() == {
         "task_id": "t",
         "attempt_id": "attempt-abc123",
@@ -66,12 +81,16 @@ def test_ids_and_key_sources() -> None:
 
 
 def test_existing_retry_suffix_replaced() -> None:
-    ident = mint_retry_identity({"task_id": "t", "idempotency_key": "base:retry-OLD"}, {}, token=TOKEN)
+    ident = mint_retry_identity(
+        {"task_id": "t", "idempotency_key": "base:retry-OLD"}, {}, token=TOKEN
+    )
     assert ident.idempotency_key == "base:retry-abc123"
 
 
 def test_long_key_truncated_to_256() -> None:
-    ident = mint_retry_identity({"task_id": "t", "idempotency_key": "k" * 300}, {}, token=TOKEN)
+    ident = mint_retry_identity(
+        {"task_id": "t", "idempotency_key": "k" * 300}, {}, token=TOKEN
+    )
     assert len(ident.idempotency_key) == 256
     assert ident.idempotency_key.endswith(":retry-abc123")
 
@@ -90,7 +109,9 @@ def _reference_identity(state, request, token):
 
     attempt_id = f"attempt-{token}"
     action_id = f"action-{token}"
-    previous_key = str(state.get("idempotency_key") or request.get("idempotency_key") or task_id)
+    previous_key = str(
+        state.get("idempotency_key") or request.get("idempotency_key") or task_id
+    )
     base_key = previous_key.split(":retry-", 1)[0]
     suffix = f":retry-{token}"
     idempotency_key = f"{base_key[: max(1, 256 - len(suffix))]}{suffix}"
@@ -106,8 +127,16 @@ def test_equivalence_with_reference() -> None:
     ids = [None, "", " t1 ", "t2"]
     keys = [None, "", "k", "k:retry-x", "k:retry-x:retry-y", "z" * 300, ":retry-q"]
     for sid, rid, skey, rkey in itertools.product(ids, ids, keys, keys):
-        state = {k: v for k, v in (("task_id", sid), ("idempotency_key", skey)) if v is not None}
-        request = {k: v for k, v in (("task_id", rid), ("idempotency_key", rkey)) if v is not None}
+        state = {
+            k: v
+            for k, v in (("task_id", sid), ("idempotency_key", skey))
+            if v is not None
+        }
+        request = {
+            k: v
+            for k, v in (("task_id", rid), ("idempotency_key", rkey))
+            if v is not None
+        }
         try:
             expected = _reference_identity(state, request, "f" * 32)
         except ValueError as exc:
