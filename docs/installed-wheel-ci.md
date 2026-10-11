@@ -10,7 +10,7 @@ commit/tree, interpreter, installed module path, dependency identities, export
 names, and JUnit results.
 
 The dependency file pins the build/test tools; the workflow then installs the
-Learning owner at commit `d09f05b942f35236562ae26e7b718d111368b0b1` with build
+Learning owner at commit `1eb7229366b2856d6691c76236a50c5380dcf7d3` with build
 isolation disabled after those pins are present. It does not check out or
 install Nexus-new and makes no provider or model calls. The supported CI claim
 is POSIX on Python 3.11; Windows and other Python versions are untested.
@@ -32,7 +32,7 @@ separate environment. The reviewed source pins are nexus-core
 `e0e04fc78b48a5c1c7fa539fe014202c7ce1788e`, repository-intelligence
 `a8b9a00a6f3ea3e9ade0c6ef494d0fa88a2d73b2`, nexus-open-swe-runtime
 `7f834e24365988c90c4e3e6b0d0f164a5e8c897c`, and Learning
-`d09f05b942f35236562ae26e7b718d111368b0b1`. After a reviewed transitive pin
+`1eb7229366b2856d6691c76236a50c5380dcf7d3`. After a reviewed transitive pin
 manifest is installed, run
 `python -c 'import nexus_open_swe_runtime, repository_intelligence, product, nexus_learning'`,
 then `pytest --strict-markers --junitxml=owner.xml tests/integration/test_owner_workflow.py`
