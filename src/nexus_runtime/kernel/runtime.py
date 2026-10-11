@@ -17,6 +17,8 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
     ctx = KernelContext(_nexus_generated_bindings)
     # --- constants ---
     from .constants import REQUEST_SCHEMA, RECEIPT_SCHEMA, LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA, RUNTIME_WORKFORCE_ADMISSION_SCHEMA, RUNTIME_WORKFORCE_ADMISSION_RECORD_SCHEMA, WORKFORCE_ADMISSION_DECISION_SCHEMA, GATEWAY_INVOCATION_AUTHORITY_SCHEMA, ONLINE_CLI_SPEC_REGISTRY, REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS, REGISTERED_CLI_MODEL_BINDING_FLAGS, LOCAL_ONLY_PROVIDERS, TRANSPORT_STRUCTURED_CALLABLE, TRANSPORT_REGISTERED_CLI, TRANSPORT_GATEWAY_COMPATIBILITY, TRANSPORT_UNRESOLVED, SELECTION_EXPLICIT_REQUEST, SELECTION_INJECTED_TRANSPORT, SELECTION_ENVIRONMENT_DEFAULT, SELECTION_COMPATIBILITY_DEFAULT, SELECTION_PLANNER
+    # --- identity ---
+    from .identity import _required_identity, _optional_identity, _safe_task_id, _hash_json, _mapping
     # --- kernel bindings ---
     plan_canonical_task_bundle = _nexus_generated_bindings.plan_canonical_task_bundle
     build_memory_retrieval_adapter = _nexus_generated_bindings.build_memory_retrieval_adapter
@@ -383,17 +385,6 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
     # Local-only providers may appear on Gateway defaults (auto-detect) but are not
     # Online CLI registry members. They must not be promoted into Online route.provider
     # merely because they are locally available.
-
-
-    def _required_identity(value: Any, field_name: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"{field_name}_missing")
-        return value
-
-
-    def _optional_identity(value: Any) -> str:
-        text = value if isinstance(value, str) else str(value or "")
-        return text if text.strip() else ""
 
 
     def _registered_cli_model_binding_failure(
@@ -903,18 +894,6 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
         )
 
 
-    def _safe_task_id(value: str) -> str:
-        raw = str(value or "").strip()
-        if not raw or any(char in raw for char in "/\\\x00"):
-            raise ValueError("task_id_invalid")
-        return raw
-
-
-    def _hash_json(value: Any) -> str:
-        encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
     def _validate_workforce_route(route: Mapping[str, Any]) -> None:
         """Validate runtime workforce control flags before Planner or policy load."""
         for field_name in ("workforce_admission_enabled", "workforce_rebind_authorized"):
@@ -1312,17 +1291,6 @@ def build_runtime(bindings: RuntimeBindings) -> RuntimeExports:
             "verifier_status": "not_applicable",
             "receipt_path": receipt_path,
         }
-
-
-    def _mapping(value: Any) -> dict[str, Any]:
-        if isinstance(value, Mapping):
-            return dict(value)
-        to_dict = getattr(value, "to_dict", None)
-        if callable(to_dict):
-            converted = to_dict()
-            if isinstance(converted, Mapping):
-                return dict(converted)
-        return {"status": "FAILED", "error": "stage_result_not_mapping"}
 
 
     def _capability_evidence_summary(results: Mapping[str, Any]) -> dict[str, Any]:
