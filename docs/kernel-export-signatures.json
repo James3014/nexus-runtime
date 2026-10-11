@@ -1,0 +1,384 @@
+{
+  "exports": {
+    "CanonicalPlanningBundle": {
+      "kind": "class",
+      "methods": {
+        "__init__": "(self, context: 'CanonicalTaskContext', decision: 'ExecutionDecision', projection: 'CanonicalExecutionProjection', plan_payload: 'Mapping[str, Any]', schema: 'str' = 'nexus.canonical_planning_bundle.v1') -> None",
+        "from_dict": "(cls, value: 'Mapping[str, Any]') -> \"'CanonicalPlanningBundle'\"",
+        "to_dict": "(self) -> 'dict[str, Any]'"
+      },
+      "signature": "(context: 'CanonicalTaskContext', decision: 'ExecutionDecision', projection: 'CanonicalExecutionProjection', plan_payload: 'Mapping[str, Any]', schema: 'str' = 'nexus.canonical_planning_bundle.v1') -> None"
+    },
+    "CanonicalTaskContext": {
+      "kind": "class",
+      "methods": {
+        "__init__": "(self, schema: 'str' = 'nexus.canonical_task_context.v2', task_id: 'str' = '', task_type: 'str' = '', task_desc: 'str' = '', execution_world: 'str' = 'product_runtime', transport_ingress: 'str' = 'direct', execution_channels: 'tuple[str, ...]' = ('online',), task_facts: 'Mapping[str, Any]' = <factory>, authority_inputs: 'Mapping[str, Any]' = <factory>, route_features: 'Mapping[str, Any]' = <factory>, pillars: 'Mapping[str, Any]' = <factory>, codeintel: 'Mapping[str, Any]' = <factory>, phase_trace: 'Mapping[str, Any]' = <factory>, budget: 'Mapping[str, Any]' = <factory>) -> None",
+        "from_dict": "(cls, value: 'Mapping[str, Any]') -> \"'CanonicalTaskContext'\"",
+        "planner_inputs": "(self) -> 'dict[str, Any]'",
+        "to_dict": "(self) -> 'dict[str, Any]'"
+      },
+      "signature": "(schema: 'str' = 'nexus.canonical_task_context.v2', task_id: 'str' = '', task_type: 'str' = '', task_desc: 'str' = '', execution_world: 'str' = 'product_runtime', transport_ingress: 'str' = 'direct', execution_channels: 'tuple[str, ...]' = ('online',), task_facts: 'Mapping[str, Any]' = <factory>, authority_inputs: 'Mapping[str, Any]' = <factory>, route_features: 'Mapping[str, Any]' = <factory>, pillars: 'Mapping[str, Any]' = <factory>, codeintel: 'Mapping[str, Any]' = <factory>, phase_trace: 'Mapping[str, Any]' = <factory>, budget: 'Mapping[str, Any]' = <factory>) -> None"
+    },
+    "CapabilityPlanner": {
+      "kind": "class",
+      "methods": {
+        "__init__": "(self, nodes: 'dict[str, CapabilityNode] | None' = None) -> 'None'",
+        "_apply_budget_downgrade": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', scoring: 'CapabilityScoringConfig', max_cost: 'int', safety_floor: 'set[str] | None' = None) -> 'tuple[dict[str, str], dict[str, list[str]], list[str], int]'",
+        "_apply_candidate_factory_readiness_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', route: 'dict[str, Any]') -> 'None'",
+        "_apply_learning_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', learning_policy: 'dict[str, Any]', enable: 'Any') -> 'None'",
+        "_apply_mutation_assurance_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', route: 'dict[str, Any]') -> 'None'",
+        "_apply_research_evidence_demand_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', signals: 'Any') -> 'None'",
+        "_apply_route_cost_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', route_cost_policy: 'dict[str, Any]', protected_capabilities: 'set[str] | None' = None) -> 'None'",
+        "_apply_route_oracle_expected_contract": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', signals: 'Any') -> 'None'",
+        "_apply_s2t_policy_promotion": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', s2t_shadow_score: 'dict[str, Any]', safety_floor: 'set[str]') -> 'None'",
+        "_apply_simple_hidden_contract_policy": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', signals: 'Any') -> 'None'",
+        "_budget_safety_floor": "(*, signals: 'Any', routing_tier: 'str') -> 'set[str]'",
+        "_build_context_slimming_policy": "(self, *, states: 'dict[str, str]', signals: 'Any', routing_tier: 'str') -> 'dict[str, Any]'",
+        "_build_skill_mount_evidence": "(*, skills: 'list[dict[str, Any]]', budget: 'dict[str, Any]', selected_capabilities: 'list[str]') -> 'dict[str, Any]'",
+        "_build_ssd_route_map": "(self, *, states: 'dict[str, str]', reasons: 'dict[str, list[str]]', signals: 'Any', routing_tier: 'str', total_cost: 'int') -> 'dict[str, Any]'",
+        "_build_workforce_demands": "(*, task_desc: 'str', task_type: 'str', route: 'dict[str, Any]', signals: 'Any') -> 'WorkforceDemands'",
+        "_decide_execution_topology": "(route: 'dict[str, Any]') -> 'str'",
+        "_decide_routing_tier": "(signals: 'Any') -> 'tuple[str, str]'",
+        "_default_s2t_shadow_profile": "(signals: 'Any') -> 'str'",
+        "_runtime_policy_overlay_skill_requests": "(*, budget: 'dict[str, Any]', selected_capabilities: 'list[str]') -> 'list[dict[str, str]]'",
+        "_score_s2t_policy_draft": "(self, *, route: 'dict[str, Any]', signals: 'Any', states: 'dict[str, str]', s2t_policy_draft: 'dict[str, Any]') -> 'dict[str, Any]'",
+        "plan": "(self, *, execution_world: 'str' = 'product_runtime', task_desc: 'str', task_type: 'str', route: 'dict[str, Any]', pillars: 'dict[str, Any] | None' = None, codeintel: 'dict[str, Any] | None' = None, phase_trace: 'dict[str, Any] | None' = None, budget: 'dict[str, Any] | None' = None, skills: 'list[dict[str, Any]] | None' = None, replan_authorization: 'ExecutionReplanAuthorization | None' = None) -> 'CapabilityPlan'"
+      },
+      "signature": "(nodes: 'dict[str, CapabilityNode] | None' = None) -> 'None'"
+    },
+    "EXECUTION_DEPTH_FULL": {
+      "kind": "value",
+      "type": "str"
+    },
+    "EXECUTION_DEPTH_LIGHT": {
+      "kind": "value",
+      "type": "str"
+    },
+    "EXECUTION_DEPTH_STANDARD": {
+      "kind": "value",
+      "type": "str"
+    },
+    "ExecutionReplanAuthorization": {
+      "kind": "class",
+      "methods": {
+        "__init__": "(self, schema: 'str' = 'nexus.execution_replan_authorization.v1', task_id: 'str' = '', workspace_revision: 'str' = '', source_planner_decision_id: 'str' = '', source_replan_request_id: 'str' = '', source_receipt_hash: 'str' = '', source_run_anchor_hash: 'str' = '', requested_execution_depth: 'str' = '', attempt_number: 'int' = 2, max_attempts: 'int' = 2) -> None",
+        "to_dict": "(self) -> 'dict[str, Any]'"
+      },
+      "signature": "(schema: 'str' = 'nexus.execution_replan_authorization.v1', task_id: 'str' = '', workspace_revision: 'str' = '', source_planner_decision_id: 'str' = '', source_replan_request_id: 'str' = '', source_receipt_hash: 'str' = '', source_run_anchor_hash: 'str' = '', requested_execution_depth: 'str' = '', attempt_number: 'int' = 2, max_attempts: 'int' = 2) -> None"
+    },
+    "GATEWAY_INVOCATION_AUTHORITY_SCHEMA": {
+      "kind": "value",
+      "type": "str"
+    },
+    "LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA": {
+      "kind": "value",
+      "type": "str"
+    },
+    "LOCAL_ONLY_PROVIDERS": {
+      "kind": "value",
+      "type": "frozenset"
+    },
+    "ONLINE_CLI_SPEC_REGISTRY": {
+      "kind": "value",
+      "type": "dict"
+    },
+    "OnlineCliSpec": {
+      "kind": "class",
+      "methods": {
+        "__init__": "(self, provider: 'str', command: 'tuple[str, ...]', timeout_sec: 'float' = 120.0, working_directory: 'str' = '', model_name: 'str' = '') -> None",
+        "validate": "(self) -> 'None'"
+      },
+      "signature": "(provider: 'str', command: 'tuple[str, ...]', timeout_sec: 'float' = 120.0, working_directory: 'str' = '', model_name: 'str' = '') -> None"
+    },
+    "OnlineTransportBinding": {
+      "kind": "class",
+      "methods": {
+        "__init__": "(self, execution_role: 'str', provider: 'str', transport: 'str', selection_source: 'str', resolution_error: 'str' = '', use_gateway_structured: 'bool' = False, use_registered_cli: 'bool' = False) -> None",
+        "to_dict": "(self) -> 'dict[str, Any]'"
+      },
+      "signature": "(execution_role: 'str', provider: 'str', transport: 'str', selection_source: 'str', resolution_error: 'str' = '', use_gateway_structured: 'bool' = False, use_registered_cli: 'bool' = False) -> None"
+    },
+    "RECEIPT_SCHEMA": {
+      "kind": "value",
+      "type": "str"
+    },
+    "REGISTERED_CLI_MODEL_BINDING_FLAGS": {
+      "kind": "value",
+      "type": "dict"
+    },
+    "REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS": {
+      "kind": "value",
+      "type": "frozenset"
+    },
+    "REQUEST_SCHEMA": {
+      "kind": "value",
+      "type": "str"
+    },
+    "RUNTIME_WORKFORCE_ADMISSION_RECORD_SCHEMA": {
+      "kind": "value",
+      "type": "str"
+    },
+    "RUNTIME_WORKFORCE_ADMISSION_SCHEMA": {
+      "kind": "value",
+      "type": "str"
+    },
+    "RuntimeWorkforceAdmissionRecord": {
+      "kind": "class",
+      "methods": {
+        "__init__": "(self, schema: 'str', demand: 'Mapping[str, Any]', request: 'Mapping[str, Any]', decision: 'Mapping[str, Any]', binding_hash: 'str') -> None",
+        "to_dict": "(self) -> 'dict[str, Any]'"
+      },
+      "signature": "(schema: 'str', demand: 'Mapping[str, Any]', request: 'Mapping[str, Any]', decision: 'Mapping[str, Any]', binding_hash: 'str') -> None"
+    },
+    "SELECTION_COMPATIBILITY_DEFAULT": {
+      "kind": "value",
+      "type": "str"
+    },
+    "SELECTION_ENVIRONMENT_DEFAULT": {
+      "kind": "value",
+      "type": "str"
+    },
+    "SELECTION_EXPLICIT_REQUEST": {
+      "kind": "value",
+      "type": "str"
+    },
+    "SELECTION_INJECTED_TRANSPORT": {
+      "kind": "value",
+      "type": "str"
+    },
+    "SELECTION_PLANNER": {
+      "kind": "value",
+      "type": "str"
+    },
+    "TRANSPORT_GATEWAY_COMPATIBILITY": {
+      "kind": "value",
+      "type": "str"
+    },
+    "TRANSPORT_REGISTERED_CLI": {
+      "kind": "value",
+      "type": "str"
+    },
+    "TRANSPORT_STRUCTURED_CALLABLE": {
+      "kind": "value",
+      "type": "str"
+    },
+    "TRANSPORT_UNRESOLVED": {
+      "kind": "value",
+      "type": "str"
+    },
+    "UnifiedRuntime": {
+      "kind": "class",
+      "methods": {
+        "run": "(self, request: 'Any', **kwargs: 'Any') -> 'Any'",
+        "run_replan": "(self, previous_receipt: 'Mapping[str, Any]', request: 'Any', **kwargs: 'Any') -> 'Any'"
+      },
+      "signature": "(*, planner: 'CapabilityPlanner | None' = None, local_service: 'Any' = None, workforce_policy_loader: 'Any' = None, consumer_ports: 'Any' = None) -> 'None'"
+    },
+    "UnifiedRuntimeRequest": {
+      "kind": "class",
+      "methods": {
+        "__init__": "(self, task_id: 'str', workspace_revision: 'str', task_statement: 'str', task_type: 'str', route: 'Mapping[str, Any]', online_enabled: 'bool' = True, local_enabled: 'bool' = False, online_prompt: 'str' = '', online_payload: 'str' = '', online_phase: 'str' = 'R', online_model_name: 'str | None' = None, online_output_schema: 'Mapping[str, Any] | None' = None, pillars: 'Mapping[str, Any]' = <factory>, codeintel: 'Mapping[str, Any]' = <factory>, phase_trace: 'Mapping[str, Any]' = <factory>, budget: 'Mapping[str, Any]' = <factory>, skills: 'tuple[Mapping[str, Any], ...]' = (), local_request: 'Any' = None, evidence_refs: 'tuple[str, ...]' = (), canonical_context: 'Mapping[str, Any] | None' = None, canonical_planning_bundle: 'CanonicalPlanningBundle | None' = None, schema: 'str' = 'nexus.unified_runtime.request.v1') -> None",
+        "validate": "(self) -> 'None'"
+      },
+      "signature": "(task_id: 'str', workspace_revision: 'str', task_statement: 'str', task_type: 'str', route: 'Mapping[str, Any]', online_enabled: 'bool' = True, local_enabled: 'bool' = False, online_prompt: 'str' = '', online_payload: 'str' = '', online_phase: 'str' = 'R', online_model_name: 'str | None' = None, online_output_schema: 'Mapping[str, Any] | None' = None, pillars: 'Mapping[str, Any]' = <factory>, codeintel: 'Mapping[str, Any]' = <factory>, phase_trace: 'Mapping[str, Any]' = <factory>, budget: 'Mapping[str, Any]' = <factory>, skills: 'tuple[Mapping[str, Any], ...]' = (), local_request: 'Any' = None, evidence_refs: 'tuple[str, ...]' = (), canonical_context: 'Mapping[str, Any] | None' = None, canonical_planning_bundle: 'CanonicalPlanningBundle | None' = None, schema: 'str' = 'nexus.unified_runtime.request.v1') -> None"
+    },
+    "WORKFORCE_ADMISSION_DECISION_SCHEMA": {
+      "kind": "value",
+      "type": "str"
+    },
+    "WorkforcePolicyLoader": {
+      "kind": "callable",
+      "signature": "()"
+    },
+    "_capability_evidence_summary": {
+      "kind": "callable",
+      "signature": "(results: 'Mapping[str, Any]') -> 'dict[str, Any]'"
+    },
+    "apply_execution_depth_floor": {
+      "kind": "callable",
+      "signature": "(current_depth: 'str', requested_floor: 'str') -> 'str'"
+    },
+    "attach_failure_diagnostics": {
+      "kind": "callable",
+      "signature": "(receipt: 'dict[str, Any]') -> 'dict[str, Any]'"
+    },
+    "attach_r3_receipt_base": {
+      "kind": "callable",
+      "signature": "(receipt: 'dict[str, Any]', *, stage_hashes: 'Sequence[str] | None' = None, consumption_chain: 'Sequence[Mapping[str, Any]] | None' = None) -> 'dict[str, Any]'"
+    },
+    "build_canonical_runtime_context": {
+      "kind": "callable",
+      "signature": "(request: 'UnifiedRuntimeRequest') -> 'CanonicalTaskContext'"
+    },
+    "build_execution_attempt_id": {
+      "kind": "callable",
+      "signature": "(*, task_id: 'str', workspace_revision: 'str', attempt_number: 'int', parent_receipt_hash: 'str', source_replan_request_id: 'str', planner_decision_id: 'str', execution_depth: 'str') -> 'str'"
+    },
+    "build_execution_replan_request": {
+      "kind": "callable",
+      "signature": "(*, task_id: 'str', planner_decision_id: 'str', current_execution_depth: 'str', verifier_stage: 'Mapping[str, Any] | None') -> 'dict[str, Any]'"
+    },
+    "build_local_ast_capability_invoker": {
+      "kind": "callable",
+      "signature": "(project_root: 'str | Path', *, max_files: 'int' = 5) -> 'Callable[[Mapping[str, Any]], dict[str, Any]]'"
+    },
+    "build_local_memory_capability_invoker": {
+      "kind": "callable",
+      "signature": "(project_root: 'str | Path', *, adapter: 'Any' = None, limit: 'int' = 5) -> 'Callable[[Mapping[str, Any]], dict[str, Any]]'"
+    },
+    "build_local_search_ranking_capability_invoker": {
+      "kind": "callable",
+      "signature": "(project_root: 'str | Path', *, adapter: 'Any' = None, limit: 'int' = 5) -> 'Callable[[Mapping[str, Any]], dict[str, Any]]'"
+    },
+    "build_memory_retrieval_adapter": {
+      "kind": "callable",
+      "signature": "(project_root: 'str | Path', *, local_path: 'str | Path | None' = None, findings_store: 'Any' = None, repository: 'Any' = None, projection_port: 'Any' = None, lessons_path: 'str | Path | None' = None)"
+    },
+    "build_online_route": {
+      "kind": "callable",
+      "signature": "(*, recommended_flow: 'str' = 'direct', gateway_provider: 'str' = '', explicit_provider: 'str' = '', local_enabled: 'bool' = False, selection_source: 'str' = '') -> 'dict[str, Any]'"
+    },
+    "build_prompt_compression_capability_invoker": {
+      "kind": "callable",
+      "signature": "(*, max_chars: 'int' = 4096) -> 'Callable[[Mapping[str, Any]], dict[str, Any]]'"
+    },
+    "build_registered_online_invoker": {
+      "kind": "callable",
+      "signature": "(provider: 'str', *, command: 'tuple[str, ...] | list[str] | str | None' = None, model_name: 'str | None' = None, timeout_sec: 'float' = 120.0, environ: 'Mapping[str, str] | None' = None, runner: 'Callable[..., Any]' = <function run at 0x?>, include_local_context: 'bool' = True, working_directory: 'str' = '') -> 'Callable[[Mapping[str, Any]], dict[str, Any]]'"
+    },
+    "build_structured_online_invoker": {
+      "kind": "callable",
+      "signature": "(ask_structured: 'Callable[..., Any]', *, phase: 'str' = 'R', model_name: 'str | None' = None, output_schema: 'Mapping[str, Any] | None' = None, provider: 'str' = 'gateway', transport: 'str' = 'structured_callable', selection_source: 'str' = 'explicit_request') -> 'Callable[[Mapping[str, Any]], dict[str, Any]]'"
+    },
+    "build_subprocess_online_invoker": {
+      "kind": "callable",
+      "signature": "(spec: 'OnlineCliSpec', *, runner: 'Callable[..., Any]' = <function run at 0x?>, include_local_context: 'bool' = True) -> 'Callable[[Mapping[str, Any]], dict[str, Any]]'"
+    },
+    "canonical_execution_identity": {
+      "kind": "callable",
+      "signature": "(bundle: 'CanonicalPlanningBundle') -> 'dict[str, Any]'"
+    },
+    "evaluate_runtime_workforce_admission": {
+      "kind": "callable",
+      "signature": "(raw_demands: 'Any', workforce_bindings: 'Mapping[str, Any]', policy_loader: 'Any') -> 'RuntimeWorkforceAdmissionResult'"
+    },
+    "execution_replan_request_authority_projection": {
+      "kind": "callable",
+      "signature": "(value: 'Mapping[str, Any]') -> 'dict[str, Any]'"
+    },
+    "extract_online_stage_payload": {
+      "kind": "callable",
+      "signature": "(online_stage: 'Mapping[str, Any] | None') -> 'tuple[Any, str, dict[str, Any]]'"
+    },
+    "materialize_selected_capability_evidence": {
+      "kind": "callable",
+      "signature": "(*, planner_output: 'Mapping[str, Any]', selected_capabilities: 'list[str]', task_id: 'str', task_statement: 'str', workspace_revision: 'str', plan_hash: 'str', planner_decision_id: 'str', capability_invokers: 'Mapping[str, Any] | None', capability_context: 'Mapping[str, Any] | None' = None, codeintel: 'Mapping[str, Any] | None' = None) -> 'tuple[dict[str, dict[str, Any]], dict[str, Any]]'"
+    },
+    "next_execution_depth_after_failure": {
+      "kind": "callable",
+      "signature": "(current_depth: 'str') -> 'str'"
+    },
+    "normalize_online_invoker_payload": {
+      "kind": "callable",
+      "signature": "(*, provider: 'str', task_id: 'str', invoked: 'bool', output_delivered: 'bool', gate_passed: 'bool', provider_call_count: 'int', response: 'Any' = '', raw_response: 'str' = '', usage: 'Mapping[str, Any] | None' = None, error: 'str' = '', evidence_refs: 'list[str] | None' = None, transport: 'str' = '', selection_source: 'str' = '', execution_role: 'str' = 'online', extra: 'Mapping[str, Any] | None' = None) -> 'dict[str, Any]'"
+    },
+    "online_payload_indicates_non_delivery": {
+      "kind": "callable",
+      "signature": "(payload: 'Mapping[str, Any] | None') -> 'bool'"
+    },
+    "plan_canonical_task_bundle": {
+      "kind": "callable",
+      "signature": "(context: 'CanonicalTaskContext') -> 'CanonicalPlanningBundle'"
+    },
+    "planner_binding": {
+      "kind": "value",
+      "type": "PlannerBinding"
+    },
+    "replan_canonical_task_bundle": {
+      "kind": "callable",
+      "signature": "(context: 'CanonicalTaskContext', authorization: 'ExecutionReplanAuthorization') -> 'CanonicalPlanningBundle'"
+    },
+    "resolve_online_transport_binding": {
+      "kind": "callable",
+      "signature": "(*, has_explicit_invoker: 'bool' = False, structured_transport_injected: 'bool' = False, route_provider: 'str' = '', gateway_provider: 'str' = '') -> 'OnlineTransportBinding'"
+    },
+    "resolve_registered_online_cli_spec": {
+      "kind": "callable",
+      "signature": "(provider: 'str', *, command: 'tuple[str, ...] | list[str] | str | None' = None, model_name: 'str | None' = None, timeout_sec: 'float' = 120.0, environ: 'Mapping[str, str] | None' = None, working_directory: 'str' = '') -> 'OnlineCliSpec'"
+    },
+    "resolve_registered_provider_executable": {
+      "kind": "callable",
+      "signature": "(provider: 'str', *, environ: 'Mapping[str, str] | None' = None) -> 'str'"
+    },
+    "validate_receipt_base": {
+      "kind": "callable",
+      "signature": "(receipt_or_base: 'Mapping[str, Any] | None', *, mode: 'str' = 'compatibility', raise_on_error: 'bool' = False) -> 'dict[str, Any]'"
+    }
+  },
+  "names": [
+    "CanonicalPlanningBundle",
+    "CanonicalTaskContext",
+    "CapabilityPlanner",
+    "EXECUTION_DEPTH_FULL",
+    "EXECUTION_DEPTH_LIGHT",
+    "EXECUTION_DEPTH_STANDARD",
+    "ExecutionReplanAuthorization",
+    "GATEWAY_INVOCATION_AUTHORITY_SCHEMA",
+    "LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA",
+    "LOCAL_ONLY_PROVIDERS",
+    "ONLINE_CLI_SPEC_REGISTRY",
+    "OnlineCliSpec",
+    "OnlineTransportBinding",
+    "RECEIPT_SCHEMA",
+    "REGISTERED_CLI_MODEL_BINDING_FLAGS",
+    "REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS",
+    "REQUEST_SCHEMA",
+    "RUNTIME_WORKFORCE_ADMISSION_RECORD_SCHEMA",
+    "RUNTIME_WORKFORCE_ADMISSION_SCHEMA",
+    "RuntimeWorkforceAdmissionRecord",
+    "SELECTION_COMPATIBILITY_DEFAULT",
+    "SELECTION_ENVIRONMENT_DEFAULT",
+    "SELECTION_EXPLICIT_REQUEST",
+    "SELECTION_INJECTED_TRANSPORT",
+    "SELECTION_PLANNER",
+    "TRANSPORT_GATEWAY_COMPATIBILITY",
+    "TRANSPORT_REGISTERED_CLI",
+    "TRANSPORT_STRUCTURED_CALLABLE",
+    "TRANSPORT_UNRESOLVED",
+    "UnifiedRuntime",
+    "UnifiedRuntimeRequest",
+    "WORKFORCE_ADMISSION_DECISION_SCHEMA",
+    "WorkforcePolicyLoader",
+    "_capability_evidence_summary",
+    "apply_execution_depth_floor",
+    "attach_failure_diagnostics",
+    "attach_r3_receipt_base",
+    "build_canonical_runtime_context",
+    "build_execution_attempt_id",
+    "build_execution_replan_request",
+    "build_local_ast_capability_invoker",
+    "build_local_memory_capability_invoker",
+    "build_local_search_ranking_capability_invoker",
+    "build_memory_retrieval_adapter",
+    "build_online_route",
+    "build_prompt_compression_capability_invoker",
+    "build_registered_online_invoker",
+    "build_structured_online_invoker",
+    "build_subprocess_online_invoker",
+    "canonical_execution_identity",
+    "evaluate_runtime_workforce_admission",
+    "execution_replan_request_authority_projection",
+    "extract_online_stage_payload",
+    "materialize_selected_capability_evidence",
+    "next_execution_depth_after_failure",
+    "normalize_online_invoker_payload",
+    "online_payload_indicates_non_delivery",
+    "plan_canonical_task_bundle",
+    "planner_binding",
+    "replan_canonical_task_bundle",
+    "resolve_online_transport_binding",
+    "resolve_registered_online_cli_spec",
+    "resolve_registered_provider_executable",
+    "validate_receipt_base"
+  ]
+}

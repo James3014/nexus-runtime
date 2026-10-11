@@ -1,0 +1,1063 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+from .context import KernelContext
+from .capabilities import _capability_evidence_summary
+from .constants import LOCAL_ONLY_PROVIDERS, ONLINE_CLI_SPEC_REGISTRY, REGISTERED_CLI_MODEL_BINDING_FLAGS, REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS, REQUEST_SCHEMA, SELECTION_COMPATIBILITY_DEFAULT, SELECTION_ENVIRONMENT_DEFAULT, SELECTION_EXPLICIT_REQUEST, SELECTION_INJECTED_TRANSPORT, TRANSPORT_GATEWAY_COMPATIBILITY, TRANSPORT_REGISTERED_CLI, TRANSPORT_STRUCTURED_CALLABLE, TRANSPORT_UNRESOLVED
+from .identity import _mapping, _optional_identity
+
+
+def _callable_provider_identity(invoker: Any) -> str:
+    values: list[str] = []
+    for attribute in ("provider", "online_invoker_provider"):
+        try:
+            value = getattr(invoker, attribute, None)
+        except Exception as exc:
+            raise ValueError("online_invoker_provider_malformed") from exc
+        if value is not None:
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("online_invoker_provider_malformed")
+            values.append(value)
+    if len(set(values)) > 1:
+        raise ValueError("online_invoker_provider_ambiguous")
+    return values[0] if values else ""
+
+
+def _registered_cli_model_binding_failure(
+    provider: str,
+    *,
+    model_name: str,
+    authority: Any,
+) -> str:
+    """Validate the model edge before registered CLI discovery or execution."""
+    if authority is None:
+        return ""
+    key = str(provider or "").strip().lower()
+    if not isinstance(authority, Mapping):
+        return "gateway_invocation_authority_malformed"
+    admitted_provider = authority.get("resolved_provider")
+    if not isinstance(admitted_provider, str) or not admitted_provider.strip():
+        return "gateway_invocation_authority_provider_missing"
+    if key != admitted_provider:
+        return "gateway_invocation_authority_provider_mismatch"
+    if key in REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS:
+        return "gateway_invocation_authority_model_binding_unsupported"
+    admitted_model = authority.get("resolved_model")
+    if not isinstance(admitted_model, str) or not admitted_model.strip():
+        return "gateway_invocation_authority_model_missing"
+    if not model_name:
+        return "gateway_invocation_authority_model_missing"
+    if model_name != admitted_model:
+        return "gateway_invocation_authority_model_mismatch"
+    return ""
+
+
+def _physical_online_invoker(invoker: Any) -> bool:
+    """Classify Online provider callables without trusting a caller opt-out.
+
+        Registered/structured provider adapters carry provider identity and are
+        therefore physical by default.  A bounded deterministic compatibility
+        callback may explicitly declare ``physical_provider_transport=False`` or
+        remain provider-neutral.  Supplying a provider identity can never silently
+        opt out of fresh Workforce Admission merely by omitting the marker.
+        """
+    if invoker is None:
+        return False
+    marker = getattr(invoker, "physical_provider_transport", None)
+    if type(marker) is bool:
+        return marker
+    provider = str(
+        getattr(invoker, "online_invoker_provider", None)
+        or getattr(invoker, "provider", None)
+        or ""
+    ).strip()
+    return bool(provider)
+
+
+@dataclass(frozen=True)
+class OnlineCliSpec:
+    """Provider-neutral subprocess contract for Online CLI adapters."""
+
+    provider: str
+    command: tuple[str, ...]
+    timeout_sec: float = 120.0
+    working_directory: str = ""
+    model_name: str = ""
+
+    def validate(self) -> None:
+        if not str(self.provider or "").strip():
+            raise ValueError("provider_required")
+        if not self.command or any(not str(part).strip() for part in self.command):
+            raise ValueError("command_required")
+        if self.timeout_sec <= 0:
+            raise ValueError("timeout_must_be_positive")
+        if self.working_directory:
+            wd = str(self.working_directory)
+            if not os.path.exists(wd):
+                raise ValueError(f"working_directory_not_found:{wd}")
+            if not os.path.isdir(wd):
+                raise ValueError(f"working_directory_not_directory:{wd}")
+
+
+@dataclass(frozen=True)
+class OnlineTransportBinding:
+    """Resolved Online execution binding (identity ≠ transport).
+
+        Fields:
+          execution_role: always ``online`` for this binder
+          provider: selected provider identity (may be empty, injected, or registry key)
+          transport: how the Online call is physically made
+          selection_source: why this binding was chosen
+          resolution_error: non-empty when transport cannot be resolved
+          use_gateway_structured: prefer Gateway ``ask_structured`` compatibility path
+          use_registered_cli: prefer registered Online CLI invoker
+        """
+
+    execution_role: str
+    provider: str
+    transport: str
+    selection_source: str
+    resolution_error: str = ""
+    use_gateway_structured: bool = False
+    use_registered_cli: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "execution_role": self.execution_role,
+            "provider": self.provider,
+            "transport": self.transport,
+            "selection_source": self.selection_source,
+            "resolution_error": self.resolution_error,
+            "use_gateway_structured": self.use_gateway_structured,
+            "use_registered_cli": self.use_registered_cli,
+        }
+
+
+def build_online_route(
+    *,
+    recommended_flow: str = "direct",
+    gateway_provider: str = "",
+    explicit_provider: str = "",
+    local_enabled: bool = False,
+    selection_source: str = "",
+) -> dict[str, Any]:
+    """Build an Online route object without conflating local discovery.
+
+        Gateway default / auto-detected local providers (for example Ollama) are
+        recorded as environment context but are **not** copied into
+        ``route["provider"]`` unless they are registered Online CLI providers or
+        the caller supplies an explicit Online provider.
+        """
+    explicit = str(explicit_provider or "").strip().lower()
+    gateway = str(gateway_provider or "").strip().lower()
+    source = str(selection_source or "").strip().lower()
+
+    provider = ""
+    if explicit:
+        provider = explicit
+        source = source or SELECTION_EXPLICIT_REQUEST
+    elif gateway in ONLINE_CLI_SPEC_REGISTRY and gateway not in LOCAL_ONLY_PROVIDERS:
+        provider = gateway
+        source = source or SELECTION_ENVIRONMENT_DEFAULT
+    else:
+        # Local-only or empty gateway default: leave Online provider unset so
+        # transport resolution can prefer injected/bound structured transport
+        # or gateway compatibility without inventing a false Online identity.
+        provider = ""
+        source = source or SELECTION_COMPATIBILITY_DEFAULT
+
+    route: dict[str, Any] = {
+        "recommended_flow": recommended_flow,
+        "execution_role": "online",
+        "selection_source": source,
+        "local_enabled": bool(local_enabled),
+        "gateway_default_provider": gateway,
+    }
+    if provider:
+        route["provider"] = provider
+    if gateway and gateway in LOCAL_ONLY_PROVIDERS:
+        route["local_provider_detected"] = gateway
+    return route
+
+
+def resolve_online_transport_binding(
+    *,
+    has_explicit_invoker: bool = False,
+    structured_transport_injected: bool = False,
+    route_provider: str = "",
+    gateway_provider: str = "",
+) -> OnlineTransportBinding:
+    """Deterministic Online transport resolution.
+
+        Precedence:
+          1. explicit online_invoker
+          2. injected / bound structured transport
+          3. explicit route provider (registered CLI, with gemini gateway special-case)
+          4. registered CLI when route provider is registered
+          5. gateway compatibility fallback for empty or local-only providers
+          6. fail-closed for unknown Online providers
+        """
+    requested = str(route_provider or "").strip().lower()
+    gateway = str(gateway_provider or "").strip().lower()
+
+    if has_explicit_invoker:
+        return OnlineTransportBinding(
+            execution_role="online",
+            provider=requested or "explicit_invoker",
+            transport=TRANSPORT_STRUCTURED_CALLABLE,
+            selection_source=SELECTION_EXPLICIT_REQUEST,
+            use_gateway_structured=False,
+            use_registered_cli=False,
+        )
+
+    if structured_transport_injected:
+        return OnlineTransportBinding(
+            execution_role="online",
+            # Injected transport identity is not the local auto-detect default.
+            provider="injected",
+            transport=TRANSPORT_STRUCTURED_CALLABLE,
+            selection_source=SELECTION_INJECTED_TRANSPORT,
+            use_gateway_structured=True,
+            use_registered_cli=False,
+        )
+
+    if requested and requested in ONLINE_CLI_SPEC_REGISTRY and not (
+        requested in LOCAL_ONLY_PROVIDERS and gateway == requested
+    ):
+        # Gemini retains specialized Gateway CLI transport when the Gateway
+        # itself is also configured for Gemini; other registered providers use
+        # the provider-neutral registered CLI edge.
+        if requested == "gemini" and gateway == "gemini":
+            return OnlineTransportBinding(
+                execution_role="online",
+                provider="gemini",
+                transport=TRANSPORT_GATEWAY_COMPATIBILITY,
+                selection_source=SELECTION_ENVIRONMENT_DEFAULT if not requested else SELECTION_EXPLICIT_REQUEST,
+                use_gateway_structured=True,
+                use_registered_cli=False,
+            )
+        return OnlineTransportBinding(
+            execution_role="online",
+            provider=requested,
+            transport=TRANSPORT_REGISTERED_CLI,
+            selection_source=SELECTION_EXPLICIT_REQUEST,
+            use_gateway_structured=False,
+            use_registered_cli=True,
+        )
+
+    if not requested or requested in LOCAL_ONLY_PROVIDERS:
+        return OnlineTransportBinding(
+            execution_role="online",
+            provider=gateway or requested or "gateway",
+            transport=TRANSPORT_GATEWAY_COMPATIBILITY,
+            selection_source=SELECTION_COMPATIBILITY_DEFAULT,
+            use_gateway_structured=True,
+            use_registered_cli=False,
+        )
+
+    # Unknown Online provider with no injected transport: fail closed.
+    return OnlineTransportBinding(
+        execution_role="online",
+        provider=requested,
+        transport=TRANSPORT_UNRESOLVED,
+        selection_source=SELECTION_EXPLICIT_REQUEST,
+        resolution_error="provider_not_registered",
+        use_gateway_structured=False,
+        use_registered_cli=False,
+    )
+
+
+def extract_online_stage_payload(
+    online_stage: Mapping[str, Any] | None,
+) -> tuple[Any, str, dict[str, Any]]:
+    """Canonical Online stage unwrapping for callers.
+
+        UnifiedRuntime stores the invoker result at ``receipt["online"]["response"]``.
+        That invoker result itself carries domain output under ``response`` and the
+        physical transport text under ``raw_response``.
+
+        Returns:
+          (domain_response, raw_response, invoker_payload)
+        """
+    if not isinstance(online_stage, Mapping):
+        return "", "", {}
+    invoker_payload = online_stage.get("response", {})
+    if not isinstance(invoker_payload, Mapping):
+        # Stage response was a bare scalar; treat as domain body.
+        return invoker_payload, str(invoker_payload or ""), {}
+    domain = invoker_payload.get("response", "")
+    raw = str(invoker_payload.get("raw_response", "") or "")
+    return domain, raw, dict(invoker_payload)
+
+
+def resolve_registered_online_cli_spec(
+    provider: str,
+    *,
+    command: tuple[str, ...] | list[str] | str | None = None,
+    model_name: str | None = None,
+    timeout_sec: float = 120.0,
+    environ: Mapping[str, str] | None = None,
+    working_directory: str = "",
+) -> OnlineCliSpec:
+    """Resolve a registered provider command without invoking it.
+
+        Provider-specific flags remain an edge concern.  The resolver accepts an
+        explicit argv, then a provider-specific ``*_COMMAND`` environment value,
+        and finally a configured/discovered binary. It never shells out or treats
+        presence as a live-consumption claim.
+        """
+    key = str(provider or "").strip().lower()
+    metadata = ONLINE_CLI_SPEC_REGISTRY.get(key)
+    if metadata is None:
+        raise ValueError("provider_not_registered")
+    env = dict(environ or os.environ)
+    resolved_command: tuple[str, ...]
+    if isinstance(command, str):
+        resolved_command = tuple(shlex.split(command))
+    elif command is not None:
+        resolved_command = tuple(str(part) for part in command)
+    else:
+        configured_command = str(env.get(metadata["command_env"], "") or "").strip()
+        configured_binary = str(env.get(metadata["binary_env"], "") or "").strip()
+        if configured_command:
+            resolved_command = tuple(shlex.split(configured_command))
+        elif configured_binary:
+            resolved_command = tuple(shlex.split(configured_binary))
+        else:
+            binary = shutil.which(metadata["binary_name"])
+            if not binary:
+                raise ValueError("provider_binary_not_found")
+            resolved_command = (binary,)
+    spec = OnlineCliSpec(
+        provider=key,
+        command=resolved_command,
+        timeout_sec=timeout_sec,
+        working_directory=working_directory,
+        model_name=_optional_identity(model_name),
+    )
+    spec.validate()
+    return spec
+
+
+def resolve_registered_provider_executable(
+    provider: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Resolve the physical executable shared by Gateway and worker adapters.
+
+        AGY historically had two environment aliases (``NEXUS_AGY_BIN`` at the
+        Gateway edge and ``NEXUS_AGY_EXECUTABLE`` in the worker).  Treat them as
+        aliases of one authority and fail closed when they point at different
+        binaries instead of allowing route-specific drift.
+        """
+    key = str(provider or "").strip().lower()
+    metadata = ONLINE_CLI_SPEC_REGISTRY.get(key)
+    if metadata is None:
+        raise ValueError("provider_not_registered")
+    env = dict(environ or os.environ)
+    names = [metadata["binary_env"]]
+    if key == "agy":
+        names.append("NEXUS_AGY_EXECUTABLE")
+    candidates: list[str] = []
+    for name in names:
+        value = str(env.get(name, "") or "").strip()
+        if not value:
+            continue
+        resolved = shutil.which(value) or value
+        candidates.append(str(Path(resolved).expanduser().resolve()))
+    if candidates and len(set(candidates)) != 1:
+        raise ValueError("provider_executable_alias_mismatch")
+    executable = candidates[0] if candidates else shutil.which(metadata["binary_name"])
+    if not executable:
+        raise ValueError("provider_binary_not_found")
+    path = Path(executable).expanduser().resolve()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise ValueError("provider_binary_not_executable")
+    return str(path)
+
+
+def build_subprocess_online_invoker(
+    ctx: KernelContext,
+    spec: OnlineCliSpec,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+    include_local_context: bool = True,
+) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
+    """Build a no-shell Online CLI invoker with explicit receipt fields."""
+
+    spec.validate()
+
+    def invoke(context: Mapping[str, Any]) -> dict[str, Any]:
+        task_id = str(context.get("task_id", ""))
+        context_model = _optional_identity(
+            context.get("online_model_name") or context.get("model_name")
+        )
+        admitted_model = _optional_identity(spec.model_name) or context_model
+        authority_failure = _registered_cli_model_binding_failure(
+            spec.provider,
+            model_name=admitted_model,
+            authority=context.get("gateway_invocation_authority"),
+        )
+        if authority_failure:
+            return ctx.normalize_online_invoker_payload(
+                provider=spec.provider,
+                task_id=task_id,
+                invoked=False,
+                output_delivered=False,
+                gate_passed=False,
+                provider_call_count=0,
+                response="",
+                raw_response="",
+                usage={},
+                error=authority_failure,
+                evidence_refs=[f"online:{spec.provider}:{task_id}:{authority_failure}"],
+                transport=TRANSPORT_REGISTERED_CLI,
+                selection_source=SELECTION_EXPLICIT_REQUEST,
+                extra={"live_provider_claim": False},
+            )
+        attempt_info = context.get("execution_attempt") if isinstance(context.get("execution_attempt"), Mapping) else {}
+        attempt_id = str(
+            context.get("attempt_id")
+            or attempt_info.get("attempt_id")
+            or context.get("planner_decision_id")
+            or ""
+        )
+        prompt = str(context.get("online_prompt") or context.get("task_statement") or "")
+        payload = str(context.get("online_payload") or "")
+        local_context_forwarded = False
+        capability_context_forwarded = False
+        vap_injection = ""
+        planner_context = context.get("planner")
+        canonical_context = (
+            context.get("schema") == REQUEST_SCHEMA
+            or (isinstance(planner_context, Mapping) and bool(_mapping(planner_context).get("plan_hash")))
+        )
+        if include_local_context:
+            local_stage = context.get("local", {})
+            # P2: never dump raw local_outputs (patch/CoT/private reasoning) into Online.
+            # Only structure-preserving online-safe concise evidence may be forwarded.
+            if isinstance(local_stage, Mapping) and (
+                local_stage.get("response") or local_stage.get("invoked") or local_stage.get("local_outputs")
+            ):
+                build_online_safe_local_forward = ctx.build_online_safe_local_forward
+
+                safe = build_online_safe_local_forward(
+                    local_stage,
+                    runtime_task_id=task_id,
+                    runtime_canonical_execution=context.get("canonical_execution") if isinstance(context.get("canonical_execution"), Mapping) else None,
+                    runtime_execution_attempt=context.get("execution_attempt") if isinstance(context.get("execution_attempt"), Mapping) else None,
+                    runtime_source_hash=str(context.get("source_hash") or ""),
+                    runtime_execution_world=str(_mapping(context.get("canonical_execution")).get("execution_world") or "product_runtime"),
+                    final_prompt=prompt,
+                )
+                forward = safe.get("forward", {}) if isinstance(safe, Mapping) else {}
+                verified_assist = (
+                    safe.get("verified_assist")
+                    if isinstance(safe, Mapping) and isinstance(safe.get("verified_assist"), Mapping)
+                    else {}
+                )
+                vap_injection = str(verified_assist.get("injection_fragment") or "")
+                if isinstance(forward, Mapping) and (
+                    forward.get("concise_summary")
+                    or forward.get("candidate_hash")
+                    or str(forward.get("verifier_status") or "") not in {"", "not_run"}
+                ):
+                    prompt += "\n\n[LOCAL_ASSIST_CONTEXT]\n" + json.dumps(
+                        forward,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                    )
+                    local_context_forwarded = True
+                if vap_injection and vap_injection not in prompt:
+                    prompt = f"{prompt}\n{vap_injection}"
+            capability_results = context.get("capability_results", {})
+            if capability_results and not canonical_context:
+                compressed = bool(context.get("capability_context_compressed"))
+                # Compressed path: evidence summary only. Uncompressed: capability
+                # stage receipts (status/refs/task_id), not private Local CoT fields.
+                prompt += (
+                    "\n\n[CAPABILITY_EVIDENCE_SUMMARY]\n"
+                    if compressed
+                    else "\n\n[CAPABILITY_CONTEXT]\n"
+                ) + json.dumps(
+                    _capability_evidence_summary(capability_results)
+                    if compressed
+                    else capability_results,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+                capability_context_forwarded = True
+        stdin = f"{prompt}\n\n[PAYLOAD]\n{payload}" if payload else prompt
+
+        # Canonical Planner contexts require the shared package before provider invocation.
+        if canonical_context and context.get("capability_evidence_bundle") is None:
+            return ctx.normalize_online_invoker_payload(
+                provider=spec.provider, task_id=task_id, invoked=False,
+                output_delivered=False, gate_passed=False, provider_call_count=0,
+                response="", raw_response="", usage={},
+                error="canonical_runtime_context_bundle_missing",
+                evidence_refs=[f"online:{spec.provider}:{task_id}:context_bundle_missing"],
+                transport=TRANSPORT_REGISTERED_CLI,
+                selection_source=SELECTION_EXPLICIT_REQUEST,
+                extra={"live_provider_claim": False},
+            )
+        context_package = None
+        build_online_consumption_receipt = None
+        if context.get("capability_evidence_bundle") is not None:
+            try:
+                from nexus_runtime.task_context import append_model_context_to_prompt, build_online_context_package
+                from nexus_runtime.task_context.consumption import build_online_consumption_receipt
+                context_package = build_online_context_package(context)
+                stdin = append_model_context_to_prompt(stdin, context_package)
+            except ModuleNotFoundError:
+                return ctx.normalize_online_invoker_payload(
+                    provider=spec.provider, task_id=task_id, invoked=False,
+                    output_delivered=False, gate_passed=False, provider_call_count=0,
+                    response="", raw_response="", usage={},
+                    error="canonical_runtime_dependency_missing",
+                    evidence_refs=[f"online:{spec.provider}:{task_id}:context_package_dependency_missing"],
+                    transport=TRANSPORT_REGISTERED_CLI, selection_source=SELECTION_EXPLICIT_REQUEST,
+                    extra={"live_provider_claim": False},
+                )
+            except ValueError as exc:
+                return ctx.normalize_online_invoker_payload(
+                    provider=spec.provider, task_id=task_id, invoked=False,
+                    output_delivered=False, gate_passed=False, provider_call_count=0,
+                    response="", raw_response="", usage={},
+                    error=f"canonical_runtime_context_package_invalid:{exc}",
+                    evidence_refs=[f"online:{spec.provider}:{task_id}:context_package_invalid"],
+                    transport=TRANSPORT_REGISTERED_CLI, selection_source=SELECTION_EXPLICIT_REQUEST,
+                    extra={"live_provider_claim": False},
+                )
+
+        meta = ONLINE_CLI_SPEC_REGISTRY.get(spec.provider, {})
+        print_flag = str(meta.get("print_flag") or "").strip()
+        argv = list(spec.command)
+        stdin_input: str | None = None
+        prompt_transport = "stdin"
+
+        model_binding = REGISTERED_CLI_MODEL_BINDING_FLAGS.get(spec.provider)
+        if context.get("gateway_invocation_authority") is not None and admitted_model and model_binding and len(argv) != 1:
+            if spec.provider == "agy":
+                return ctx.normalize_online_invoker_payload(
+                    provider=spec.provider,
+                    task_id=task_id,
+                    invoked=False,
+                    output_delivered=False,
+                    gate_passed=False,
+                    provider_call_count=0,
+                    response="",
+                    raw_response="",
+                    usage={},
+                    error="registered_cli_model_binding_command_shape_unsupported",
+                    evidence_refs=[
+                        f"online:{spec.provider}:{task_id}:"
+                        "registered_cli_model_binding_command_shape_unsupported"
+                    ],
+                    transport=TRANSPORT_REGISTERED_CLI,
+                    selection_source=SELECTION_EXPLICIT_REQUEST,
+                    extra={"live_provider_claim": False},
+                )
+            subcommand, model_flag = model_binding
+            accepted_model_flags = {model_flag}
+            if spec.provider == "codex":
+                accepted_model_flags.add("--model")
+            if subcommand:
+                if model_flag:
+                    binding_shape_ok = (
+                        len(argv) >= 4
+                        and argv[1] == subcommand
+                        and argv[2] in accepted_model_flags
+                        and argv[3] == admitted_model
+                    )
+                else:
+                    binding_shape_ok = len(argv) >= 3 and argv[1] == subcommand and argv[2] == admitted_model
+            else:
+                binding_shape_ok = (
+                    len(argv) >= 3
+                    and argv[1] in accepted_model_flags
+                    and argv[2] == admitted_model
+                )
+            if not binding_shape_ok:
+                return ctx.normalize_online_invoker_payload(
+                    provider=spec.provider,
+                    task_id=task_id,
+                    invoked=False,
+                    output_delivered=False,
+                    gate_passed=False,
+                    provider_call_count=0,
+                    response="",
+                    raw_response="",
+                    usage={},
+                    error="registered_cli_model_binding_command_shape_unsupported",
+                    evidence_refs=[
+                        f"online:{spec.provider}:{task_id}:"
+                        "registered_cli_model_binding_command_shape_unsupported"
+                    ],
+                    transport=TRANSPORT_REGISTERED_CLI,
+                    selection_source=SELECTION_EXPLICIT_REQUEST,
+                    extra={"live_provider_claim": False},
+                )
+            stdin_input = stdin
+            prompt_transport = "stdin"
+        elif print_flag and len(argv) == 1:
+            if model_binding and admitted_model:
+                subcommand, model_flag = model_binding
+                if spec.provider == "agy":
+                    argv = [
+                        argv[0],
+                        "--mode",
+                        "plan",
+                        "--sandbox",
+                        model_flag,
+                        admitted_model,
+                        print_flag,
+                        stdin,
+                    ]
+                else:
+                    argv = (
+                        ([argv[0], subcommand, model_flag, admitted_model, stdin] if model_flag else [argv[0], subcommand, admitted_model, stdin])
+                        if subcommand
+                        else [argv[0], model_flag, admitted_model, stdin]
+                    )
+            elif spec.provider == "agy":
+                argv = [
+                    argv[0],
+                    "--mode",
+                    "plan",
+                    "--sandbox",
+                    print_flag,
+                    stdin,
+                ]
+            else:
+                argv = [argv[0], print_flag, stdin]
+            stdin_input = ""
+            prompt_transport = "argv"
+        elif spec.provider == "opencode" and len(argv) == 1:
+            subcommand, model_flag = REGISTERED_CLI_MODEL_BINDING_FLAGS["opencode"]
+            model = admitted_model or str(meta.get("default_model", "") or "").strip()
+            argv = [argv[0], subcommand, model_flag, model, stdin]
+            stdin_input = ""
+            prompt_transport = "argv"
+        elif spec.provider == "cline" and len(argv) == 1:
+            model = admitted_model or str(meta.get("default_model", "glm-5.2") or "glm-5.2").strip()
+            argv = [argv[0], "--json", "--yolo", "--model", model, stdin]
+            stdin_input = ""
+            prompt_transport = "argv"
+        elif spec.provider in {"mimo", "ollama"} and len(argv) == 1:
+            model = admitted_model or str(meta.get("default_model", "") or "").strip()
+            if spec.provider == "mimo":
+                argv = [argv[0], "run", "--model", model, stdin]
+            else:
+                argv = [argv[0], "run", model, stdin]
+            stdin_input = ""
+            prompt_transport = "argv"
+        else:
+            stdin_input = stdin
+            prompt_transport = "stdin"
+
+        cmd_fp = hashlib.sha256(json.dumps(argv, ensure_ascii=False).encode("utf-8")).hexdigest()
+        exec_path = str(shutil.which(argv[0]) or argv[0])
+        exec_hash = hashlib.sha256(exec_path.encode("utf-8")).hexdigest()
+        agy_isolated_working_directory = ""
+        effective_working_directory = str(spec.working_directory or "")
+        if spec.provider == "agy" and not effective_working_directory:
+            agy_isolated_working_directory = tempfile.mkdtemp(
+                prefix="nexus-agy-online-"
+            )
+            effective_working_directory = agy_isolated_working_directory
+        cwd_str = str(effective_working_directory or os.getcwd())
+        cwd_hash = hashlib.sha256(cwd_str.encode("utf-8")).hexdigest()
+        input_sha256 = hashlib.sha256(stdin.encode("utf-8")).hexdigest()
+
+        def attach_context_receipt(result_payload: dict[str, Any]) -> dict[str, Any]:
+            if context_package is not None and build_online_consumption_receipt is not None:
+                result_payload["model_context_consumption"] = build_online_consumption_receipt(
+                    context_package,
+                    result_payload,
+                    physical_transport=runner is subprocess.run,
+                    expected_provider_input_sha256=input_sha256,
+                )
+            return result_payload
+
+        proc_inv_id = hashlib.sha256(
+            json.dumps([task_id, attempt_id, spec.provider, cmd_fp, input_sha256, cwd_hash]).encode("utf-8")
+        ).hexdigest()
+
+        start_time = time.monotonic()
+
+        def _build_process_evidence(
+            started: bool,
+            stdout_str: str,
+            stderr_str: str,
+            retcode: int | None,
+            elapsed_ms: int,
+        ) -> dict[str, Any]:
+            return {
+                "schema": "nexus.provider_process_evidence.v1",
+                "provider": spec.provider,
+                "transport": TRANSPORT_REGISTERED_CLI,
+                "process_started": started,
+                "prompt_transport": prompt_transport,
+                "command_fingerprint": cmd_fp,
+                "executable_path_hash": exec_hash,
+                "working_directory_hash": cwd_hash,
+                "sandboxed_working_directory": bool(effective_working_directory),
+                "working_directory_isolation": (
+                    "runtime_ephemeral"
+                    if agy_isolated_working_directory
+                    else "caller_bound"
+                    if spec.working_directory
+                    else "inherited"
+                ),
+                "provider_permission_mode": (
+                    "plan_no_autoapprove" if spec.provider == "agy" else "provider_default"
+                ),
+                "provider_input_sha256": input_sha256,
+                "stdout_sha256": hashlib.sha256(stdout_str.encode("utf-8")).hexdigest() if started else "",
+                "stderr_sha256": hashlib.sha256(stderr_str.encode("utf-8")).hexdigest() if started else "",
+                "returncode": retcode,
+                "wall_time_ms": elapsed_ms,
+                "attempt_id": attempt_id,
+                "process_invocation_id": proc_inv_id,
+            }
+
+        try:
+            result = runner(
+                argv,
+                input=stdin_input,
+                cwd=effective_working_directory or None,
+                capture_output=True,
+                text=True,
+                timeout=spec.timeout_sec,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if agy_isolated_working_directory:
+                shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
+            elapsed = int((time.monotonic() - start_time) * 1000)
+            pe = _build_process_evidence(True, "", str(exc), None, max(0, elapsed))
+            return attach_context_receipt(ctx.normalize_online_invoker_payload(
+                provider=spec.provider,
+                task_id=task_id,
+                invoked=True,
+                output_delivered=False,
+                gate_passed=False,
+                provider_call_count=1,
+                response="",
+                raw_response="",
+                usage={},
+                error="provider_timeout",
+                evidence_refs=[f"online:{spec.provider}:{task_id}:timeout"],
+                transport=TRANSPORT_REGISTERED_CLI,
+                selection_source=SELECTION_EXPLICIT_REQUEST,
+                extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
+            ))
+        except OSError as exc:
+            if agy_isolated_working_directory:
+                shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
+            elapsed = int((time.monotonic() - start_time) * 1000)
+            pe = _build_process_evidence(False, "", str(exc), None, max(0, elapsed))
+            return attach_context_receipt(ctx.normalize_online_invoker_payload(
+                provider=spec.provider,
+                task_id=task_id,
+                invoked=False,
+                output_delivered=False,
+                gate_passed=False,
+                provider_call_count=0,
+                response="",
+                raw_response="",
+                usage={},
+                error="provider_not_invoked",
+                evidence_refs=[f"online:{spec.provider}:{task_id}:not_invoked"],
+                transport=TRANSPORT_REGISTERED_CLI,
+                selection_source=SELECTION_EXPLICIT_REQUEST,
+                extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
+            ))
+        if agy_isolated_working_directory:
+            shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
+        elapsed = int((time.monotonic() - start_time) * 1000)
+        stdout = str(getattr(result, "stdout", "") or "")
+        stderr = str(getattr(result, "stderr", "") or "")
+        returncode = int(getattr(result, "returncode", 1))
+        delivered = bool(stdout.strip())
+        pe = _build_process_evidence(True, stdout, stderr, returncode, max(0, elapsed))
+        return attach_context_receipt(ctx.normalize_online_invoker_payload(
+            provider=spec.provider,
+            task_id=task_id,
+            invoked=True,
+            output_delivered=delivered,
+            gate_passed=returncode == 0 and delivered,
+            provider_call_count=1,
+            response=stdout,
+            raw_response=stdout,
+            usage={},
+            error="" if returncode == 0 and delivered else "provider_subprocess_failed",
+            evidence_refs=(
+                [f"online:{spec.provider}:{task_id}:subprocess"]
+                + ([f"online:{spec.provider}:{task_id}:local_context_forwarded"] if local_context_forwarded else [])
+                + ([f"online:{spec.provider}:{task_id}:capability_context_forwarded"] if capability_context_forwarded else [])
+                + ([f"online:{spec.provider}:{task_id}:compressed_context_applied"] if context.get("capability_context_compressed") else [])
+            ),
+            transport=TRANSPORT_REGISTERED_CLI,
+            selection_source=SELECTION_EXPLICIT_REQUEST,
+            extra={
+                "returncode": returncode,
+                "stderr": stderr,
+                "process_evidence": pe,
+                "assembled_online_prompt": stdin,
+            },
+        ))
+
+    invoke.provider = spec.provider  # type: ignore[attr-defined]
+    invoke.online_invoker_provider = spec.provider  # type: ignore[attr-defined]
+    invoke.physical_provider_transport = runner is subprocess.run  # type: ignore[attr-defined]
+    invoke._nexus_model_context_wrapped = True  # type: ignore[attr-defined]
+    return invoke
+
+
+def build_registered_online_invoker(
+    ctx: KernelContext,
+    provider: str,
+    *,
+    command: tuple[str, ...] | list[str] | str | None = None,
+    model_name: str | None = None,
+    timeout_sec: float = 120.0,
+    environ: Mapping[str, str] | None = None,
+    runner: Callable[..., Any] = subprocess.run,
+    include_local_context: bool = True,
+    working_directory: str = "",
+) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
+    """Build the single provider-neutral Online edge adapter.
+
+        Provider-specific command discovery is intentionally kept at this edge.
+        The returned callable has the same contract for Gemini, Grok, Codex, and
+        OpenAI and is consumed by :class:`UnifiedRuntime`; it does not create a
+        second planner, receipt, verifier, or learning path.
+
+        Binary resolution (``shutil.which``) and registry validation are deferred
+        past the authorization check so that ``online_policy=deny`` never fails
+        due to a missing binary or unregistered provider that would never be
+        invoked — *deny-lazy*.
+        """
+    key = str(provider or "").strip().lower()
+
+    # Non-subprocess (test/deterministic) runners resolve eagerly; they never
+    # hit the physical authorization gate and always supply an explicit argv.
+    if runner is not subprocess.run:
+        spec = resolve_registered_online_cli_spec(
+            key,
+            command=command,
+            model_name=model_name,
+            timeout_sec=timeout_sec,
+            environ=environ,
+        )
+        return build_subprocess_online_invoker(
+            ctx,
+            spec,
+            runner=runner,
+            include_local_context=include_local_context,
+        )
+
+    # Real provider subprocesses: lazy registry validation + binary resolution
+    # after authorization.  Exceptions from the resolver never escape the
+    # invoker boundary; they produce a fail-closed receipt instead.
+    def invoke(context: Mapping[str, Any]) -> dict[str, Any]:
+        decision_from_context = ctx.decision_from_context
+        physical_online_authorized = ctx.physical_online_authorized
+
+        task_id = str(context.get("task_id", ""))
+        context_model = _optional_identity(
+            context.get("online_model_name") or context.get("model_name")
+        )
+        admitted_model = _optional_identity(model_name) or context_model
+        authority_failure = _registered_cli_model_binding_failure(
+            key,
+            model_name=admitted_model,
+            authority=context.get("gateway_invocation_authority"),
+        )
+        if authority_failure:
+            return ctx.normalize_online_invoker_payload(
+                provider=key,
+                task_id=task_id,
+                invoked=False,
+                output_delivered=False,
+                gate_passed=False,
+                provider_call_count=0,
+                response="",
+                raw_response="",
+                usage={},
+                error=authority_failure,
+                evidence_refs=[f"online:{key}:{task_id}:{authority_failure}"],
+                transport=TRANSPORT_REGISTERED_CLI,
+                selection_source=SELECTION_EXPLICIT_REQUEST,
+                extra={"live_provider_claim": False},
+            )
+        decision = decision_from_context(context if isinstance(context, Mapping) else {})
+        inject_authorized = bool(
+            decision is not None
+            and decision.online_execution_authorized
+            and decision.online_authorization_source == "injected_test_transport"
+        )
+        physical_ok = physical_online_authorized(context, injected_transport=False)
+        if not inject_authorized and not physical_ok:
+            return ctx.normalize_online_invoker_payload(
+                provider=key,
+                task_id=task_id,
+                invoked=False,
+                output_delivered=False,
+                gate_passed=False,
+                provider_call_count=0,
+                response="",
+                raw_response="",
+                usage={},
+                error="online_execution_not_authorized",
+                evidence_refs=[f"online:{key}:{task_id}:authorization_required"],
+                transport=TRANSPORT_REGISTERED_CLI,
+                selection_source=SELECTION_EXPLICIT_REQUEST,
+                extra={"live_provider_claim": False},
+            )
+
+        try:
+            spec = resolve_registered_online_cli_spec(
+                key,
+                command=command,
+                model_name=admitted_model,
+                timeout_sec=timeout_sec,
+                environ=environ,
+            )
+        except ValueError as exc:
+            error_code = str(exc)
+            return ctx.normalize_online_invoker_payload(
+                provider=key,
+                task_id=task_id,
+                invoked=False,
+                output_delivered=False,
+                gate_passed=False,
+                provider_call_count=0,
+                response="",
+                raw_response="",
+                usage={},
+                error=error_code,
+                evidence_refs=[f"online:{key}:{task_id}:{error_code}"],
+                transport=TRANSPORT_REGISTERED_CLI,
+                selection_source=SELECTION_EXPLICIT_REQUEST,
+                extra={"live_provider_claim": False},
+            )
+
+        try:
+            invoker = build_subprocess_online_invoker(
+                ctx,
+                spec,
+                runner=runner,
+                include_local_context=include_local_context,
+            )
+        except (TypeError, OSError) as exc:
+            error_code = f"{exc.__class__.__name__}:{exc}"
+            return ctx.normalize_online_invoker_payload(
+                provider=key,
+                task_id=task_id,
+                invoked=False,
+                output_delivered=False,
+                gate_passed=False,
+                provider_call_count=0,
+                response="",
+                raw_response="",
+                usage={},
+                error=error_code,
+                evidence_refs=[f"online:{key}:{task_id}:build_failed"],
+                transport=TRANSPORT_REGISTERED_CLI,
+                selection_source=SELECTION_EXPLICIT_REQUEST,
+                extra={"live_provider_claim": False},
+            )
+
+        payload = invoker(context)
+        if inject_authorized and isinstance(payload, dict):
+            payload = dict(payload)
+            payload["selection_source"] = SELECTION_INJECTED_TRANSPORT
+            payload["live_provider_claim"] = False
+            if payload.get("transport") in {"", None, TRANSPORT_REGISTERED_CLI}:
+                payload["transport"] = TRANSPORT_STRUCTURED_CALLABLE
+        return payload
+
+    invoke.provider = key  # type: ignore[attr-defined]
+    invoke.online_invoker_provider = key  # type: ignore[attr-defined]
+    invoke.physical_provider_transport = True  # type: ignore[attr-defined]
+    invoke._nexus_model_context_wrapped = True  # type: ignore[attr-defined]
+    return invoke
+
+
+def build_structured_online_invoker(
+    ctx: KernelContext,
+    ask_structured: Callable[..., Any],
+    *,
+    phase: str = "R",
+    model_name: str | None = None,
+    output_schema: Mapping[str, Any] | None = None,
+    provider: str = "gateway",
+    transport: str = TRANSPORT_STRUCTURED_CALLABLE,
+    selection_source: str = SELECTION_EXPLICIT_REQUEST,
+) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
+    """Adapt a compatibility structured transport into the canonical seam.
+
+        This is an edge adapter for old fixtures or transports only.  Planner,
+        receipt, verifier, and learning ownership stays in ``UnifiedRuntime``.
+        """
+
+    def invoke(context: Mapping[str, Any]) -> dict[str, Any]:
+        result = ask_structured(
+            prompt=str(context.get("online_prompt") or context.get("task_statement") or ""),
+            payload=str(context.get("online_payload") or ""),
+            phase=str(context.get("online_phase") or phase),
+            output_schema=dict(context.get("online_output_schema") or output_schema or {}),
+            model_name=context.get("online_model_name") or model_name,
+        )
+        if isinstance(result, tuple) and len(result) >= 2:
+            structured, raw = result[0], result[1]
+        else:
+            structured, raw = result, ""
+        response = structured if isinstance(structured, Mapping) else str(raw or structured or "")
+        delivered = bool(response)
+        task_id = str(context.get("task_id", ""))
+        usage: dict[str, Any] = {}
+        if isinstance(structured, Mapping):
+            maybe_usage = structured.get("usage")
+            if isinstance(maybe_usage, Mapping):
+                usage = dict(maybe_usage)
+            for key in ("tokens_used", "token_capture_status", "gateway_token_source"):
+                if key in structured and key not in usage:
+                    usage[key] = structured.get(key)
+        return ctx.normalize_online_invoker_payload(
+            provider=provider,
+            task_id=task_id,
+            invoked=True,
+            output_delivered=delivered,
+            gate_passed=delivered,
+            provider_call_count=1 if delivered else 0,
+            response=response,
+            raw_response=str(raw or ""),
+            usage=usage,
+            error="" if delivered else "structured_transport_empty_response",
+            evidence_refs=[f"online:{provider}:{task_id}:structured_transport"],
+            transport=transport,
+            selection_source=selection_source,
+        )
+
+    invoke.provider = provider  # type: ignore[attr-defined]
+    invoke.online_invoker_provider = provider  # type: ignore[attr-defined]
+    invoke.physical_provider_transport = True  # type: ignore[attr-defined]
+    return invoke
