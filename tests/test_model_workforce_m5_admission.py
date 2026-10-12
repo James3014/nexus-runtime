@@ -132,3 +132,31 @@ def test_qwen35_9b_admitted_for_compact_diagnosis_and_3b_rejected():
     assert ok.resolved_worker_id == "local_qwen35_9b"
     bad = loader.admit(WorkforceAdmissionRequest(requested_worker_id="local_advisor_3b", **common))
     assert bad.decision != AdmissionDecision.ALLOW
+
+
+def test_second_batch_of_workers_not_on_m5_is_non_admissible():
+    snapshot = _snapshot()
+    for worker_id, model in (
+        ("local_qwen15b", "qwen2.5:1.5b"),
+        ("local_qwen3_8b", "qwen3:8b"),
+        ("local_deepseek_coder_v2_lite", "deepseek-coder-v2:lite"),
+        ("local_deepseek14b", "deepseek-r1-14b-q4km:latest"),
+    ):
+        worker = snapshot.workers[worker_id]
+        assert worker.model == model
+        assert worker.state == "INSTALLED_NOT_CONNECTED"
+        assert worker.state in NON_ADMISSIBLE_STATES
+        assert worker.reason == "not_present_on_m5_ollama_2026-10-12"
+        assert worker.roles
+
+
+def test_bounded_reasoning_shadow_routes_to_interim_qwen35_9b():
+    import yaml
+
+    loader = WorkforcePolicyLoader()
+    snapshot = loader.load()
+    assert snapshot.routing["local_first"]["bounded_reasoning_shadow"] == "local_qwen35_9b"
+    assert "bounded_reasoning_candidate" in snapshot.workers["local_qwen35_9b"].roles
+    assert snapshot.workers["local_qwen3_8b"].state in NON_ADMISSIBLE_STATES
+    raw = yaml.safe_load(loader.policy_path.read_text(encoding="utf-8"))
+    assert "bounded_reasoning_shadow_interim_2026-10-12" in raw["workers"]["local_qwen35_9b"]["note"]
