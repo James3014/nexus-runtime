@@ -25,6 +25,10 @@ A partial host override is rejected before Runtime construction. Runtime must no
 
 The current Nexus-new integration already supplies the complete six-symbol planner family through `nexus.services.runtime_compat`. Therefore this Runtime contract makes the existing ownership explicit and fail-closed; it does not transfer Planner authority or change route/capability selection.
 
+## Capability executor binding
+
+`support/services/capability_registry.py` never imports a host executor registry. It resolves physical capability executors only through `nexus_runtime.support.services.executor_binding` (`register_executor_resolver`, `resolve_executor`, `clear_executor_resolver`). The consumer (Nexus-new) registers its real `get_executor` as the resolver at bootstrap. With no resolver registered, `build_real_executor_invoker` returns `None` and escalate-gated capabilities (hyper, swarm, nightshift, drone, xray, ddtree, autoreason, metabolism, ultra_review) report `BLOCKED_EXECUTOR_UNAVAILABLE`. This is an explicit composition port; it transfers no route or capability decision authority.
+
 ## Non-goals
 
 This change does not:

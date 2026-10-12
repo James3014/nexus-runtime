@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping
 
 from nexus_runtime.planning.engine.capability_planner import default_capability_nodes
+from nexus_runtime.support.services.executor_binding import resolve_executor
 
 # Whitelist skip reasons (receipt contract)
 SKIP_NOT_IMPLEMENTED = "not_implemented_mainchain_v1"
@@ -1337,9 +1338,7 @@ def _node_meta(name: str) -> dict[str, Any]:
 
 def _has_physical_executor(name: str) -> bool:
     try:
-        from nexus_runtime.support.core.capability_executor_registry import get_executor
-
-        return get_executor(_resolve_executor_registry_key(name)) is not None
+        return resolve_executor(_resolve_executor_registry_key(name)) is not None
     except Exception:
         return False
 
@@ -1732,12 +1731,11 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
     name = str(capability_name)
     registry_key = _resolve_executor_registry_key(name)
     try:
-        from nexus_runtime.support.core.belief_contracts import CapabilityExecutionPlan
-        from nexus_runtime.support.core.capability_executor_registry import get_executor
+        from nexus_runtime.planning.core.belief_contracts import CapabilityExecutionPlan
     except Exception:
         return None
 
-    executor = get_executor(registry_key)
+    executor = resolve_executor(registry_key)
     if executor is None:
         return None
 
