@@ -611,16 +611,29 @@ workers:
     model: incoai/Qwen3.8-27B-Splash
     state: EXPERIMENT_ONLY
     availability: AVAILABLE
-    autonomy: L0
-    roles: [bounded_experiment]
-    reason: installed_on_m5_not_served_gateway_unmapped
+    autonomy: L1
+    roles: [bounded_experiment, bounded_code_candidate]
+    requires: [small_scope, parser, compile, focused_tests, reversible_application]
+    forbidden_actions: [architecture_choice, cross_module_closure, self_verification]
+    reason: served_on_m5_8001_gateway_mapped_2026-10-13; calibration_only_not_promoted
+    transport_note: >-
+      Served by a second Splash process on the M5 host (:8001, max-memory 20G)
+      and mapped by the Ollama-compatible M5 gateway (tunnel 127.0.0.1:11434;
+      direct tunnel 127.0.0.1:18001/v1). Never executed on the M4.
+    experiment_note: >-
+      bounded_code_candidate at L1 exists only so an explicitly authorized
+      calibration (memory A/B --armor on) can pass Workforce Admission, whose
+      local demand for a mutating task is bounded_code_candidate at L1.
+      EXPERIMENT_ONLY is unchanged: every admission still needs
+      explicit_experiment_authorization in the binding, no routing entry or
+      default_route names this worker, and promotion to LOCAL_CONDITIONAL is a
+      separate owner decision.
     evidence_refs:
       - nexus/config/model_capability_lineage.yaml#lineages.qwen-3.8-27b
       - config_id:qwen3.8-27b-splash-q4-opencode-64k-wave3
     evidence_summary: >-
       Tool-loop smoke PASS; full-agent T01 STACK_UNQUALIFIED
-      (MODEL_NO_TERMINAL_TEXT). Installed on M5 (14 GB) but not served and not
-      reachable through the gateway.
+      (MODEL_NO_TERMINAL_TEXT). No bounded local-heal calibration recorded yet.
   opencode_deepseek_v4_flash:
     provider: opencode
     model: opencode/deepseek-v4-flash-free
