@@ -268,7 +268,7 @@ class WorkforcePolicyLoader:
             return
         # Policy metadata and candidate pools are not single direct routes.
         meta_keys = {
-            "route_defaults", "campaign_routing",
+            "route_defaults", "campaign_routing", "consumer_routing",
             "fast_bounded_implementation_fallback",
             "blocked_or_disabled_models_must_not_be_selected",
             "experiment_only_models_require_explicit_authorization",
@@ -358,29 +358,35 @@ class WorkforcePolicyLoader:
                 raise WorkforcePolicyValidationError(
                     f"worker '{worker_id}' is a registered successor without explicit disposition"
                 )
-        # Validate campaign routing targets
-        campaign_routing = online.get("campaign_routing", {})
-        if isinstance(campaign_routing, dict):
-            for campaign_id, overrides in campaign_routing.items():
+        # Validate campaign and consumer routing targets
+        for scope_key, scope_label in (
+            ("campaign_routing", "campaign_routing"),
+            ("consumer_routing", "consumer_routing"),
+        ):
+            scoped_routing = online.get(scope_key, {})
+            if not isinstance(scoped_routing, dict):
+                continue
+            for scope_id, overrides in scoped_routing.items():
                 if not isinstance(overrides, dict):
                     continue
                 for role, worker_id in overrides.items():
+                    prefix = f"routing.online.{scope_label}.{scope_id}.{role}"
                     if not isinstance(worker_id, str) or worker_id not in snapshot.workers:
                         raise WorkforcePolicyValidationError(
-                            f"routing.online.campaign_routing.{campaign_id}.{role} references unknown worker '{worker_id}'"
+                            f"{prefix} references unknown worker '{worker_id}'"
                         )
                     worker = snapshot.workers[worker_id]
                     if worker.state in NON_ADMISSIBLE_STATES:
                         raise WorkforcePolicyValidationError(
-                            f"routing.online.campaign_routing.{campaign_id}.{role} worker '{worker_id}' is non-admissible"
+                            f"{prefix} worker '{worker_id}' is non-admissible"
                         )
                     if worker.availability != "AVAILABLE":
                         raise WorkforcePolicyValidationError(
-                            f"routing.online.campaign_routing.{campaign_id}.{role} worker '{worker_id}' is unavailable"
+                            f"{prefix} worker '{worker_id}' is unavailable"
                         )
                     if role not in worker.roles:
                         raise WorkforcePolicyValidationError(
-                            f"routing.online.campaign_routing.{campaign_id}.{role} worker '{worker_id}' does not advertise role '{role}'"
+                            f"{prefix} worker '{worker_id}' does not advertise role '{role}'"
                         )
 
     def resolve_route(
@@ -388,11 +394,14 @@ class WorkforcePolicyLoader:
         role: str,
         *,
         campaign_id: str = "",
+        consumer: str = "",
     ) -> str:
-        """Resolve a routing target for a role, with optional exact campaign match.
+        """Resolve a routing target for a role.
 
-        Campaign resolution is exact-match only; blank, missing, prefixed,
-        or unrelated campaign IDs use the global route.
+        Order: exact campaign match, then exact consumer match, then the
+        global route. Campaign and consumer resolution are exact-match only;
+        blank, missing, prefixed, or unrelated campaign IDs / consumers use
+        the global route.
         """
         snapshot = self._cached_snapshot or self.load()
         online = snapshot.routing.get("online", {})
@@ -404,6 +413,14 @@ class WorkforcePolicyLoader:
                 campaign_overrides = campaign_routing.get(campaign_id_str)
                 if isinstance(campaign_overrides, dict) and role in campaign_overrides:
                     return str(campaign_overrides[role])
+        # Exact consumer match second
+        consumer_str = consumer if isinstance(consumer, str) else ""
+        if consumer_str:
+            consumer_routing = online.get("consumer_routing", {})
+            if isinstance(consumer_routing, dict):
+                consumer_overrides = consumer_routing.get(consumer_str)
+                if isinstance(consumer_overrides, dict) and role in consumer_overrides:
+                    return str(consumer_overrides[role])
         # Fall back to global route
         worker_id = online.get(role)
         if isinstance(worker_id, str) and worker_id:
