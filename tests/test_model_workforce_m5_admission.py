@@ -46,3 +46,45 @@ def test_qwen14b_reason_supersedes_16gb_resource_note():
     assert worker.state == "DISABLED_RESOURCE_RISK"
     assert "16gb" not in (worker.reason or "")
     assert "m5_64gb_host_2026-10-12" in (worker.reason or "")
+
+
+def test_agy_flash_38_is_resolvable_and_admitted_by_worker_id_and_identity():
+    from nexus_runtime.planning.contracts.workforce_admission import (
+        AdmissionDecision,
+        WorkforceAdmissionRequest,
+    )
+
+    loader = WorkforcePolicyLoader()
+    worker = loader.load().workers["agy_flash_38"]
+    controls = (
+        "task_card",
+        "allowed_files",
+        "mandatory_commands",
+        "parser",
+        "verifier",
+        "independent_verification",
+    )
+    by_id = WorkforceAdmissionRequest(
+        requested_worker_id="agy_flash_38",
+        role="fast_bounded_implementation",
+        autonomy="L1",
+        context="nexus_bounded",
+        route_authorized=True,
+        provided_controls=controls,
+    )
+    by_identity = WorkforceAdmissionRequest(
+        provider="agy",
+        model="gemini-3.8-flash-medium",
+        role="fast_bounded_implementation",
+        autonomy="L1",
+        context="nexus_bounded",
+        route_authorized=True,
+        provided_controls=controls,
+    )
+    assert worker.model == "gemini-3.8-flash-medium"
+    for request in (by_id, by_identity):
+        decision = loader.admit(request)
+        assert decision.decision == AdmissionDecision.ALLOW, decision.decision_reasons
+        assert decision.resolved_worker_id == "agy_flash_38"
+    # The 3.7 worker stays the single default for the online route.
+    assert loader.resolve_route("fast_bounded_implementation") == "agy_flash_37_medium"
