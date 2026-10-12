@@ -351,6 +351,8 @@ workers:
       global_promotion: false
       conditional_ceiling: L1
       claim_ceiling: CANDIDATE_ONLY
+      owner_approved_consumers: [external_intelligence]
+      consumer_approval_ref: owner-decision-2026-10-12-eia-gpt-web
   grok_review:
     provider: grok
     model: grok-4.5
@@ -755,6 +757,9 @@ routing:
         bounded_candidate_generation: opencli_chatgpt_balanced_web
       github-issue-982-wave-b-20260919:
         bounded_candidate_generation: opencode_mimo_free
+    consumer_routing:
+      external_intelligence:
+        bounded_candidate_generation: opencli_chatgpt_balanced_web
     main_engineering: codex_luna
     independent_review: grok_review
     complex_milestone: codex_luna_when_available
