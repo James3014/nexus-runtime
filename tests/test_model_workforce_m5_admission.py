@@ -88,3 +88,47 @@ def test_agy_flash_38_is_resolvable_and_admitted_by_worker_id_and_identity():
         assert decision.resolved_worker_id == "agy_flash_38"
     # The 3.7 worker stays the single default for the online route.
     assert loader.resolve_route("fast_bounded_implementation") == "agy_flash_37_medium"
+
+
+def test_local_first_advisor_roles_route_to_interim_qwen35_9b():
+    snapshot = _snapshot()
+    local_first = snapshot.routing["local_first"]
+    worker = snapshot.workers["local_qwen35_9b"]
+    assert worker.state == "LOCAL_CONDITIONAL"
+    for role in ("classification", "extraction", "compression", "compact_diagnosis"):
+        assert local_first[role] == "local_qwen35_9b"
+        assert role in worker.roles
+        assert local_first[role] != "local_advisor_3b"
+    assert {"bounded_reasoning_candidate", "counterexample_search"} <= set(worker.roles)
+    # The retired 3B advisor stays registered but non-admissible.
+    assert snapshot.workers["local_advisor_3b"].state in NON_ADMISSIBLE_STATES
+
+
+def test_qwen35_9b_admitted_for_compact_diagnosis_and_3b_rejected():
+    from nexus_runtime.planning.contracts.workforce_admission import (
+        AdmissionDecision,
+        WorkforceAdmissionRequest,
+    )
+
+    loader = WorkforcePolicyLoader()
+    common = {
+        "role": "compact_diagnosis",
+        "autonomy": "L0.5",
+        "context": "nexus_bounded",
+        "route_authorized": True,
+        "provided_controls": (
+            "bounded_context",
+            "parser",
+            "external_verifier",
+            "counterexample_suite",
+            "role_specific_suite",
+            "fixed_schema",
+            "compact_context",
+            "deterministic_consumer",
+        ),
+    }
+    ok = loader.admit(WorkforceAdmissionRequest(requested_worker_id="local_qwen35_9b", **common))
+    assert ok.decision == AdmissionDecision.ALLOW, ok.decision_reasons
+    assert ok.resolved_worker_id == "local_qwen35_9b"
+    bad = loader.admit(WorkforceAdmissionRequest(requested_worker_id="local_advisor_3b", **common))
+    assert bad.decision != AdmissionDecision.ALLOW

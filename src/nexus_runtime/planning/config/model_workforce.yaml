@@ -550,9 +550,13 @@ workers:
     availability: AVAILABLE
     autonomy: L1
     default_route: false
-    roles: [bounded_reasoning_candidate, counterexample_search]
+    roles: [bounded_reasoning_candidate, counterexample_search, classification, extraction, compression, compact_diagnosis]
     preferred_context: nexus_bounded
     benchmark_ref: local_qwen35_9b
+    note: interim_replacement_for_local_advisor_3b_2026-10-12; unvalidated_for_role
+    evidence_refs:
+      - docs/reports/qwen3b_s2t_adapter_manifest.json
+      - docs/reports/3b_override_verified_rate_analysis.md
     requires: [bounded_context, parser, external_verifier, counterexample_suite, role_specific_suite]
     forbidden_actions: [full_context_default, claim_authority, direct_apply]
     requalification_evidence:
@@ -737,10 +741,10 @@ routing:
   deterministic_first: true
   no_default_full_context_local_worker: true
   local_first:
-    classification: local_advisor_3b
-    extraction: local_advisor_3b
-    compression: local_advisor_3b
-    compact_diagnosis: local_advisor_3b
+    classification: local_qwen35_9b
+    extraction: local_qwen35_9b
+    compression: local_qwen35_9b
+    compact_diagnosis: local_qwen35_9b
     bounded_code_candidate: local_coder_7b
     bounded_reasoning_shadow: local_qwen3_8b
   online:
