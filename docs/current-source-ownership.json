@@ -460,14 +460,14 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/engine/capability_contracts.py",
-      "sha256": "bf0b7fa164f5ac5bb13710340eb1cbd87287feac3bafdcece6cc63e8e53b3a08"
+      "sha256": "ad29bc7948d2da7bf68a2d124e1dfad6889b25f12a2b2223e5c6c9a8103cad78"
     },
     {
       "canonical_owner": "runtime planning",
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/engine/capability_planner.py",
-      "sha256": "6abacc273fafeb161debb2e04d317f95464b89a98e8ed01860e52f587fa23ecd"
+      "sha256": "580de576df9240659a110e628b96af20fb1b0fcfba255d97a38164575cf2199a"
     },
     {
       "canonical_owner": "runtime planning",
@@ -712,7 +712,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/services/capability_registry.py",
-      "sha256": "5c0338a4ed5fa0b42045001ef8ce90f6104f3ad8d0022bb79ee052fcdb5497be"
+      "sha256": "80dd8d264d6dfa473d9fc2cbd4cd87fbc4933463b504a7541552ddbc46b2c276"
     },
     {
       "canonical_owner": "runtime support",
@@ -906,7 +906,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "2568cd30a671144d6e03a3bd0cf71dd3896d93a3",
-  "source_tree": "959fcb1dbc1916632f3146ccd9ef341e68842a20",
+  "source_head": "9e7af55626c43c01412b547d2a037ae75d28b3d6",
+  "source_tree": "5f544d580bcd1f6eee3953ed5d5fc02043b98a88",
   "unknown_lineage": []
 }

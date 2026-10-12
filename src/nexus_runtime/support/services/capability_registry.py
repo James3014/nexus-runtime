@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
+from nexus_runtime.planning.engine.capability_contracts import (
+    RETIRED_FIRST_BATCH,
+    RETIRED_REASON_CODE,
+)
 from nexus_runtime.planning.engine.capability_planner import default_capability_nodes
 from nexus_runtime.support.services.executor_binding import resolve_executor
 
@@ -24,6 +28,8 @@ SKIP_LEGACY_ALIAS = "legacy_alias_no_separate_invoker"
 SKIP_CALLER_OMITTED = "caller_omitted_auto_skip"
 SKIP_POLICY_NOT_TRIGGERED = "SKIPPED_POLICY_NOT_TRIGGERED"
 BLOCKED_EXECUTOR_UNAVAILABLE = "BLOCKED_EXECUTOR_UNAVAILABLE"
+# Owner-approved retirement (2026-10-12 first batch): receipt-visible explicit skip.
+SKIP_RETIRED = RETIRED_REASON_CODE
 
 SKIP_REASONS = frozenset(
     {
@@ -35,6 +41,7 @@ SKIP_REASONS = frozenset(
         SKIP_CALLER_OMITTED,
         SKIP_POLICY_NOT_TRIGGERED,
         BLOCKED_EXECUTOR_UNAVAILABLE,
+        SKIP_RETIRED,
     }
 )
 
@@ -63,6 +70,7 @@ GAP_CLASSES = frozenset(
         "D_selected_not_executed",
         "E_escalate_ok",
         "F_wired_ok",
+        "G_retired",
     }
 )
 
@@ -78,6 +86,7 @@ EXECUTION_CLASS_CONTROL_PLANE_REFERENCE = "CONTROL_PLANE_REFERENCE"
 EXECUTION_CLASS_EXPERIMENTAL_NOT_PROMOTED = "EXPERIMENTAL_NOT_PROMOTED"
 EXECUTION_CLASS_LEGACY_ALIAS = "LEGACY_ALIAS"
 EXECUTION_CLASS_MISSING_ENGINE = "MISSING_ENGINE"
+EXECUTION_CLASS_RETIRED = "RETIRED"
 
 EXECUTION_CLASSES = frozenset(
     {
@@ -89,6 +98,7 @@ EXECUTION_CLASSES = frozenset(
         EXECUTION_CLASS_EXPERIMENTAL_NOT_PROMOTED,
         EXECUTION_CLASS_LEGACY_ALIAS,
         EXECUTION_CLASS_MISSING_ENGINE,
+        EXECUTION_CLASS_RETIRED,
     }
 )
 
@@ -189,6 +199,8 @@ def _ec(
             execution_kind = "EXTERNAL_EFFECT"
         elif execution_class == EXECUTION_CLASS_MISSING_ENGINE:
             execution_kind = "MISSING"
+        elif execution_class == EXECUTION_CLASS_RETIRED:
+            execution_kind = "RETIRED"
         else:
             execution_kind = "NONPROMOTED"
     if required_outcome_fields is None:
@@ -219,6 +231,7 @@ def _ec(
             "EXTERNAL_EFFECT": "authorized_adapter_effect_or_fail_closed_auth",
             "NONPROMOTED": "must_not_promote",
             "MISSING": "must_not_succeed",
+            "RETIRED": "must_not_succeed",
         }[execution_kind]
     return {
         "canonical_id": canonical_id,
@@ -629,18 +642,6 @@ def _build_planner_execution_contracts() -> dict[str, dict[str, Any]]:
             consumer_effect=CONSUMER_EFFECT_PROMPT_EVIDENCE,
             reason_code="requires_model_execution_boundary",
         ),
-        "ui_validator": _ec(
-            "ui_validator",
-            EXECUTION_CLASS_EXTERNAL_AUTH_REQUIRED,
-            producer_stage="UnifiedRuntime",
-            trigger_policy="escalate_only",
-            executor_key="ui_validator",
-            physical_callable=None,
-            provider_authorization_required=True,
-            consumer_effect=CONSUMER_EFFECT_EXTERNAL_SIDE_EFFECT,
-            consumer_targets=("online",),
-            reason_code="external_browser_auth_required",
-        ),
         "external_doc_scout": _ec(
             "external_doc_scout",
             EXECUTION_CLASS_EXTERNAL_AUTH_REQUIRED,
@@ -673,28 +674,6 @@ def _build_planner_execution_contracts() -> dict[str, dict[str, Any]]:
 
     # Experimental — not production-promoted.
     experimental: dict[str, dict[str, Any]] = {
-        "federation": _ec(
-            "federation",
-            EXECUTION_CLASS_EXPERIMENTAL_NOT_PROMOTED,
-            producer_stage="UnifiedRuntime",
-            trigger_policy="escalate_only",
-            executor_key="federation",
-            physical_callable=None,
-            consumer_effect=CONSUMER_EFFECT_NONE,
-            consumer_targets=(),
-            reason_code="experimental_not_promoted",
-        ),
-        "oracle_shadow": _ec(
-            "oracle_shadow",
-            EXECUTION_CLASS_EXPERIMENTAL_NOT_PROMOTED,
-            producer_stage="UnifiedRuntime",
-            trigger_policy="escalate_only",
-            executor_key="oracle_shadow",
-            physical_callable=None,
-            consumer_effect=CONSUMER_EFFECT_NONE,
-            consumer_targets=(),
-            reason_code="experimental_not_promoted",
-        ),
     }
 
     # Phase 2 hardened registered executors (real engine methods + structured outcomes).
@@ -869,15 +848,6 @@ def _build_planner_execution_contracts() -> dict[str, dict[str, Any]]:
             ),
             success_predicate="asi_constraints_extracted",
         ),
-        "benchmark": _ec(
-            "benchmark",
-            EXECUTION_CLASS_TRIGGERED_REAL,
-            producer_stage="UnifiedRuntime",
-            trigger_policy="escalate_only",
-            executor_key="benchmark",
-            physical_callable=f"{reg}:benchmark",
-            consumer_effect=CONSUMER_EFFECT_EXECUTION_CONTROL,
-        ),
         "committee": _ec(
             "committee",
             EXECUTION_CLASS_EXTERNAL_AUTH_REQUIRED,
@@ -1025,15 +995,6 @@ def _build_planner_execution_contracts() -> dict[str, dict[str, Any]]:
             ),
             success_predicate="registry_peer_contacted",
         ),
-        "stress_test": _ec(
-            "stress_test",
-            EXECUTION_CLASS_TRIGGERED_REAL,
-            producer_stage="UnifiedRuntime",
-            trigger_policy="escalate_only",
-            executor_key="stress_test",
-            physical_callable=f"{reg}:stress_test",
-            consumer_effect=CONSUMER_EFFECT_EXECUTION_CONTROL,
-        ),
         "swarm_quiet_moment": _ec(
             "swarm_quiet_moment",
             EXECUTION_CLASS_CONTROL_PLANE_REFERENCE,
@@ -1056,6 +1017,24 @@ def _build_planner_execution_contracts() -> dict[str, dict[str, Any]]:
     }
     missing: dict[str, dict[str, Any]] = {}
 
+    # Retired 2026-10-12 (owner-approved first batch): ids stay known so old
+    # receipts parse, but the planner never selects them and any caller that
+    # still names one gets an explicit RETIRED skip (never a silent omit).
+    retired: dict[str, dict[str, Any]] = {
+        name: _ec(
+            name,
+            EXECUTION_CLASS_RETIRED,
+            producer_stage="UnifiedRuntime",
+            trigger_policy="retired_2026_10_12",
+            executor_key=None,
+            physical_callable=None,
+            consumer_effect=CONSUMER_EFFECT_NONE,
+            consumer_targets=(),
+            reason_code=RETIRED_REASON_CODE,
+        )
+        for name in sorted(RETIRED_FIRST_BATCH)
+    }
+
     contracts: dict[str, dict[str, Any]] = {}
     for part in (
         real,
@@ -1067,6 +1046,7 @@ def _build_planner_execution_contracts() -> dict[str, dict[str, Any]]:
         phase3_bound,
         probe_escalate,
         missing,
+        retired,
     ):
         overlap = set(contracts) & set(part)
         if overlap:
@@ -1097,6 +1077,8 @@ def gap_class_from_execution_class(execution_class: str) -> str:
         return "F_wired_ok"
     if ec == EXECUTION_CLASS_MISSING_ENGINE:
         return "A_missing_invoker"
+    if ec == EXECUTION_CLASS_RETIRED:
+        return "G_retired"
     if ec in {
         EXECUTION_CLASS_EXTERNAL_AUTH_REQUIRED,
         EXECUTION_CLASS_CONTROL_PLANE_REFERENCE,
@@ -1175,6 +1157,8 @@ def _derive_probe_only_reason_codes() -> dict[str, str]:
             continue
         if c["execution_class"] in REAL_EXECUTION_CLASSES:
             continue
+        if c["execution_class"] == EXECUTION_CLASS_RETIRED:
+            continue
         out[name] = rc
     return out
 
@@ -1196,6 +1180,7 @@ LOCAL_MODE_CONSUME_SHARED_EVIDENCE = "CONSUME_SHARED_EVIDENCE"
 LOCAL_MODE_CONTROLLED_BY_POSTFLIGHT = "CONTROLLED_BY_POSTFLIGHT"
 LOCAL_MODE_EXTERNAL_NOT_LOCAL = "EXTERNAL_NOT_LOCAL"
 CONSUMER_MODE_NOT_TARGET = "NOT_TARGET"
+CONSUMER_MODE_RETIRED = "RETIRED"
 CONSUMER_MODE_EXTERNAL_AUTHORIZED_EXECUTE = "EXTERNAL_AUTHORIZED_EXECUTE"
 
 LOCAL_EXECUTION_MODES = frozenset(
@@ -1204,6 +1189,7 @@ LOCAL_EXECUTION_MODES = frozenset(
         LOCAL_MODE_CONSUME_SHARED_EVIDENCE,
         LOCAL_MODE_CONTROLLED_BY_POSTFLIGHT,
         LOCAL_MODE_EXTERNAL_NOT_LOCAL,
+        CONSUMER_MODE_RETIRED,
     }
 )
 
@@ -1214,6 +1200,7 @@ ONLINE_EXECUTION_MODES = frozenset(
         LOCAL_MODE_CONTROLLED_BY_POSTFLIGHT,
         CONSUMER_MODE_EXTERNAL_AUTHORIZED_EXECUTE,
         CONSUMER_MODE_NOT_TARGET,
+        CONSUMER_MODE_RETIRED,
     }
 )
 
@@ -1232,6 +1219,8 @@ def project_consumer_execution_mode(name: str, target: str) -> str:
     c = PLANNER_EXECUTION_CONTRACTS.get(key)
     if c is None or consumer not in {"local", "online"}:
         return CONSUMER_MODE_NOT_TARGET
+    if c.get("execution_class") == EXECUTION_CLASS_RETIRED:
+        return CONSUMER_MODE_RETIRED
 
     targets = {str(item).strip().lower() for item in c.get("consumer_targets") or []}
     if consumer not in targets:
@@ -1407,7 +1396,13 @@ def build_wiring_matrix() -> dict[str, Any]:
             contract.get("physical_callable")
             or f"capability_registry:pending:{name}"
         )
-        if name in LOCAL_STAGE_CAPABILITIES:
+        if execution_class == EXECUTION_CLASS_RETIRED:
+            handler = "retired_skip"
+            has_invoker = True
+            feeds_online = False
+            reason_code = reason_code or RETIRED_REASON_CODE
+            physical_hint = f"capability_registry:retired_skip:{name}"
+        elif name in LOCAL_STAGE_CAPABILITIES:
             handler = "local_stage"
             has_invoker = True
             feeds_online = True
@@ -2526,6 +2521,9 @@ def build_default_mainchain_invokers(
             # receipt that can pass without reducing context.
             invokers[name] = prompt_compression_invoker or build_prompt_compression_capability_invoker()
             continue
+        if name in RETIRED_FIRST_BATCH:
+            invokers[name] = build_explicit_skip_invoker(name, skip_reason=SKIP_RETIRED)
+            continue
         if name in LOCAL_STAGE_CAPABILITIES:
             # Production LocalModelExecutor path (not explicit_skip theater).
             invokers[name] = build_local_model_executor_invoker()
@@ -2585,6 +2583,10 @@ def ensure_selected_coverage_invokers(
         base.update(dict(default_capability_invokers))
     if existing:
         base.update(dict(existing))
+    # Retired capabilities are terminal: neither a host default nor a per-run
+    # caller invoker may revive them; naming one yields the explicit RETIRED skip.
+    for name in RETIRED_FIRST_BATCH:
+        base[name] = build_explicit_skip_invoker(name, skip_reason=SKIP_RETIRED)
     for name in selected or ():
         key = str(name)
         if key not in base:

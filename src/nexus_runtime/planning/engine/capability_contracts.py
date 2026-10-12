@@ -236,6 +236,17 @@ def normalize_risk_score(value: Any) -> dict[str, Any]:
     }
 
 
+# Owner-approved capability retirement (2026-10-12, first batch).  Retired
+# nodes keep their ids (old receipts/aliases still parse) but are never
+# selectable by CapabilityPlanner under any signal.  Single source of truth;
+# the capability registry derives its retired contracts from this set.
+RETIRED_MATURITY = "retired"
+RETIRED_REASON_CODE = "RETIRED_2026_10_12_FIRST_BATCH"
+RETIRED_FIRST_BATCH: frozenset[str] = frozenset(
+    {"benchmark", "federation", "oracle_shadow", "stress_test", "ui_validator"}
+)
+
+
 @dataclass(frozen=True)
 class CapabilityNode:
     name: str
