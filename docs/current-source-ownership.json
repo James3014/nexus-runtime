@@ -712,7 +712,14 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/services/capability_registry.py",
-      "sha256": "9912f8a2258321f544a1cdbfb355744d2ecb32908d545359103869d37acb0198"
+      "sha256": "5c0338a4ed5fa0b42045001ef8ce90f6104f3ad8d0022bb79ee052fcdb5497be"
+    },
+    {
+      "canonical_owner": "runtime support",
+      "donor": "new runtime-owned injection seam (issue #162); no donor",
+      "lineage_status": "known",
+      "path": "nexus_runtime/support/services/executor_binding.py",
+      "sha256": "c86c9c11ea9bba1074e306b54296a8f775b0894219241fa26d8ad944bfc24930"
     },
     {
       "canonical_owner": "runtime support",
@@ -899,7 +906,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "8c74199ae8244754a9dd476c13a307edbff8994f",
-  "source_tree": "ebb982cc56e65a6707c6243dc8684c3b885ce337",
+  "source_head": "0632aa2bf37a51a7a406ee5293eaba2eefb31d00",
+  "source_tree": "e0344162cc5e9ea911217e11ef6b488419cc00c5",
   "unknown_lineage": []
 }
