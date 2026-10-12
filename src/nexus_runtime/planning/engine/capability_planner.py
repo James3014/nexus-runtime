@@ -13,6 +13,8 @@ from nexus_runtime.planning.core.lite_route_oracle import lite_route_safety_bloc
 from nexus_runtime.planning.engine.capability_contracts import (
     CapabilityNode,
     CapabilityPlan,
+    RETIRED_MATURITY,
+    RETIRED_REASON_CODE,
     CapabilityScoringConfig,
     ExecutionReplanAuthorization,
     apply_execution_depth_floor,
@@ -506,7 +508,7 @@ def default_capability_nodes() -> dict[str, CapabilityNode]:
             "benchmark",
             ("C",),
             category="self_improvement",
-            maturity="production",
+            maturity=RETIRED_MATURITY,
             dependencies=("artifact_gate",),
             cost=4,
             benefit=4,
@@ -593,7 +595,7 @@ def default_capability_nodes() -> dict[str, CapabilityNode]:
             "ui_validator",
             ("A",),
             category="validation",
-            maturity="beta",
+            maturity=RETIRED_MATURITY,
             dependencies=("artifact_gate",),
             cost=3,
             benefit=3,
@@ -604,7 +606,7 @@ def default_capability_nodes() -> dict[str, CapabilityNode]:
             "stress_test",
             ("A", "C"),
             category="validation",
-            maturity="beta",
+            maturity=RETIRED_MATURITY,
             dependencies=("artifact_gate",),
             cost=4,
             benefit=3,
@@ -636,7 +638,7 @@ def default_capability_nodes() -> dict[str, CapabilityNode]:
             "oracle_shadow",
             ("P", "R", "A", "C"),
             category="repair",
-            maturity="experimental",
+            maturity=RETIRED_MATURITY,
             dependencies=("sandbox", "delivery_gate"),
             cost=5,
             benefit=4,
@@ -647,7 +649,7 @@ def default_capability_nodes() -> dict[str, CapabilityNode]:
             "federation",
             ("X", "R", "C"),
             category="self_improvement",
-            maturity="experimental",
+            maturity=RETIRED_MATURITY,
             dependencies=("benchmark", "meta_opt"),
             cost=6,
             benefit=4,
@@ -759,6 +761,10 @@ class CapabilityPlanner:
 
         def enable(name: str, reason: str) -> None:
             if name not in states or states[name] == "required":
+                return
+            if self.nodes[name].maturity == RETIRED_MATURITY:
+                # Retired nodes are never selectable; the signal is recorded, not honored.
+                reasons[name].append(f"{RETIRED_REASON_CODE}:signal_ignored:{reason}")
                 return
             states[name] = "conditional"
             reasons[name].append(reason)
@@ -884,6 +890,7 @@ class CapabilityPlanner:
         elif bool(route.get("local_enabled")):
             enable("local_model_executor", "unified_runtime_local_route")
 
+        retired = self._enforce_retired_capabilities(states=states, reasons=reasons)
         selected = [name for name, state in states.items() if state in {"required", "conditional"}]
         pending = [name for name in selected if name in PENDING_EXECUTOR_CAPABILITIES]
         total_cost = sum(self.nodes[name].cost for name in selected)
@@ -974,6 +981,11 @@ class CapabilityPlanner:
                 "floor_applied": (final_effective_depth != base_effective_depth),
             }
 
+        if retired:
+            signal_snapshot["retired_capabilities"] = {
+                "reason_code": RETIRED_REASON_CODE,
+                "capabilities": list(retired),
+            }
         signal_snapshot["recommended_flow_source"] = "route.recommended_flow"
         signal_snapshot["planner_version"] = "capability_planner_v1"
         signal_snapshot["route_truth_source"] = "CapabilityPlanner"
@@ -1294,6 +1306,30 @@ class CapabilityPlanner:
             if states.get(cap) != "required":
                 states[cap] = "required"
                 reasons[cap].append("route_oracle_expected_receipt_required")
+
+    def _enforce_retired_capabilities(
+        self,
+        *,
+        states: dict[str, str],
+        reasons: dict[str, list[str]],
+    ) -> list[str]:
+        """Terminal retired gate: runs after every policy, overrides any selection.
+
+        Uses the existing terminal ``forbidden`` state so retired nodes can never
+        appear in selected/required/conditional lists, even when a route oracle
+        names them as expected.
+        """
+        retired: list[str] = []
+        for name, node in self.nodes.items():
+            if node.maturity != RETIRED_MATURITY:
+                continue
+            if states.get(name) in {"required", "conditional"}:
+                reasons[name].append(f"{RETIRED_REASON_CODE}:selection_overridden")
+            states[name] = "forbidden"
+            if RETIRED_REASON_CODE not in reasons[name]:
+                reasons[name].append(RETIRED_REASON_CODE)
+            retired.append(name)
+        return retired
 
     def _apply_simple_hidden_contract_policy(
         self,
