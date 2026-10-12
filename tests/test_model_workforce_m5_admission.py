@@ -33,8 +33,10 @@ def test_splash_and_gemini_38_workers_are_registered_with_expected_states():
     assert set(splash.roles) == {"bounded_code_candidate", "bounded_reasoning_candidate"}
     big = workers["local_splash_qwen38_27b"]
     assert big.state == "EXPERIMENT_ONLY"
-    assert big.autonomy == "L0"
-    assert big.reason == "installed_on_m5_not_served_gateway_unmapped"
+    assert big.autonomy == "L1"
+    assert set(big.roles) == {"bounded_experiment", "bounded_code_candidate"}
+    assert big.requires == workers["local_coder_7b"].requires
+    assert big.reason == "served_on_m5_8001_gateway_mapped_2026-10-13; calibration_only_not_promoted"
     agy = workers["agy_flash_38"]
     assert agy.provider == "agy"
     assert agy.state == "REGISTERED_CONDITIONAL"
@@ -160,3 +162,62 @@ def test_bounded_reasoning_shadow_routes_to_interim_qwen35_9b():
     assert snapshot.workers["local_qwen3_8b"].state in NON_ADMISSIBLE_STATES
     raw = yaml.safe_load(loader.policy_path.read_text(encoding="utf-8"))
     assert "bounded_reasoning_shadow_interim_2026-10-12" in raw["workers"]["local_qwen35_9b"]["note"]
+
+
+def _splash27b_request(**overrides):
+    from nexus_runtime.planning.contracts.workforce_admission import WorkforceAdmissionRequest
+
+    fields = dict(
+        requested_worker_id="local_splash_qwen38_27b",
+        provider="ollama",
+        model="incoai/Qwen3.8-27B-Splash",
+        role="bounded_code_candidate",
+        autonomy="L1",
+        context="nexus_bounded",
+        route_authorized=True,
+        provided_controls=("small_scope", "parser", "compile", "focused_tests", "reversible_application"),
+    )
+    fields.update(overrides)
+    return WorkforceAdmissionRequest(**fields)
+
+
+def test_splash27b_bounded_code_candidate_needs_explicit_experiment_authorization():
+    """The calibration role does not promote the 27B: EXPERIMENT_ONLY still blocks unauthorized use."""
+    from nexus_runtime.planning.contracts.workforce_admission import AdmissionDecision
+
+    loader = WorkforcePolicyLoader()
+    blocked = loader.admit(_splash27b_request())
+    assert blocked.decision == AdmissionDecision.BLOCK
+    assert any("explicit experiment authorization" in r for r in blocked.decision_reasons)
+
+    allowed = loader.admit(_splash27b_request(explicit_experiment_authorization=True))
+    assert allowed.decision == AdmissionDecision.ALLOW, allowed.decision_reasons
+    assert allowed.resolved_model == "incoai/Qwen3.8-27B-Splash"
+
+    escalated = loader.admit(
+        _splash27b_request(explicit_experiment_authorization=True, autonomy="L2")
+    )
+    assert escalated.decision != AdmissionDecision.ALLOW
+
+
+def test_splash27b_is_not_routed_or_default():
+    loader = WorkforcePolicyLoader()
+    snapshot = loader.load()
+    import yaml
+
+    raw = yaml.safe_load(loader.policy_path.read_text(encoding="utf-8"))
+    assert raw["workers"]["local_splash_qwen38_27b"].get("default_route") is not True
+    assert raw["routing"]["local_first"]["bounded_code_candidate"] == "local_coder_7b"
+
+    def targets(node):
+        if isinstance(node, dict):
+            for value in node.values():
+                yield from targets(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from targets(value)
+        elif isinstance(node, str):
+            yield node
+
+    assert "local_splash_qwen38_27b" not in set(targets(raw["routing"]))
+    assert snapshot.workers["local_splash_qwen38_27b"].state == "EXPERIMENT_ONLY"
