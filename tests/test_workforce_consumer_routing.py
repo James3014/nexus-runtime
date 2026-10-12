@@ -47,7 +47,9 @@ def test_consumer_does_not_change_other_roles() -> None:
 def test_campaign_match_wins_over_consumer() -> None:
     loader = _loader()
     assert (
-        loader.resolve_route(ROLE, campaign_id=CAMPAIGN, consumer="external_intelligence")
+        loader.resolve_route(
+            ROLE, campaign_id=CAMPAIGN, consumer="external_intelligence"
+        )
         == "opencode_mimo_free"
     )
     # Unknown campaign falls through to the consumer route.
@@ -67,12 +69,19 @@ def _policy_with_consumer_target(tmp_path: Path, target: str) -> Path:
 
 def test_packaged_policy_copy_validates(tmp_path: Path) -> None:
     path = _policy_with_consumer_target(tmp_path, GPT_WEB)
-    assert WorkforcePolicyLoader(path).resolve_route(ROLE, consumer="external_intelligence") == GPT_WEB
+    assert (
+        WorkforcePolicyLoader(path).resolve_route(
+            ROLE, consumer="external_intelligence"
+        )
+        == GPT_WEB
+    )
 
 
 def test_validation_rejects_unknown_consumer_target(tmp_path: Path) -> None:
     path = _policy_with_consumer_target(tmp_path, "no_such_worker")
-    with pytest.raises(WorkforcePolicyValidationError, match="consumer_routing.external_intelligence"):
+    with pytest.raises(
+        WorkforcePolicyValidationError, match="consumer_routing.external_intelligence"
+    ):
         WorkforcePolicyLoader(path).load()
 
 

@@ -359,10 +359,7 @@ class WorkforcePolicyLoader:
                     f"worker '{worker_id}' is a registered successor without explicit disposition"
                 )
         # Validate campaign and consumer routing targets
-        for scope_key, scope_label in (
-            ("campaign_routing", "campaign_routing"),
-            ("consumer_routing", "consumer_routing"),
-        ):
+        for scope_key in ("campaign_routing", "consumer_routing"):
             scoped_routing = online.get(scope_key, {})
             if not isinstance(scoped_routing, dict):
                 continue
@@ -370,7 +367,7 @@ class WorkforcePolicyLoader:
                 if not isinstance(overrides, dict):
                     continue
                 for role, worker_id in overrides.items():
-                    prefix = f"routing.online.{scope_label}.{scope_id}.{role}"
+                    prefix = f"routing.online.{scope_key}.{scope_id}.{role}"
                     if not isinstance(worker_id, str) or worker_id not in snapshot.workers:
                         raise WorkforcePolicyValidationError(
                             f"{prefix} references unknown worker '{worker_id}'"
