@@ -1,7 +1,7 @@
 schema: nexus.model_workforce.v1
 status: current
 owner: James Chen
-last_verified: '2026-08-17'
+last_verified: '2026-10-12'
 authority_document: docs/arch/MODEL_WORKFORCE_POLICY.md
 benchmark_matrix: nexus/config/model_three_arm_matrix.yaml
 benchmark_harness: scripts/bench/experimental/model_workforce_three_arm.py
@@ -311,6 +311,22 @@ workers:
       conditional_ceiling: L3
       experimental_ceiling: L4
       experimental_l4_admitted: false
+  agy_flash_38:
+    provider: agy
+    model: gemini-3.8-flash-medium
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L3
+    roles: [bounded_candidate_generation, fast_bounded_implementation, focused_verification]
+    preferred_context: nexus_bounded
+    default_route: false
+    requires: [task_card, allowed_files, mandatory_commands, parser, verifier, independent_verification]
+    forbidden_actions: [route_authority, approval, integration, push, release, production_claim, public_claim]
+    model_id_note: >-
+      Model id taken from the Nexus-new dsh-agy-adapter model catalog
+      (gemini-3.8-flash-medium, mirroring the gemini-3.7-flash-medium naming of
+      agy_flash_37_medium); not yet attested by a live agy run. Owner-requested
+      2026-10-12. Not the default route; agy_flash_37_medium stays the default.
   opencli_chatgpt_balanced_web:
     provider: opencli_chatgpt
     model: opencli_chatgpt/balanced
@@ -455,7 +471,8 @@ workers:
   local_advisor_3b:
     provider: ollama
     model: qwen2.5-s2t-advisor:3b
-    state: LOCAL_CONDITIONAL
+    state: INSTALLED_NOT_CONNECTED
+    reason: not_present_on_m5_ollama_2026-10-12
     availability: AVAILABLE
     autonomy: L0.5
     roles: [classification, extraction, compression, compact_diagnosis, candidate_ranking]
@@ -473,10 +490,37 @@ workers:
     benchmark_ref: local_qwen7b
     requires: [small_scope, parser, compile, focused_tests, reversible_application]
     forbidden_actions: [architecture_choice, cross_module_closure, self_verification]
+  local_splash_qwen36:
+    provider: ollama
+    model: incoai/Qwen3.6-35B-A3B-Splash
+    state: LOCAL_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    roles: [bounded_code_candidate, bounded_reasoning_candidate]
+    requires: [small_scope, parser, compile, focused_tests, reversible_application]
+    forbidden_actions: [architecture_choice, cross_module_closure, self_verification]
+    transport_note: >-
+      Served by Splash on the M5 host (:8000) and reached through the
+      Ollama-compatible M5 gateway (tunnel 127.0.0.1:11434); the gateway maps
+      only this model to Splash. Never executed on the M4.
+    autonomy_note: >-
+      Full-agent autonomy stays NOT_ADMITTED per lineage qwen-3.6-35b-a3b
+      (portfolio disposition CONDITIONAL/WATCH). Admission here is limited to
+      the bounded candidate roles.
+    evidence_refs:
+      - nexus/config/model_capability_lineage.yaml#lineages.qwen-3.6-35b-a3b
+      - github:James3014/Nexus-new#1412
+      - nexus-learning:docs/experiments/2026-10-memory-ab.md#rounds-8-9
+    evidence_summary: >-
+      Wave 2 T01 first pass was a false completion, then 12/12 repair PASS;
+      Wave 4 T02 FIRST_PASS PASS; T03 context hard stop. Memory A/B rounds 8-9:
+      72 bounded local-heal repair attempts at about 50% calibrated solve on the
+      v5 fixture set, the same bounded_code_candidate role held by local_coder_7b.
   local_deepseek67b:
     provider: ollama
     model: deepseek-coder:6.7b-instruct
-    state: LOCAL_CONDITIONAL
+    state: INSTALLED_NOT_CONNECTED
+    reason: not_present_on_m5_ollama_2026-10-12
     availability: AVAILABLE
     autonomy: L0.5
     default_route: false
@@ -488,7 +532,8 @@ workers:
   local_qwythos9b:
     provider: ollama
     model: qwythos:9b
-    state: LOCAL_CONDITIONAL
+    state: INSTALLED_NOT_CONNECTED
+    reason: not_present_on_m5_ollama_2026-10-12
     availability: AVAILABLE
     autonomy: L0.5
     default_route: false
@@ -534,7 +579,7 @@ workers:
     autonomy: L0
     roles: [explicit_experiment_only]
     benchmark_ref: local_qwen14b
-    reason: no_semantic_uplift_over_7b_and_higher_latency_on_16gb_host
+    reason: no_semantic_uplift_over_7b; resource note superseded by m5_64gb_host_2026-10-12
   mimo_cli:
     provider: mimo
     model: xiaomi/mimo-v2.5
@@ -553,6 +598,21 @@ workers:
     roles: [bounded_experiment]
     benchmark_ref: opencode_big_pickle
     blocker: full_context_envelope_failure
+  local_splash_qwen38_27b:
+    provider: ollama
+    model: incoai/Qwen3.8-27B-Splash
+    state: EXPERIMENT_ONLY
+    availability: AVAILABLE
+    autonomy: L0
+    roles: [bounded_experiment]
+    reason: installed_on_m5_not_served_gateway_unmapped
+    evidence_refs:
+      - nexus/config/model_capability_lineage.yaml#lineages.qwen-3.8-27b
+      - config_id:qwen3.8-27b-splash-q4-opencode-64k-wave3
+    evidence_summary: >-
+      Tool-loop smoke PASS; full-agent T01 STACK_UNQUALIFIED
+      (MODEL_NO_TERMINAL_TEXT). Installed on M5 (14 GB) but not served and not
+      reachable through the gateway.
   opencode_deepseek_v4_flash:
     provider: opencode
     model: opencode/deepseek-v4-flash-free
