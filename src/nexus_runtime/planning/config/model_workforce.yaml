@@ -351,8 +351,32 @@ workers:
       global_promotion: false
       conditional_ceiling: L1
       claim_ceiling: CANDIDATE_ONLY
+  opencli_chatgpt_advanced_web:
+    provider: opencli_chatgpt
+    model: opencli_chatgpt/advanced
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L1
+    roles: [bounded_candidate_generation]
+    preferred_context: nexus_bounded
+    default_route: false
+    requires: [task_card, isolated_directory, parser, focused_tests, verifier, independent_verification]
+    transport_contract:
+      opencli_version: '1.8.7'
+      browser_bridge_version: '1.0.24'
+      window: foreground
+      site_session: ephemeral
+      enforcement: external_intelligence_activation_and_runtime_identity
+    forbidden_actions: [route_authority, approval, integration, push, fallback_substitution, release, production_claim, public_claim]
+    calibration_evidence:
+      status: OWNER_APPROVED_CONSUMER_CONDITIONAL
+      model_revision: UNRESOLVED_MUTABLE_UI_ALIAS
+      account_tier: chatgpt_free_personal
+      global_promotion: false
+      conditional_ceiling: L1
+      claim_ceiling: CANDIDATE_ONLY
       owner_approved_consumers: [external_intelligence]
-      consumer_approval_ref: owner-decision-2026-10-12-eia-gpt-web
+      consumer_approval_ref: owner-decision-2026-10-13-eia-gpt-web-free-thinking
   grok_review:
     provider: grok
     model: grok-4.5
@@ -783,7 +807,7 @@ routing:
         bounded_candidate_generation: opencode_mimo_free
     consumer_routing:
       external_intelligence:
-        bounded_candidate_generation: opencli_chatgpt_balanced_web
+        bounded_candidate_generation: opencli_chatgpt_advanced_web
     main_engineering: codex_luna
     independent_review: grok_review
     complex_milestone: codex_luna_when_available

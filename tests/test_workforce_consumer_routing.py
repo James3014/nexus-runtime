@@ -14,7 +14,7 @@ from nexus_runtime.planning.services.model_workforce_policy import (
 )
 
 ROLE = "bounded_candidate_generation"
-GPT_WEB = "opencli_chatgpt_balanced_web"
+GPT_WEB = "opencli_chatgpt_advanced_web"
 CAMPAIGN = "github-issue-982-wave-b-20260919"
 
 
