@@ -16,7 +16,7 @@ def test_last_verified_is_m5_alignment_date():
 
 def test_not_installed_workers_are_not_admissible_but_keep_roles():
     workers = _snapshot().workers
-    for worker_id in ("local_advisor_3b", "local_deepseek67b", "local_qwythos9b"):
+    for worker_id in ("local_deepseek67b", "local_qwythos9b"):
         worker = workers[worker_id]
         assert worker.state == "INSTALLED_NOT_CONNECTED"
         assert worker.state in NON_ADMISSIBLE_STATES
@@ -104,6 +104,31 @@ def test_local_first_advisor_roles_route_to_interim_qwen35_9b():
     assert {"bounded_reasoning_candidate", "counterexample_search"} <= set(worker.roles)
     # The retired 3B advisor stays registered but non-admissible.
     assert snapshot.workers["local_advisor_3b"].state in NON_ADMISSIBLE_STATES
+    # Exactly one admitted local worker advertises compact_diagnosis.
+    admitted = [
+        worker_id
+        for worker_id, w in snapshot.workers.items()
+        if w.provider == "ollama"
+        and "compact_diagnosis" in w.roles
+        and w.state not in NON_ADMISSIBLE_STATES
+        and w.availability == "AVAILABLE"
+    ]
+    assert admitted == ["local_qwen35_9b"]
+
+
+def test_local_advisor_3b_is_retired_never_admitted():
+    worker = _snapshot().workers["local_advisor_3b"]
+    assert worker.state == "REGISTERED_BLOCKED"
+    assert worker.state in NON_ADMISSIBLE_STATES
+    assert worker.availability == "UNAVAILABLE"
+    assert worker.roles == ()
+    assert worker.reason == (
+        "retired_2026-10-13_stock_qwen25_3b_under_custom_name_weights_absent_see_advisor_3b_eval"
+    )
+    routing = _snapshot().routing
+    for table in routing.values():
+        if isinstance(table, dict):
+            assert "local_advisor_3b" not in table.values()
 
 
 def test_qwen35_9b_admitted_for_compact_diagnosis_and_3b_rejected():
