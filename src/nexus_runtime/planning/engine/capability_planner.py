@@ -1123,7 +1123,17 @@ class CapabilityPlanner:
                 # Inject committee model specs (downstream consumer reads from signal_snapshot)
                 _primary = os.environ.get("NEXUS_C15_PRIMARY_PROPOSER_MODEL", "qwen2.5-coder:7b-instruct")
                 _secondary = os.environ.get("NEXUS_C15_SECONDARY_PROPOSER_MODEL", "deepseek-coder:6.7b-instruct")
-                _judge = os.environ.get("NEXUS_C15_JUDGE_MODEL", "qwen2.5-s2t-advisor:3b")
+                from nexus_runtime.planning.services.model_default_resolution import (
+                    ModelDefaultNotAdmittedError,
+                    resolve_judge_model,
+                )
+
+                try:
+                    _judge = resolve_judge_model(os.environ.get("NEXUS_C15_JUDGE_MODEL", ""))
+                except ModelDefaultNotAdmittedError as exc:
+                    _judge = ""
+                    signal_snapshot["committee_judge_error"] = str(exc)
+                    signal_snapshot["committee_judge_error_code"] = exc.code
                 signal_snapshot["proposer_specs"] = [
                     {"model": _primary, "role": "primary"},
                     {"model": _secondary, "role": "secondary"},
@@ -1145,6 +1155,11 @@ class CapabilityPlanner:
                     [m.strip() for m in _audit_raw.split(",") if m.strip()]
                     if _audit_raw else [_primary, _secondary]
                 )
+                if not _judge:
+                    # Fail closed: no admitted judge means no committee.
+                    signal_snapshot["local_committee_enabled"] = False
+                    signal_snapshot["diagnosis_committee_enabled"] = False
+                    signal_snapshot["audit_committee_enabled"] = False
             else:
                 signal_snapshot["local_committee_enabled"] = False
             # Inject delegated retry candidate models for localheal_pipeline topology

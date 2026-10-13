@@ -759,6 +759,37 @@ def build_subprocess_online_invoker(
             prompt_transport = "argv"
         elif spec.provider in {"mimo", "ollama"} and len(argv) == 1:
             model = admitted_model or str(meta.get("default_model", "") or "").strip()
+            if not model and spec.provider == "ollama":
+                from nexus_runtime.planning.services.model_default_resolution import (
+                    ModelDefaultNotAdmittedError,
+                    resolve_default_model,
+                )
+
+                try:
+                    model = resolve_default_model()
+                except ModelDefaultNotAdmittedError as exc:
+                    return ctx.normalize_online_invoker_payload(
+                        provider=spec.provider,
+                        task_id=task_id,
+                        invoked=False,
+                        output_delivered=False,
+                        gate_passed=False,
+                        provider_call_count=0,
+                        response="",
+                        raw_response="",
+                        usage={},
+                        error=str(exc),
+                        evidence_refs=[
+                            f"online:{spec.provider}:{task_id}:MODEL_DEFAULT_NOT_ADMITTED"
+                        ],
+                        transport=TRANSPORT_REGISTERED_CLI,
+                        selection_source=SELECTION_EXPLICIT_REQUEST,
+                        extra={
+                            "live_provider_claim": False,
+                            "error_code": exc.code,
+                            "role": exc.role,
+                        },
+                    )
             if spec.provider == "mimo":
                 argv = [argv[0], "run", "--model", model, stdin]
             else:

@@ -87,7 +87,7 @@ ONLINE_CLI_SPEC_REGISTRY: dict[str, dict[str, str]] = {
         "command_env": "NEXUS_OLLAMA_COMMAND",
         "binary_name": "ollama",
         "print_flag": "",
-        "default_model": "qwen2.5-s2t-advisor:3b",
+        "default_model": "",  # resolved from workforce policy (MODEL_DEFAULT_NOT_ADMITTED if none)
     },
 }
 
