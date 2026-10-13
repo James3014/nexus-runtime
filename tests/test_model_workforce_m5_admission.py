@@ -11,8 +11,8 @@ def _snapshot():
 
 
 def test_last_verified_is_agy_38_default_switch_date():
-    # Bumped 2026-10-14 for the committee judge admission (#202).
-    assert _snapshot().last_verified == "2026-10-14"
+    # Kept at 2026-10-13 for #202: the loader rejects a future date and CI runs in UTC.
+    assert _snapshot().last_verified == "2026-10-13"
 
 
 def test_not_installed_workers_are_not_admissible_but_keep_roles():

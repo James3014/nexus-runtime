@@ -1,7 +1,7 @@
 schema: nexus.model_workforce.v1
 status: current
 owner: James Chen
-last_verified: '2026-10-14'
+last_verified: '2026-10-13'
 authority_document: docs/arch/MODEL_WORKFORCE_POLICY.md
 benchmark_matrix: nexus/config/model_three_arm_matrix.yaml
 benchmark_harness: scripts/bench/experimental/model_workforce_three_arm.py
