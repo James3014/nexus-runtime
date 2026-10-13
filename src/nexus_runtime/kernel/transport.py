@@ -1067,13 +1067,21 @@ def build_registered_online_invoker(
                 extra={"live_provider_claim": False},
             )
         decision = decision_from_context(context if isinstance(context, Mapping) else {})
-        inject_authorized = bool(
+        injected_only = bool(
             decision is not None
             and decision.online_execution_authorized
             and decision.online_authorization_source == "injected_test_transport"
         )
-        physical_ok = physical_online_authorized(context, injected_transport=False)
-        if not inject_authorized and not physical_ok:
+        # A real provider subprocess needs a physical authorization (task auto|require,
+        # workspace policy, operator override).  A fixture (injected_test_transport)
+        # decision never starts a process (#190); fixtures that want a fake executable pass
+        # a non-subprocess ``runner=`` (resolved eagerly above, classified non-physical).
+        if not physical_online_authorized(context, injected_transport=False):
+            error = (
+                "injected_test_transport_cannot_start_provider_process"
+                if injected_only
+                else "online_execution_not_authorized"
+            )
             return ctx.normalize_online_invoker_payload(
                 provider=key,
                 task_id=task_id,
@@ -1084,7 +1092,7 @@ def build_registered_online_invoker(
                 response="",
                 raw_response="",
                 usage={},
-                error="online_execution_not_authorized",
+                error=error,
                 evidence_refs=[f"online:{key}:{task_id}:authorization_required"],
                 transport=TRANSPORT_REGISTERED_CLI,
                 selection_source=SELECTION_EXPLICIT_REQUEST,
@@ -1144,14 +1152,7 @@ def build_registered_online_invoker(
                 extra={"live_provider_claim": False},
             )
 
-        payload = invoker(context)
-        if inject_authorized and isinstance(payload, dict):
-            payload = dict(payload)
-            payload["selection_source"] = SELECTION_INJECTED_TRANSPORT
-            payload["live_provider_claim"] = False
-            if payload.get("transport") in {"", None, TRANSPORT_REGISTERED_CLI}:
-                payload["transport"] = TRANSPORT_STRUCTURED_CALLABLE
-        return payload
+        return invoker(context)
 
     invoke.provider = key  # type: ignore[attr-defined]
     invoke.online_invoker_provider = key  # type: ignore[attr-defined]
