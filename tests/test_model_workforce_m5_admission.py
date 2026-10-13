@@ -10,8 +10,8 @@ def _snapshot():
     return WorkforcePolicyLoader().load()
 
 
-def test_last_verified_is_m5_alignment_date():
-    assert _snapshot().last_verified == "2026-10-12"
+def test_last_verified_is_agy_38_default_switch_date():
+    assert _snapshot().last_verified == "2026-10-13"
 
 
 def test_not_installed_workers_are_not_admissible_but_keep_roles():
@@ -88,8 +88,8 @@ def test_agy_flash_38_is_resolvable_and_admitted_by_worker_id_and_identity():
         decision = loader.admit(request)
         assert decision.decision == AdmissionDecision.ALLOW, decision.decision_reasons
         assert decision.resolved_worker_id == "agy_flash_38"
-    # The 3.7 worker stays the single default for the online route.
-    assert loader.resolve_route("fast_bounded_implementation") == "agy_flash_37_medium"
+    # Owner decision 2026-10-13 (Nexus-new#1932): 3.8 is the online default.
+    assert loader.resolve_route("fast_bounded_implementation") == "agy_flash_38"
 
 
 def test_local_first_advisor_roles_route_to_interim_qwen35_9b():
