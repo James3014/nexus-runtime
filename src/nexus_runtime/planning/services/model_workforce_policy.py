@@ -321,11 +321,23 @@ class WorkforcePolicyLoader:
                 raise WorkforcePolicyValidationError(
                     f"route_defaults.{role}.current_default must match routing.online.{role}"
                 )
-            if not isinstance(fallback, str) or online.get(f"{role}_fallback") != fallback:
+            # An explicit null fallback (present as null in both places) means
+            # "no fallback": a failed default fails closed and is never
+            # redirected.  A missing key is still rejected.
+            fallback_key = f"{role}_fallback"
+            if (
+                "fallback" not in entry
+                or fallback_key not in online
+                or not (fallback is None or isinstance(fallback, str))
+                or online.get(fallback_key) != fallback
+            ):
                 raise WorkforcePolicyValidationError(f"route_defaults.{role}.fallback is stale or missing")
             if current == fallback:
                 raise WorkforcePolicyValidationError(f"route_defaults.{role} has identical default and fallback")
-            for disposition, target in (("current_default", current), ("fallback", fallback)):
+            targets = [("current_default", current)]
+            if fallback is not None:
+                targets.append(("fallback", fallback))
+            for disposition, target in targets:
                 if target not in snapshot.workers:
                     raise WorkforcePolicyValidationError(
                         f"route_defaults.{role}.{disposition} references unknown worker '{target}'"
@@ -424,7 +436,7 @@ class WorkforcePolicyLoader:
             return worker_id
         raise WorkforcePolicyError(f"No route found for role '{role}'")
 
-    def get_route_defaults(self) -> dict[str, dict[str, str]]:
+    def get_route_defaults(self) -> dict[str, dict[str, str | None]]:
         """Return the route_defaults metadata for all roles."""
         snapshot = self._cached_snapshot or self.load()
         online = snapshot.routing.get("online", {})

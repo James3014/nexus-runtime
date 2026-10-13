@@ -593,13 +593,15 @@ def test_public_runtime_online_callback_receives_serialized_g1_package() -> None
             "workforce_admission_enabled": True,
             "workforce_bindings": {
                 "online": {
-                    "worker_id": "agy_flash",
+                    "worker_id": "agy_flash_38",
                     "provider": "agy",
-                    "model": "gemini-3.6-flash-high",
+                    "model": "gemini-3.8-flash-medium",
                     "controls": [
                         "task_card",
                         "allowed_files",
                         "mandatory_commands",
+                        "parser",
+                        "verifier",
                         "independent_verification",
                     ],
                 }

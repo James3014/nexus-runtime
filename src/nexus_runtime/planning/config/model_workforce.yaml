@@ -1,7 +1,7 @@
 schema: nexus.model_workforce.v1
 status: current
 owner: James Chen
-last_verified: '2026-10-12'
+last_verified: '2026-10-13'
 authority_document: docs/arch/MODEL_WORKFORCE_POLICY.md
 benchmark_matrix: nexus/config/model_three_arm_matrix.yaml
 benchmark_harness: scripts/bench/experimental/model_workforce_three_arm.py
@@ -267,7 +267,8 @@ workers:
     provider: agy
     model: gemini-3.6-flash-high
     state: PROVEN_MAINCHAIN
-    availability: AVAILABLE
+    availability: UNAVAILABLE
+    reason: provider_no_longer_serves_model_agy_1.3.4_2026-10-13
     autonomy: L2
     roles: [fast_bounded_implementation, focused_verification]
     preferred_context: nexus_bounded
@@ -277,11 +278,19 @@ workers:
     max_failover_retries: 1
     requires: [task_card, allowed_files, mandatory_commands, independent_verification]
     forbidden_claims: [architecture_authority, production_ready]
+    availability_note: >-
+      Unavailable since 2026-10-13: Agy 1.3.4 (installed 2026-10-13) enumerates
+      only Gemini 3.8 Flash (High)/(Medium)/(Low), Claude Sonnet 4.6 (Thinking),
+      Claude Opus 4.6 (Thinking) and GPT-OSS 120B (Medium) as available models;
+      no Gemini 3.6 tier is listed (Nexus-new#1932 R1 raw stderr). Evidence is
+      the provider's own catalog, not a direct 3.6 call. Kept registered for
+      history and benchmark lineage.
   agy_flash_medium:
     provider: agy
     model: gemini-3.6-flash-medium
     state: REGISTERED_CONDITIONAL
-    availability: AVAILABLE
+    availability: UNAVAILABLE
+    reason: provider_no_longer_serves_model_agy_1.3.4_2026-10-13
     autonomy: L1
     roles: [bounded_candidate_generation, fast_bounded_implementation, focused_verification]
     preferred_context: nexus_bounded
@@ -292,15 +301,23 @@ workers:
       status: CONDITIONAL
       provider_model_revision: UNRESOLVED
       inherits_high_evidence: false
+    availability_note: >-
+      Unavailable since 2026-10-13: Agy 1.3.4 (installed 2026-10-13) enumerates
+      only Gemini 3.8 Flash (High)/(Medium)/(Low), Claude Sonnet 4.6 (Thinking),
+      Claude Opus 4.6 (Thinking) and GPT-OSS 120B (Medium) as available models;
+      no Gemini 3.6 tier is listed (Nexus-new#1932 R1 raw stderr). Evidence is
+      the provider's own catalog, not a direct 3.6 call. Kept registered for
+      history.
   agy_flash_37_medium:
     provider: agy
     model: gemini-3.7-flash-medium
     state: REGISTERED_CONDITIONAL
-    availability: AVAILABLE
+    availability: UNAVAILABLE
+    reason: provider_no_longer_serves_model_agy_1.3.4_2026-10-13
     autonomy: L3
     roles: [bounded_candidate_generation, fast_bounded_implementation, focused_verification]
     preferred_context: nexus_bounded
-    default_route: true
+    default_route: false
     requires: [task_card, allowed_files, mandatory_commands, parser, verifier, independent_verification]
     forbidden_actions: [route_authority, approval, integration, push, release, production_claim, public_claim]
     calibration_evidence:
@@ -311,6 +328,16 @@ workers:
       conditional_ceiling: L3
       experimental_ceiling: L4
       experimental_l4_admitted: false
+    availability_note: >-
+      Unavailable since 2026-10-13: Agy 1.3.4 rejects --model
+      gemini-3.7-flash-medium ("not recognized as a known model") on all 6 R1
+      trials (Nexus-new#1932, MODEL_IDENTITY_MISMATCH, nothing substituted); Agy
+      1.3.4 (installed 2026-10-13) enumerates only Gemini 3.8 Flash
+      (High)/(Medium)/(Low), Claude Sonnet 4.6 (Thinking), Claude Opus 4.6
+      (Thinking) and GPT-OSS 120B (Medium) as available models. Former
+      fast_bounded_implementation default, replaced by agy_flash_38 under the
+      Owner decision of 2026-10-13. Kept registered for history; its calibration
+      evidence is not inherited by agy_flash_38.
   agy_flash_38:
     provider: agy
     model: gemini-3.8-flash-medium
@@ -319,14 +346,17 @@ workers:
     autonomy: L3
     roles: [bounded_candidate_generation, fast_bounded_implementation, focused_verification]
     preferred_context: nexus_bounded
-    default_route: false
+    default_route: true
     requires: [task_card, allowed_files, mandatory_commands, parser, verifier, independent_verification]
     forbidden_actions: [route_authority, approval, integration, push, release, production_claim, public_claim]
     model_id_note: >-
-      Model id taken from the Nexus-new dsh-agy-adapter model catalog
-      (gemini-3.8-flash-medium, mirroring the gemini-3.7-flash-medium naming of
-      agy_flash_37_medium); not yet attested by a live agy run. Owner-requested
-      2026-10-12. Not the default route; agy_flash_37_medium stays the default.
+      Model id gemini-3.8-flash-medium is live-attested: Nexus-new#1932 R0
+      (2026-10-13, Agy 1.3.3) observed the id and the "Gemini 3.8 Flash (Medium)"
+      label on every call with no substitution, and Agy 1.3.4 lists Gemini 3.8
+      Flash (Medium) as available. Default fast_bounded_implementation route
+      since 2026-10-13 by Owner decision (switch without requalification because
+      Agy 1.3.4 no longer serves gemini-3.7-flash-medium). Autonomy L3 is the
+      2026-10-12 registration; no 3.8 calibration ceiling is recorded.
   opencli_chatgpt_balanced_web:
     provider: opencli_chatgpt
     model: opencli_chatgpt/balanced
@@ -795,15 +825,20 @@ routing:
     bounded_code_candidate: local_coder_7b
     bounded_reasoning_shadow: local_qwen35_9b
   online:
-    fast_bounded_implementation: agy_flash_37_medium
-    fast_bounded_implementation_fallback: agy_flash
+    fast_bounded_implementation: agy_flash_38
+    fast_bounded_implementation_fallback: null
     route_defaults:
       fast_bounded_implementation:
-        current_default: agy_flash_37_medium
-        fallback: agy_flash
+        current_default: agy_flash_38
+        fallback: null
+        fallback_note: >-
+          No fallback, fail closed. Agy 1.3.4 serves no other registered
+          fast_bounded_implementation worker (Gemini 3.6 and 3.7 tiers are not
+          listed), and no other registered worker advertises this role. A failed
+          default-routed request is not redirected or substituted.
     campaign_routing:
       CAMPAIGN-NEXUS-LEARNING-CANONICAL-WIRING-01:
-        fast_bounded_implementation: agy_flash_37_medium
+        fast_bounded_implementation: agy_flash_38
       open-swe-resident-five-repo-canary-20260908:
         bounded_candidate_generation: opencli_chatgpt_balanced_web
       github-issue-982-wave-b-20260919:

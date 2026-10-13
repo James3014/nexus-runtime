@@ -134,10 +134,10 @@ def test_actual_failed_verifier_run_and_replan_preserve_parent_lineage() -> None
             "workforce_admission_enabled": True,
             "workforce_bindings": {
                 "online": {
-                    "worker_id": "agy_flash",
+                    "worker_id": "agy_flash_38",
                     "provider": "agy",
-                    "model": "gemini-3.6-flash-high",
-                    "controls": ["task_card", "allowed_files", "mandatory_commands", "independent_verification"],
+                    "model": "gemini-3.8-flash-medium",
+                    "controls": ["task_card", "allowed_files", "mandatory_commands", "parser", "verifier", "independent_verification"],
                 }
             },
         },
@@ -182,10 +182,10 @@ def test_empty_coverage_uses_defaults_and_noncallable_records_failure(tmp_path: 
             "workforce_admission_enabled": True,
             "workforce_bindings": {
                 "online": {
-                    "worker_id": "agy_flash",
+                    "worker_id": "agy_flash_38",
                     "provider": "agy",
-                    "model": "gemini-3.6-flash-high",
-                    "controls": ["task_card", "allowed_files", "mandatory_commands", "independent_verification"],
+                    "model": "gemini-3.8-flash-medium",
+                    "controls": ["task_card", "allowed_files", "mandatory_commands", "parser", "verifier", "independent_verification"],
                 }
             },
         },
@@ -250,10 +250,10 @@ def test_real_planner_run_and_replan_successful_receipts(tmp_path):
             "workforce_admission_enabled": True,
             "workforce_bindings": {
                 "online": {
-                    "worker_id": "agy_flash",
+                    "worker_id": "agy_flash_38",
                     "provider": "agy",
-                    "model": "gemini-3.6-flash-high",
-                    "controls": ["task_card", "allowed_files", "mandatory_commands", "independent_verification"],
+                    "model": "gemini-3.8-flash-medium",
+                    "controls": ["task_card", "allowed_files", "mandatory_commands", "parser", "verifier", "independent_verification"],
                 },
                 "local": {
                     "worker_id": "local_coder_7b",
@@ -364,10 +364,10 @@ def test_replan_with_stripped_bindings_cannot_redispatch_unknown_effect(tmp_path
             "workforce_admission_enabled": True,
             "workforce_bindings": {
                 "online": {
-                    "worker_id": "agy_flash",
+                    "worker_id": "agy_flash_38",
                     "provider": "agy",
-                    "model": "gemini-3.6-flash-high",
-                    "controls": ["task_card", "allowed_files", "mandatory_commands", "independent_verification"],
+                    "model": "gemini-3.8-flash-medium",
+                    "controls": ["task_card", "allowed_files", "mandatory_commands", "parser", "verifier", "independent_verification"],
                 }
             },
         },
