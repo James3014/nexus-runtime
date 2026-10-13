@@ -16,6 +16,82 @@ from .context import KernelContext
 from .capabilities import _capability_evidence_summary
 from .constants import LOCAL_ONLY_PROVIDERS, ONLINE_CLI_SPEC_REGISTRY, REGISTERED_CLI_MODEL_BINDING_FLAGS, REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS, REQUEST_SCHEMA, SELECTION_COMPATIBILITY_DEFAULT, SELECTION_ENVIRONMENT_DEFAULT, SELECTION_EXPLICIT_REQUEST, SELECTION_INJECTED_TRANSPORT, TRANSPORT_GATEWAY_COMPATIBILITY, TRANSPORT_REGISTERED_CLI, TRANSPORT_STRUCTURED_CALLABLE, TRANSPORT_UNRESOLVED
 from .identity import _mapping, _optional_identity
+from .services.online_payload_contract import (
+    online_text_indicates_headless_permission_denial,
+)
+
+
+# Agy permission posture (#179).  The runtime owns the Agy argv: a caller may
+# supply only the executable.  The flags below are refused anywhere in the
+# option part of the final argv as defense in depth, and the recorded
+# ``provider_permission_mode`` is derived from the argv actually executed.
+AGY_PERMISSION_BYPASS_FLAGS: frozenset[str] = frozenset(
+    {"--dangerously-skip-permissions", "--yolo", "--auto-approve"}
+)
+AGY_PERMISSION_MODE_PLAN = "plan_no_autoapprove"
+AGY_PERMISSION_MODE_UNVERIFIED = "unverified"
+
+
+def _agy_option_tokens(argv: tuple[str, ...] | list[str], print_flag: str) -> list[str]:
+    """Return argv[1:] without the prompt value that follows ``print_flag``."""
+    tokens = [str(token) for token in argv[1:]]
+    if print_flag and print_flag in tokens:
+        index = tokens.index(print_flag)
+        tokens = tokens[: index + 1] + tokens[index + 2 :]
+    return tokens
+
+
+def _agy_permission_bypass_flags(tokens: list[str]) -> list[str]:
+    """Deny-listed permission flags, including any ``--mode`` other than plan."""
+    found: list[str] = []
+    for index, token in enumerate(tokens):
+        name, has_value, value = token.partition("=")
+        if name in AGY_PERMISSION_BYPASS_FLAGS:
+            found.append(token)
+        elif name == "--mode":
+            mode = value if has_value else (tokens[index + 1] if index + 1 < len(tokens) else "")
+            if mode != "plan":
+                found.append(token if has_value else f"--mode {mode}".rstrip())
+    return found
+
+
+def agy_permission_mode(argv: tuple[str, ...] | list[str], *, print_flag: str = "-p") -> str:
+    """Derive the Agy permission posture from the argv that will be executed.
+
+    ``plan_no_autoapprove`` only when the argv carries ``--mode plan`` and
+    ``--sandbox`` and no deny-listed flag; ``unverified`` otherwise.
+    """
+    tokens = _agy_option_tokens(argv, print_flag)
+    if _agy_permission_bypass_flags(tokens):
+        return AGY_PERMISSION_MODE_UNVERIFIED
+    plan = "--mode=plan" in tokens or any(
+        tokens[index] == "--mode" and tokens[index + 1] == "plan"
+        for index in range(len(tokens) - 1)
+    )
+    if plan and "--sandbox" in tokens:
+        return AGY_PERMISSION_MODE_PLAN
+    return AGY_PERMISSION_MODE_UNVERIFIED
+
+
+def _agy_preflight_failure(
+    command: tuple[str, ...],
+    *,
+    model_name: str,
+    has_gateway_authority: bool,
+) -> str:
+    """Typed fail-closed reason for an Agy invocation, checked before any process."""
+    if _agy_permission_bypass_flags([str(part) for part in command[1:]]):
+        return "agy_permission_bypass_flag_rejected"
+    if len(command) != 1:
+        # Keep the pre-existing reason on the gateway-authority edge.
+        return (
+            "registered_cli_model_binding_command_shape_unsupported"
+            if has_gateway_authority
+            else "agy_command_shape_unsupported"
+        )
+    if not model_name:
+        return "agy_model_required"
+    return ""
 
 
 def _callable_provider_identity(invoker: Any) -> str:
@@ -427,6 +503,29 @@ def build_subprocess_online_invoker(
                 selection_source=SELECTION_EXPLICIT_REQUEST,
                 extra={"live_provider_claim": False},
             )
+        if spec.provider == "agy":
+            agy_failure = _agy_preflight_failure(
+                spec.command,
+                model_name=admitted_model,
+                has_gateway_authority=context.get("gateway_invocation_authority") is not None,
+            )
+            if agy_failure:
+                return ctx.normalize_online_invoker_payload(
+                    provider=spec.provider,
+                    task_id=task_id,
+                    invoked=False,
+                    output_delivered=False,
+                    gate_passed=False,
+                    provider_call_count=0,
+                    response="",
+                    raw_response="",
+                    usage={},
+                    error=agy_failure,
+                    evidence_refs=[f"online:{spec.provider}:{task_id}:{agy_failure}"],
+                    transport=TRANSPORT_REGISTERED_CLI,
+                    selection_source=SELECTION_EXPLICIT_REQUEST,
+                    extra={"live_provider_claim": False},
+                )
         attempt_info = context.get("execution_attempt") if isinstance(context.get("execution_attempt"), Mapping) else {}
         attempt_id = str(
             context.get("attempt_id")
@@ -670,12 +769,34 @@ def build_subprocess_online_invoker(
             stdin_input = stdin
             prompt_transport = "stdin"
 
+        permission_mode = "provider_default"
+        if spec.provider == "agy":
+            permission_mode = agy_permission_mode(argv, print_flag=print_flag)
+            if permission_mode != AGY_PERMISSION_MODE_PLAN:
+                return ctx.normalize_online_invoker_payload(
+                    provider=spec.provider,
+                    task_id=task_id,
+                    invoked=False,
+                    output_delivered=False,
+                    gate_passed=False,
+                    provider_call_count=0,
+                    response="",
+                    raw_response="",
+                    usage={},
+                    error="agy_permission_mode_unverified",
+                    evidence_refs=[f"online:{spec.provider}:{task_id}:agy_permission_mode_unverified"],
+                    transport=TRANSPORT_REGISTERED_CLI,
+                    selection_source=SELECTION_EXPLICIT_REQUEST,
+                    extra={"live_provider_claim": False, "provider_permission_mode": permission_mode},
+                )
         cmd_fp = hashlib.sha256(json.dumps(argv, ensure_ascii=False).encode("utf-8")).hexdigest()
         exec_path = str(shutil.which(argv[0]) or argv[0])
         exec_hash = hashlib.sha256(exec_path.encode("utf-8")).hexdigest()
         agy_isolated_working_directory = ""
         effective_working_directory = str(spec.working_directory or "")
-        if spec.provider == "agy" and not effective_working_directory:
+        # Agy always runs in a runtime-owned ephemeral directory (#181); a
+        # caller-bound working directory is never handed to the provider.
+        if spec.provider == "agy":
             agy_isolated_working_directory = tempfile.mkdtemp(
                 prefix="nexus-agy-online-"
             )
@@ -724,9 +845,7 @@ def build_subprocess_online_invoker(
                     if spec.working_directory
                     else "inherited"
                 ),
-                "provider_permission_mode": (
-                    "plan_no_autoapprove" if spec.provider == "agy" else "provider_default"
-                ),
+                "provider_permission_mode": permission_mode,
                 "provider_input_sha256": input_sha256,
                 "stdout_sha256": hashlib.sha256(stdout_str.encode("utf-8")).hexdigest() if started else "",
                 "stderr_sha256": hashlib.sha256(stderr_str.encode("utf-8")).hexdigest() if started else "",
@@ -794,7 +913,16 @@ def build_subprocess_online_invoker(
         stdout = str(getattr(result, "stdout", "") or "")
         stderr = str(getattr(result, "stderr", "") or "")
         returncode = int(getattr(result, "returncode", 1))
-        delivered = bool(stdout.strip())
+        permission_denied = online_text_indicates_headless_permission_denial(
+            stdout
+        ) or online_text_indicates_headless_permission_denial(stderr)
+        delivered = bool(stdout.strip()) and not permission_denied
+        if permission_denied:
+            failure_error = "provider_headless_permission_denied"
+        elif returncode == 0 and delivered:
+            failure_error = ""
+        else:
+            failure_error = "provider_subprocess_failed"
         pe = _build_process_evidence(True, stdout, stderr, returncode, max(0, elapsed))
         return attach_context_receipt(ctx.normalize_online_invoker_payload(
             provider=spec.provider,
@@ -806,7 +934,7 @@ def build_subprocess_online_invoker(
             response=stdout,
             raw_response=stdout,
             usage={},
-            error="" if returncode == 0 and delivered else "provider_subprocess_failed",
+            error=failure_error,
             evidence_refs=(
                 [f"online:{spec.provider}:{task_id}:subprocess"]
                 + ([f"online:{spec.provider}:{task_id}:local_context_forwarded"] if local_context_forwarded else [])

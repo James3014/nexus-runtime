@@ -320,14 +320,14 @@
       "donor": "runtime extraction/support donor (see runtime-source-manifest.json)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/services/online_payload_contract.py",
-      "sha256": "4aba8466bbf0fadf67fadbd2acd1e493897dc8f0ccea81c4d592c5226bed0c90"
+      "sha256": "0d963230b929fc9ddac5b81f8e380f908a5e0b393bcadab9acd8d4726c51dac9"
     },
     {
       "canonical_owner": "runtime kernel",
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/transport.py",
-      "sha256": "09ac3c9ca9a0955464c70425cb5b5795afe45730d8fd2f3f814b734d8842fdb9"
+      "sha256": "0ad826501d62dbbf56edfd568c7b0884818770a8654999b2721f3041a93c3456"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -906,7 +906,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "be6729b75132e4831026cf9d07472c9deef0a86e",
-  "source_tree": "7cc3b9fccdc265a638f261fc2bd1ad6fb457ef27",
+  "source_head": "50d4d6026cacc9536844624bef1d5f451b3537f2",
+  "source_tree": "76522e899c36a29b538431495a23a33af8aff841",
   "unknown_lineage": []
 }
