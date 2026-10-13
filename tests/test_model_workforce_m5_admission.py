@@ -11,12 +11,15 @@ def _snapshot():
 
 
 def test_last_verified_is_agy_38_default_switch_date():
-    assert _snapshot().last_verified == "2026-10-13"
+    # Bumped 2026-10-14 for the committee judge admission (#202).
+    assert _snapshot().last_verified == "2026-10-14"
 
 
 def test_not_installed_workers_are_not_admissible_but_keep_roles():
     workers = _snapshot().workers
-    for worker_id in ("local_deepseek67b", "local_qwythos9b"):
+    # local_deepseek67b was pulled to M5 on 2026-10-14 (#202); see
+    # test_deepseek67b_restored_as_committee_secondary_proposer.
+    for worker_id in ("local_qwythos9b",):
         worker = workers[worker_id]
         assert worker.state == "INSTALLED_NOT_CONNECTED"
         assert worker.state in NON_ADMISSIBLE_STATES
@@ -246,3 +249,46 @@ def test_splash27b_is_not_routed_or_default():
 
     assert "local_splash_qwen38_27b" not in set(targets(raw["routing"]))
     assert snapshot.workers["local_splash_qwen38_27b"].state == "EXPERIMENT_ONLY"
+
+
+def test_deepseek67b_restored_as_committee_secondary_proposer():
+    import yaml
+
+    loader = WorkforcePolicyLoader()
+    snapshot = loader.load()
+    worker = snapshot.workers["local_deepseek67b"]
+    assert (worker.provider, worker.model) == ("ollama", "deepseek-coder:6.7b-instruct")
+    assert worker.state == "LOCAL_CONDITIONAL"
+    assert worker.state not in NON_ADMISSIBLE_STATES
+    assert worker.availability == "AVAILABLE"
+    assert worker.roles == ("committee_secondary_proposer_only",)
+    raw = yaml.safe_load(loader.policy_path.read_text(encoding="utf-8"))["workers"]["local_deepseek67b"]
+    assert raw["default_route"] is False
+    assert raw["reason"] == "pulled_to_m5_ollama_2026-10-14_owner_decision"
+    assert raw["prior_state"] == "INSTALLED_NOT_CONNECTED"
+    evidence = raw["installation_evidence"]
+    assert evidence["digest"] == "ce298d984115b93bb1b191b47fee6b39e4e9fbd5f18e651c02f9fa74e0edcd13"
+    assert evidence["model"] == worker.model
+    assert evidence["public_claim"] is False
+
+
+def test_committee_judge_routes_to_qwen35_9b_and_not_to_retired_3b():
+    import yaml
+
+    loader = WorkforcePolicyLoader()
+    snapshot = loader.load()
+    local_first = snapshot.routing["local_first"]
+    assert local_first["committee_judge"] == "local_qwen35_9b"
+    assert "committee_judge" in snapshot.workers["local_qwen35_9b"].roles
+    assert "local_advisor_3b" not in local_first.values()
+    assert snapshot.workers["local_advisor_3b"].roles == ()
+    # Judge must differ from both committee proposers.
+    assert snapshot.workers["local_qwen35_9b"].model not in {
+        snapshot.workers["local_coder_7b"].model,
+        snapshot.workers["local_deepseek67b"].model,
+    }
+    raw = yaml.safe_load(loader.policy_path.read_text(encoding="utf-8"))["workers"]["local_qwen35_9b"]
+    evidence = raw["committee_judge_admission_evidence"]
+    assert evidence["digest"] == "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7"
+    assert evidence["admission_scope"] == "committee_judge_identity_only"
+    assert evidence["public_claim"] is False
