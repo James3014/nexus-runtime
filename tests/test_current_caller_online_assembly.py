@@ -14,7 +14,7 @@ def _request(exports):
     return exports.UnifiedRuntimeRequest(
         task_id="assembly-run", workspace_revision="rev-assembly",
         task_statement="bounded online assembly", task_type="repair",
-        route={"recommended_flow": "direct", "online_policy": "allow", "injected_transport": True,
+        route={"recommended_flow": "direct", "online_policy": "auto", "injected_transport": True,
                "demand_id": "online:implementer", "task_card_path": "tasks/assembly.md",
                "provider": "codex", "online_model_name": "gpt-5.6-luna",
                "allowed_files": ["src/example.py"], "mandatory_commands": ["pytest"],

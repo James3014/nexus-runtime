@@ -588,7 +588,7 @@ def test_public_runtime_online_callback_receives_serialized_g1_package() -> None
         task_type="repair",
         route={
             "recommended_flow": "direct",
-            "online_policy": "allow",
+            "online_policy": "auto",
             "injected_transport": True,
             "workforce_admission_enabled": True,
             "workforce_bindings": {

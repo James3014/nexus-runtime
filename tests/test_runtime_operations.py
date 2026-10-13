@@ -243,7 +243,7 @@ def test_real_planner_run_and_replan_successful_receipts(tmp_path):
         task_type="repair",
         route={
             "recommended_flow": "direct",
-            "online_policy": "allow",
+            "online_policy": "auto",
             "injected_transport": True,
             "local_enabled": True,
             "online_enabled": True,

@@ -175,7 +175,7 @@
         "run": "(self, request: 'Any', **kwargs: 'Any') -> 'Any'",
         "run_replan": "(self, previous_receipt: 'Mapping[str, Any]', request: 'Any', **kwargs: 'Any') -> 'Any'"
       },
-      "signature": "(*, planner: 'CapabilityPlanner | None' = None, local_service: 'Any' = None, workforce_policy_loader: 'Any' = None, consumer_ports: 'Any' = None) -> 'None'"
+      "signature": "(*, planner: 'CapabilityPlanner | None' = None, local_service: 'Any' = None, workforce_policy_loader: 'Any' = None, consumer_ports: 'Any' = None, project_root: 'str | Path | None' = None) -> 'None'"
     },
     "UnifiedRuntimeRequest": {
       "kind": "class",
