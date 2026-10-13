@@ -204,7 +204,7 @@ def test_agy_permission_block_without_output_is_not_delivery():
     assert result["provider_call_count"] == 1
     assert result["output_delivered"] is False
     assert result["gate_passed"] is False
-    assert result["error"] == "provider_subprocess_failed"
+    assert result["error"] == "provider_headless_permission_denied"
     assert result["process_evidence"]["provider_permission_mode"] == "plan_no_autoapprove"
 
 

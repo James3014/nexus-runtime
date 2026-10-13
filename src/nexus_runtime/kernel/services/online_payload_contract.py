@@ -10,6 +10,21 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
+# Agy (jetski) headless permission auto-denial.  Agy exits 0 and prints this
+# instead of an answer when a tool needs a permission that headless mode cannot
+# prompt for, e.g.
+#   "jetski: no output produced - a tool required the read_file permission that
+#    headless mode cannot prompt for, so it was auto-denied."
+# The markers are anchored on Agy's own phrasing so that ordinary answers which
+# merely mention "no output produced", "headless mode" or "auto-denied" are not
+# misclassified.  The separator after "produced" varies (" - " / " — "), so
+# no marker spans it.
+_AGY_HEADLESS_PERMISSION_DENIAL_MARKERS = (
+    "jetski: no output produced",
+    "permission that headless mode cannot prompt",
+    "headless mode cannot prompt for, so it was auto-denied",
+)
+
 _ONLINE_NON_DELIVERY_MARKERS = (
     "online_execution_not_authorized",
     "IneligibleTierError",
@@ -21,7 +36,19 @@ _ONLINE_NON_DELIVERY_MARKERS = (
     "HTTP Error 404",
     "HTTP Error 429",
     "provider_not_configured",
+    *_AGY_HEADLESS_PERMISSION_DENIAL_MARKERS,
 )
+
+
+def online_text_indicates_headless_permission_denial(text: str) -> bool:
+    """True when provider stdout/stderr is Agy's headless permission auto-denial.
+
+    Used by the subprocess transport on both stdout and stderr so that the
+    denial is reported as a typed non-delivery regardless of the stream Agy
+    writes it to.
+    """
+    blob = str(text or "")
+    return any(marker in blob for marker in _AGY_HEADLESS_PERMISSION_DENIAL_MARKERS)
 
 
 def online_payload_indicates_non_delivery(payload: Mapping[str, Any] | None) -> bool:
