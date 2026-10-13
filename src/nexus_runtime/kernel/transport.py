@@ -464,6 +464,82 @@ def resolve_registered_provider_executable(
     return str(path)
 
 
+_PROCESS_GROUP_TERM_GRACE_SEC = 5.0
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """SIGTERM then SIGKILL the provider's whole process group (its own session)."""
+    import signal
+
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+        return
+    for sig, grace in ((signal.SIGTERM, _PROCESS_GROUP_TERM_GRACE_SEC), (signal.SIGKILL, None)):
+        try:
+            os.killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        if grace is None:
+            return
+        try:
+            proc.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            continue
+        # The leader exited; still reap any child left in the group.
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        return
+
+
+def _run_provider_process_group(
+    argv: list[str],
+    *,
+    input: str | None = None,
+    cwd: str | None = None,
+    capture_output: bool = True,
+    text: bool = True,
+    timeout: float | None = None,
+    check: bool = False,
+) -> subprocess.CompletedProcess:
+    """``subprocess.run`` for a physical provider CLI, but a timeout kills the whole group.
+
+    ``subprocess.run(timeout=...)`` kills only the direct child. Provider CLIs are often
+    wrappers (shims, node launchers) whose real worker is a grandchild; that worker was
+    orphaned and kept its account lease. The provider runs in its own session here, and a
+    timeout terminates the full process group before ``TimeoutExpired`` is re-raised.
+    """
+    pipe = subprocess.PIPE if capture_output else None
+    with subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE if input is not None else None,
+        stdout=pipe,
+        stderr=pipe,
+        cwd=cwd,
+        text=text,
+        start_new_session=True,
+    ) as proc:
+        try:
+            stdout, stderr = proc.communicate(input, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            _kill_process_group(proc)
+            try:
+                exc.stdout, exc.stderr = proc.communicate(timeout=_PROCESS_GROUP_TERM_GRACE_SEC)
+            except subprocess.TimeoutExpired:
+                pass
+            raise
+        except BaseException:
+            _kill_process_group(proc)
+            raise
+        retcode = proc.poll()
+    if check and retcode:
+        raise subprocess.CalledProcessError(retcode, argv, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(argv, retcode, stdout, stderr)
+
+
 def build_subprocess_online_invoker(
     ctx: KernelContext,
     spec: OnlineCliSpec,
@@ -887,7 +963,10 @@ def build_subprocess_online_invoker(
             }
 
         try:
-            result = runner(
+            # The physical transport runs the provider in its own process group so a
+            # timeout cannot orphan a grandchild worker (Nexus-new online A/B 20261013b).
+            physical_runner = _run_provider_process_group if runner is subprocess.run else runner
+            result = physical_runner(
                 argv,
                 input=stdin_input,
                 cwd=effective_working_directory or None,
