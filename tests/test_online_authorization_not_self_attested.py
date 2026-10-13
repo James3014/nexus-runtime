@@ -296,3 +296,24 @@ def test_registered_cli_never_starts_under_forged_authorization(agy_stub):
         assert result["error"] == "online_execution_not_authorized"
         assert result["provider_call_count"] == 0
     assert not log.exists()
+
+
+def test_injected_fixture_decision_never_starts_registered_cli_process(agy_stub):
+    """#190: an injected_test_transport decision is fixture-only; no real subprocess."""
+    script, log = agy_stub
+    decision = resolve_online_execution_decision(
+        task_online_policy="auto", injected_transport=True, requested_provider="agy"
+    )
+    assert decision.online_authorization_source == "injected_test_transport"
+    assert decision.physical_invocation_allowed is False
+    invoker = build_runtime_exports().build_registered_online_invoker(
+        "agy",
+        environ={"NEXUS_AGY_BIN": str(script)},
+        model_name="gemini-3.7-flash-medium",
+        include_local_context=False,
+    )
+    result = invoker({"task_id": "t", "online_prompt": "hi", "online_execution_decision": decision})
+    assert result["error"] == "injected_test_transport_cannot_start_provider_process"
+    assert result["provider_call_count"] == 0
+    assert result["invoked"] is False
+    assert not log.exists()
