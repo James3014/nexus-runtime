@@ -497,13 +497,16 @@ workers:
   local_advisor_3b:
     provider: ollama
     model: qwen2.5-s2t-advisor:3b
-    state: INSTALLED_NOT_CONNECTED
-    reason: not_present_on_m5_ollama_2026-10-12
-    availability: AVAILABLE
+    state: REGISTERED_BLOCKED
+    reason: retired_2026-10-13_stock_qwen25_3b_under_custom_name_weights_absent_see_advisor_3b_eval
+    availability: UNAVAILABLE
     autonomy: L0.5
-    roles: [classification, extraction, compression, compact_diagnosis, candidate_ranking]
+    roles: []
     preferred_context: nexus_bounded
     benchmark_ref: local_advisor_3b
+    evidence_refs:
+      - docs/reports/qwen3b_s2t_adapter_manifest.json
+      - docs/reports/3b_override_verified_rate_analysis.md
     requires: [fixed_schema, compact_context, deterministic_consumer]
     forbidden_actions: [code_mutation, full_context_assignment, route_authority, claim_authority]
   local_coder_7b:
