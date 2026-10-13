@@ -38,6 +38,22 @@ def _write(tmp_path, data) -> Path:
     return out
 
 
+@pytest.fixture()
+def no_judge_policy(policy, tmp_path, monkeypatch):
+    """Synthetic policy with every judge/committee role and route removed (#202).
+
+    The bundled policy admits a committee judge since #202, so fail-closed
+    behaviour is exercised against this copy, installed as the default path.
+    """
+    data, _ = policy
+    for worker in data["workers"].values():
+        worker["roles"] = [r for r in worker["roles"] if r not in mdr.JUDGE_COMMITTEE_ROLES]
+    data["routing"]["local_first"].pop("committee_judge", None)
+    path = _write(tmp_path, data)
+    monkeypatch.setattr(WorkforcePolicyLoader, "DEFAULT_POLICY_PATH", path)
+    return path
+
+
 def test_registry_has_no_hardcoded_ollama_default():
     assert ONLINE_CLI_SPEC_REGISTRY["ollama"]["default_model"] == ""
 
@@ -80,7 +96,7 @@ def test_judge_override_admitted_resolves_synthetic(policy, tmp_path):
 
 
 @pytest.mark.parametrize("override", ["", RETIRED, "not-a-model:1b"])
-def test_judge_unadmitted_or_unset_fails_closed(override):
+def test_judge_unadmitted_or_unset_fails_closed(override, no_judge_policy):
     with pytest.raises(ModelDefaultNotAdmittedError) as err:
         resolve_judge_model(override)
     assert err.value.code == MODEL_DEFAULT_NOT_ADMITTED
@@ -135,7 +151,7 @@ def _committee_plan(monkeypatch, judge_env):
 
 
 @pytest.mark.parametrize("judge_env", [None, RETIRED])
-def test_planner_committee_fails_closed_without_admitted_judge(monkeypatch, judge_env):
+def test_planner_committee_fails_closed_without_admitted_judge(monkeypatch, judge_env, no_judge_policy):
     snap = _committee_plan(monkeypatch, judge_env)
     assert snap["judge_model"] == ""
     assert RETIRED not in str(snap["judge_model"])
@@ -154,3 +170,31 @@ def test_planner_committee_uses_admitted_judge(monkeypatch):
     assert snap["judge_model"] == "qwen3.5:9b"
     assert snap["local_committee_enabled"] is True
     assert "committee_judge_error_code" not in snap
+
+
+def test_real_policy_admits_exactly_one_committee_judge():
+    snapshot = WorkforcePolicyLoader().load()
+    assert snapshot.routing["local_first"]["committee_judge"] == "local_qwen35_9b"
+    admitted = [
+        worker_id
+        for worker_id, worker in snapshot.workers.items()
+        if mdr._is_admitted(worker, "ollama", frozenset({"committee_judge"}))
+    ]
+    assert admitted == ["local_qwen35_9b"]
+    assert resolve_judge_model() == "qwen3.5:9b"
+    assert resolve_judge_model("qwen3.5:9b") == "qwen3.5:9b"
+    # The retired 3B tag is still refused as an override.
+    with pytest.raises(ModelDefaultNotAdmittedError):
+        resolve_judge_model(RETIRED)
+
+
+def test_planner_committee_enabled_with_real_policy_judge(monkeypatch):
+    snap = _committee_plan(monkeypatch, None)
+    assert snap["judge_model"] == "qwen3.5:9b"
+    assert snap["local_committee_enabled"] is True
+    assert snap["diagnosis_committee_enabled"] is True
+    assert snap["audit_committee_enabled"] is True
+    assert "committee_judge_error_code" not in snap
+    proposers = [spec["model"] for spec in snap["proposer_specs"]]
+    assert proposers == ["qwen2.5-coder:7b-instruct", "deepseek-coder:6.7b-instruct"]
+    assert snap["judge_model"] not in proposers

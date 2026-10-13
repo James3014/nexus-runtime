@@ -578,8 +578,10 @@ workers:
   local_deepseek67b:
     provider: ollama
     model: deepseek-coder:6.7b-instruct
-    state: INSTALLED_NOT_CONNECTED
-    reason: not_present_on_m5_ollama_2026-10-12
+    state: LOCAL_CONDITIONAL
+    reason: pulled_to_m5_ollama_2026-10-14_owner_decision
+    prior_state: INSTALLED_NOT_CONNECTED
+    prior_reason: not_present_on_m5_ollama_2026-10-12
     availability: AVAILABLE
     autonomy: L0.5
     default_route: false
@@ -588,6 +590,25 @@ workers:
     benchmark_ref: local_deepseek67b
     requires: [committee_isolation, external_verifier, no_full_context]
     forbidden_actions: [default_worker_assignment, claim_authority, direct_apply]
+    installation_evidence:
+      date: '2026-10-14'
+      host: m5_ollama_127.0.0.1:11435
+      service: com.james.local-models-ollama
+      method: ollama_api_pull
+      model: deepseek-coder:6.7b-instruct
+      digest: ce298d984115b93bb1b191b47fee6b39e4e9fbd5f18e651c02f9fa74e0edcd13
+      format: gguf
+      quantization: Q4_0
+      size_bytes: 3827834503
+      authorization: owner_chat_decision_2026-10-14_relayed_by_workspace-f1
+      evidence_refs:
+        - github:James3014/nexus-runtime#202
+      note: >-
+        Restores the committee's designed default secondary proposer
+        (capability_planner NEXUS_C15_SECONDARY_PROPOSER_MODEL default). Same
+        exact identity as the 2026-07-29 benchmark record; no substitution.
+        Role stays committee_secondary_proposer_only with default_route false.
+      public_claim: false
   local_qwythos9b:
     provider: ollama
     model: qwythos:9b
@@ -607,7 +628,7 @@ workers:
     availability: AVAILABLE
     autonomy: L1
     default_route: false
-    roles: [bounded_reasoning_candidate, counterexample_search, classification, extraction, compression, compact_diagnosis]
+    roles: [bounded_reasoning_candidate, counterexample_search, classification, extraction, compression, compact_diagnosis, committee_judge]
     preferred_context: nexus_bounded
     benchmark_ref: local_qwen35_9b
     note: >-
@@ -635,6 +656,31 @@ workers:
       role_recommendation: BOUNDED_REVIEW_AND_AUDIT
       autonomy_ceiling: L1
       implementation_edge_failure: normalize_status_success_label
+      public_claim: false
+    committee_judge_admission_evidence:
+      date: '2026-10-14'
+      authorization: owner_chat_decision_2026-10-14_relayed_by_workspace-f1
+      provider: ollama
+      model: qwen3.5:9b
+      digest: 6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7
+      host: m5_ollama_127.0.0.1:11435
+      admission_scope: committee_judge_identity_only
+      judge_called_for_winner_selection: false
+      judge_differs_from_proposers: [qwen2.5-coder:7b-instruct, deepseek-coder:6.7b-instruct]
+      basis: requalification_evidence_2026-08-06_bounded_review_and_audit
+      judge_qualification_suite_complete: false
+      role_recommendation: committee_judge_identity
+      autonomy_ceiling: L1
+      evidence_refs:
+        - github:James3014/nexus-runtime#202
+        - github:James3014/Nexus-new#1924
+      note: >-
+        Replaces the retired local_advisor_3b judge. In the local_heal committee
+        path the judge is an identity only (planner flag, member demand,
+        judge-not-proposer check); winners are chosen by deterministic verifiers
+        and role priority. No solve-rate uplift is claimed. A judge-pair
+        qualification run and wiring the judge into selection are separate
+        owner decisions.
       public_claim: false
   local_qwen14b:
     provider: ollama
@@ -824,6 +870,7 @@ routing:
     compact_diagnosis: local_qwen35_9b
     bounded_code_candidate: local_coder_7b
     bounded_reasoning_shadow: local_qwen35_9b
+    committee_judge: local_qwen35_9b
   online:
     fast_bounded_implementation: agy_flash_38
     fast_bounded_implementation_fallback: null
