@@ -642,6 +642,19 @@ def _build_planner_execution_contracts() -> dict[str, dict[str, Any]]:
             consumer_effect=CONSUMER_EFFECT_PROMPT_EVIDENCE,
             reason_code="requires_model_execution_boundary",
         ),
+        "entropy_guard_v2": _ec(
+            "entropy_guard_v2",
+            EXECUTION_CLASS_DEFAULT_REAL,
+            producer_stage="UnifiedRuntime",
+            trigger_policy="default_when_selected",
+            executor_key="entropy_guard_v2",
+            physical_callable=f"{reg}:entropy_guard_v2",
+            consumer_effect=CONSUMER_EFFECT_PROMPT_EVIDENCE,
+            # The audited output, never the task text.
+            required_context_fields=("task_id", "entropy_audit_text"),
+            required_outcome_fields=("action", "semantic_status", "evidence_refs", "result"),
+            success_predicate="output_entropy_measured",
+        ),
         "external_doc_scout": _ec(
             "external_doc_scout",
             EXECUTION_CLASS_EXTERNAL_AUTH_REQUIRED,
@@ -1813,6 +1826,7 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
     _ASI_CONSTRAINT_KEYS = frozenset({"asi_failure_records"})
     _COMMITTEE_CONSTRAINT_KEYS = frozenset({"committee_proposals"})
     _FILE_LOCK_CONSTRAINT_KEYS = frozenset({"workspace_root", "target_files"})
+    _ENTROPY_CONSTRAINT_KEYS = frozenset({"entropy_audit_text", "entropy_audit_tokens"})
     _FORECAST_CONSTRAINT_KEYS = frozenset(
         {"workspace_root", "forecast_roi_score", "forecast_tokens", "forecast_reject_prob"}
     )
@@ -1872,6 +1886,8 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
             keys = _COMMITTEE_CONSTRAINT_KEYS
         elif name == "file_lock":
             keys = _FILE_LOCK_CONSTRAINT_KEYS
+        elif name == "entropy_guard_v2":
+            keys = _ENTROPY_CONSTRAINT_KEYS
         elif name == "forecast_gate":
             keys = _FORECAST_CONSTRAINT_KEYS
         elif name == "formal_report":
@@ -2006,6 +2022,7 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
             "asi_constraint_extractor": _ASI_CONSTRAINT_KEYS,
             "committee": _COMMITTEE_CONSTRAINT_KEYS,
             "file_lock": _FILE_LOCK_CONSTRAINT_KEYS,
+            "entropy_guard_v2": _ENTROPY_CONSTRAINT_KEYS,
             "forecast_gate": _FORECAST_CONSTRAINT_KEYS,
             "formal_report": _FORMAL_REPORT_CONSTRAINT_KEYS,
             "integration_manager": _INTEGRATION_CONSTRAINT_KEYS,
@@ -2140,6 +2157,12 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
                 violations.append("asi_no_constraint_extracted")
             if not outcome.get("extracted_evidence_refs"):
                 violations.append("asi_missing_extracted_evidence")
+        if predicate == "output_entropy_measured":
+            result = outcome.get("result") if isinstance(outcome.get("result"), Mapping) else {}
+            if not isinstance(result.get("text_entropy"), (int, float)) or not result.get(
+                "text_sha256"
+            ):
+                violations.append("output_entropy_not_measured")
         if predicate == "file_lock_acquired_and_verified":
             if outcome.get("conflicts") not in ([], ()):
                 violations.append("file_lock_conflict")
