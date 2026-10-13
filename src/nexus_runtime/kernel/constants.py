@@ -120,6 +120,23 @@ TRANSPORT_UNRESOLVED = "unresolved"
 SELECTION_EXPLICIT_REQUEST = "explicit_request"
 
 SELECTION_INJECTED_TRANSPORT = "injected_transport"
+# Context key carrying the in-process OnlineExecutionDecision instance (#178).
+ONLINE_DECISION_CONTEXT_KEY = "online_execution_decision_resolved"
+# Caller route fields that self-attest Online authorization (#178): stripped before
+# resolution; they may only narrow a resolved decision, never broaden it.
+UNTRUSTED_ROUTE_AUTHORIZATION_KEYS = frozenset(
+    {
+        "online_execution_decision",
+        ONLINE_DECISION_CONTEXT_KEY,
+        "online_execution_requested",
+        "online_execution_authorized",
+        "online_authorization_source",
+        "online_preflight_status",
+        "online_auth_reason",
+        "physical_invocation_allowed",
+        "injected_transport",
+    }
+)
 
 SELECTION_ENVIRONMENT_DEFAULT = "environment_default"
 

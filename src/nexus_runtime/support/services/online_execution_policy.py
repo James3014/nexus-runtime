@@ -435,46 +435,23 @@ def resolve_online_execution_decision(
     )
 
 
+RESOLVED_DECISION_CONTEXT_KEY = "online_execution_decision_resolved"
+
+
 def decision_from_context(context: Mapping[str, Any] | None) -> OnlineExecutionDecision | None:
-    """Extract a previously resolved decision from invoker context / request route."""
+    """Return a decision previously resolved in-process, or None.
+
+    Only real ``OnlineExecutionDecision`` instances count (issued by
+    ``resolve_online_execution_decision`` and handed over by trusted code).  Plain
+    mappings and bare ``online_execution_authorized`` fields are caller-controlled
+    data and are never rebuilt into an authorization (nexus-runtime#178).
+    """
     if not isinstance(context, Mapping):
         return None
-    raw = context.get("online_execution_decision")
-    if isinstance(raw, OnlineExecutionDecision):
-        return raw
-    if isinstance(raw, Mapping) and raw.get("online_policy"):
-        try:
-            return OnlineExecutionDecision(
-                online_policy=str(raw.get("online_policy") or "deny"),
-                online_execution_requested=bool(raw.get("online_execution_requested")),
-                online_execution_authorized=bool(raw.get("online_execution_authorized")),
-                online_authorization_source=str(raw.get("online_authorization_source") or "fail_closed_default"),
-                approved_online_providers=tuple(raw.get("approved_online_providers") or DEFAULT_APPROVED_PROVIDERS),
-                preflight_status=str(raw.get("preflight_status") or ONLINE_DENIED_BY_POLICY),
-                reason=str(raw.get("reason") or ""),
-                allow_external_context_transfer=bool(raw.get("allow_external_context_transfer", True)),
-                maximum_provider_calls=int(raw.get("maximum_provider_calls", 10) or 10),
-                maximum_retry_count=int(raw.get("maximum_retry_count", 3) or 3),
-                requested_provider=str(raw.get("requested_provider") or ""),
-                physical_invocation_allowed=bool(raw.get("physical_invocation_allowed")),
-                claim_boundary=dict(raw.get("claim_boundary") or {}),
-            )
-        except (TypeError, ValueError):
-            return None
-    # Fallback fields on context/route
-    if "online_execution_authorized" in context:
-        authorized = bool(context.get("online_execution_authorized"))
-        return OnlineExecutionDecision(
-            online_policy=str(context.get("online_policy") or "deny"),
-            online_execution_requested=bool(context.get("online_execution_requested", authorized)),
-            online_execution_authorized=authorized,
-            online_authorization_source=str(context.get("online_authorization_source") or "fail_closed_default"),
-            approved_online_providers=tuple(context.get("approved_online_providers") or DEFAULT_APPROVED_PROVIDERS),
-            preflight_status=str(context.get("online_preflight_status") or (ONLINE_READY if authorized else ONLINE_DENIED_BY_POLICY)),
-            reason=str(context.get("online_auth_reason") or ""),
-            physical_invocation_allowed=authorized and str(context.get("online_authorization_source") or "") != "injected_test_transport",
-            claim_boundary={"public_claim_allowed": False},
-        )
+    for key in (RESOLVED_DECISION_CONTEXT_KEY, "online_execution_decision"):
+        raw = context.get(key)
+        if isinstance(raw, OnlineExecutionDecision):
+            return raw
     return None
 
 

@@ -8,7 +8,7 @@ from typing import Any, Callable, ClassVar, Mapping, TYPE_CHECKING
 from .context import KernelContext
 from .admission import _build_gateway_invocation_authority, _build_local_model_invocation_authority, _build_workforce_admission_lineage, _local_authority_failure_stage, _online_authority_failure_stage, _validate_workforce_route, _workforce_admission_required
 from .capabilities import _capability_stage, _stage, build_prompt_compression_capability_invoker, materialize_selected_capability_evidence
-from .constants import GATEWAY_INVOCATION_AUTHORITY_SCHEMA, LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA, RECEIPT_SCHEMA, REQUEST_SCHEMA
+from .constants import GATEWAY_INVOCATION_AUTHORITY_SCHEMA, LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA, ONLINE_DECISION_CONTEXT_KEY, RECEIPT_SCHEMA, REQUEST_SCHEMA, UNTRUSTED_ROUTE_AUTHORIZATION_KEYS
 from .identity import _hash_json, _mapping
 from .local_stage import _formal_local_advisor_lineage, _formal_local_runtime_lineage, _local_action_from_request, _local_executor_invoked_proven, _physical_local_service, _repair_loop_result_from_local_stage
 from .receipts import _assert_runtime_context_active, _assert_runtime_receipt_owner, _runtime_write_context, _validate_runtime_effect_owner, _validate_runtime_owner_context, _validate_runtime_writer_entry, _write_receipt_atomic
@@ -21,6 +21,41 @@ if TYPE_CHECKING:
     CapabilityPlanner = Any
     ExecutionReplanAuthorization = Any
     from .request import UnifiedRuntimeRequest
+
+
+def _strip_untrusted_route_authorization(route: Mapping[str, Any]) -> dict[str, Any]:
+    """Caller route without self-attested Online authorization fields (#178)."""
+    return {
+        key: value
+        for key, value in route.items()
+        if key not in UNTRUSTED_ROUTE_AUTHORIZATION_KEYS and not str(key).startswith("online_execution_")
+    }
+
+
+def _route_requests_narrowing(route: Mapping[str, Any]) -> bool:
+    """True when caller route fields ask for less Online authority than resolved."""
+    if bool(route.get("injected_transport")):
+        return True
+    for key in ("online_execution_authorized", "physical_invocation_allowed"):
+        if key in route and not bool(route.get(key)):
+            return True
+    raw = route.get("online_execution_decision")
+    if isinstance(raw, Mapping) and raw:
+        if not bool(raw.get("online_execution_authorized")) or not bool(raw.get("physical_invocation_allowed")):
+            return True
+    return False
+
+
+def _narrow_online_decision(decision: Any, route: Mapping[str, Any]) -> Any:
+    """Honor a caller's request for less authority; route data never broadens (#178)."""
+    if not _route_requests_narrowing(route) or not getattr(decision, "physical_invocation_allowed", False):
+        return decision
+    reason = str(getattr(decision, "reason", "") or "")
+    return replace(
+        decision,
+        physical_invocation_allowed=False,
+        reason=(reason + ";" if reason else "") + "route_requested_non_physical",
+    )
 
 
 class UnifiedRuntime:
@@ -41,8 +76,12 @@ class UnifiedRuntime:
         local_service: Any = None,
         workforce_policy_loader: Any = None,
         consumer_ports: Any = None,
+        project_root: str | Path | None = None,
     ) -> None:
         self._planner = planner or self._ctx.CapabilityPlanner()
+        # Trusted workspace for `.nexus/online_execution_policy.json` (#178): set by
+        # the assembling host, never taken from caller route data.
+        self._project_root = Path(project_root).expanduser() if project_root is not None else None
         self._local_service = local_service
         self._workforce_policy_loader = (
             workforce_policy_loader if workforce_policy_loader is not None else self._ctx.WorkforcePolicyLoader()
@@ -50,6 +89,10 @@ class UnifiedRuntime:
         self._consumer_ports = None
         if consumer_ports is not None:
             self.bind_consumer_ports(consumer_ports)
+
+    def _online_policy_root(self) -> str:
+        """Workspace whose Online policy file applies: host-bound root, else the process cwd."""
+        return str(self._project_root) if self._project_root is not None else str(Path.cwd())
 
     def bind_consumer_ports(self, consumer_ports: Any) -> None:
         """Bind immutable assembly-owned runtime writer/effect ports."""
@@ -1157,25 +1200,46 @@ class UnifiedRuntime:
         decision_from_context = self._ctx.decision_from_context
         resolve_online_execution_decision = self._ctx.resolve_online_execution_decision
 
-        route_map = dict(request.route) if isinstance(request.route, Mapping) else {}
-        prior = decision_from_context(route_map)
-        if prior is None:
-            task_policy = str(route_map.get("online_policy") or "").strip().lower()
-            injected_flag = bool(route_map.get("injected_transport", False))
-            # Fixture default: online_invoker without product policy → injected transport.
-            # Product auto/require must NOT force inject (physical path needs real auth).
-            if online_invoker is not None and not task_policy and not injected_flag:
-                task_policy = "auto"
-                injected_flag = not physical_online_required
+        # nexus-runtime#178: the caller controls request.route, so route fields never
+        # carry authorization.  Strip them, always resolve here, and let route hints
+        # only narrow the resolved decision.
+        raw_route = request.route if isinstance(request.route, Mapping) else {}
+        route_map = _strip_untrusted_route_authorization(raw_route)
+        task_policy = str(route_map.get("online_policy") or "").strip().lower()
+        # The fixture path is decided by the runtime from the invoker it was handed
+        # (an in-process, non-physical transport), never by a route self-attestation.
+        fixture_transport = online_invoker is not None and not physical_online_required
+        product_policy = task_policy in {"deny", "auto", "require"}
+        injected_flag = False
+        implicit_invoker_policy = False
+        if online_invoker is not None and not product_policy:
+            # Fixture default: a non-physical in-process transport without a product
+            # policy runs on the injected (non-physical) path.
+            injected_flag = fixture_transport
+            # A physical in-process invoker handed over by trusted code with no task
+            # policy keeps the historical implicit "auto", but only when no workspace
+            # policy / operator override decided (a workspace deny now wins).
+            implicit_invoker_policy = not fixture_transport and not task_policy
+        elif fixture_transport and bool(raw_route.get("injected_transport", False)):
+            # Caller asked for the fixture path and the runtime verified the
+            # transport is non-physical: narrowing to injected is safe.
+            injected_flag = True
+        online_decision = resolve_online_execution_decision(
+            task_online_policy=task_policy,
+            project_root=self._online_policy_root(),
+            planner_online_needed=bool(request.online_enabled),
+            injected_transport=injected_flag,
+            requested_provider=str(route_map.get("provider") or ""),
+        )
+        if implicit_invoker_policy and online_decision.online_authorization_source == "fail_closed_default":
             online_decision = resolve_online_execution_decision(
-                task_online_policy=task_policy,
-                project_root=str(route_map.get("workspace_root") or "."),
+                task_online_policy="auto",
+                project_root=self._online_policy_root(),
                 planner_online_needed=bool(request.online_enabled),
-                injected_transport=injected_flag,
+                injected_transport=False,
                 requested_provider=str(route_map.get("provider") or ""),
             )
-        else:
-            online_decision = prior
+        online_decision = _narrow_online_decision(online_decision, raw_route)
 
         context: dict[str, Any] = {
             "schema": REQUEST_SCHEMA,
@@ -1197,7 +1261,7 @@ class UnifiedRuntime:
             "planner": plan_payload,
             # with_nexus Online armor (World B) reads route + codeintel from context.
             # No new topology/RouteMode — existing request fields only.
-            "route": dict(request.route) if isinstance(request.route, Mapping) else {},
+            "route": route_map,
             "codeintel": dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {},
             "pillars": dict(request.pillars) if isinstance(request.pillars, Mapping) else {},
             "local": local_stage,
@@ -1208,6 +1272,7 @@ class UnifiedRuntime:
             "baseline_hash": evidence_bundle["baseline_hash"],
             "planner_decision_id": planner_decision_id,
             "online_execution_decision": online_decision.to_dict(),
+            ONLINE_DECISION_CONTEXT_KEY: online_decision,
             "online_policy": online_decision.online_policy,
             "online_execution_requested": online_decision.online_execution_requested,
             "online_execution_authorized": online_decision.online_execution_authorized,
@@ -1284,7 +1349,7 @@ class UnifiedRuntime:
         # Postflight gates after Online + verifier so proof fields are visible.
         # Online reply alone never satisfies artifact/claim/delivery.
         postflight_context = dict(context)
-        postflight_context["route"] = dict(request.route)
+        postflight_context["route"] = dict(route_map)
         postflight_context["capability_results"] = capability_results
         postflight_context["capability_evidence_bundle"] = evidence_bundle
         postflight_context["source_hash"] = str(evidence_bundle.get("source_hash") or "")

@@ -70,7 +70,14 @@ def _starts(stub) -> list[str]:
 
 
 def _context(**extra):
-    context = {"task_id": "t", "online_prompt": "hi", "online_execution_decision": dict(_DECISION)}
+    # Only an in-process OnlineExecutionDecision instance authorizes (#178); a plain
+    # mapping in the context is caller data and is ignored.
+    from nexus_runtime.support.services.online_execution_policy import OnlineExecutionDecision
+
+    decision = OnlineExecutionDecision(
+        **{**_DECISION, "approved_online_providers": tuple(_DECISION["approved_online_providers"])}
+    )
+    context = {"task_id": "t", "online_prompt": "hi", "online_execution_decision": decision}
     context.update(extra)
     return context
 

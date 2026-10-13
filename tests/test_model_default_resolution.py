@@ -100,16 +100,19 @@ def test_ollama_invoker_without_admitted_default_fails_closed(tmp_path, monkeypa
     invoker = build_runtime_exports().build_registered_online_invoker(
         "ollama", command=(str(script),), include_local_context=False
     )
-    decision = {
-        "online_policy": "require",
-        "online_execution_requested": True,
-        "online_execution_authorized": True,
-        "online_authorization_source": "workspace_policy",
-        "approved_online_providers": ["ollama"],
-        "preflight_status": "ok",
-        "requested_provider": "ollama",
-        "physical_invocation_allowed": True,
-    }
+    # Only an in-process OnlineExecutionDecision instance authorizes (#178).
+    from nexus_runtime.support.services.online_execution_policy import OnlineExecutionDecision
+
+    decision = OnlineExecutionDecision(
+        online_policy="require",
+        online_execution_requested=True,
+        online_execution_authorized=True,
+        online_authorization_source="workspace_policy",
+        approved_online_providers=("ollama",),
+        preflight_status="ok",
+        requested_provider="ollama",
+        physical_invocation_allowed=True,
+    )
     result = invoker({"task_id": "t", "online_prompt": "hi", "online_execution_decision": decision})
     assert result["invoked"] is False
     assert result["provider_call_count"] == 0
