@@ -1,14 +1,14 @@
 # HANDOFF
 
-更新：2026-10-13 · by Claude · HEAD `2766c15`（分支 claude/agy-fu1-fu2：#179/#180/#181）
+更新：2026-10-13 · by Claude · HEAD `23df307`（分支 claude/workforce-default-agy-38：#191 / Nexus-new#1932）
 <!-- 規則見 AGENTS.md「Handoff」。上限 150 行；過期內容移到 docs/archive/HANDOFF-YYYY-MM.md。 -->
 
 ## ▶ 下一步（只放一件，必須帶 #Issue）
-#179 [high]（含 #180、#181）合併 Agy 權限修正 PR：Agy 只接受單一執行檔；拒絕繞過權限的旗標；permission mode 由實際 argv 推導；headless 權限拒絕列為 typed 非交付；Agy 一律使用 ephemeral cwd，而且必須明確指定模型。依據：#64 的事後獨立審查（APPROVE_WITH_FOLLOWUPS）。Nexus-new#29 的 canary 證據依賴 `provider_permission_mode` 是真實值。
+#191 合併 Workforce 預設切換：fast_bounded_implementation 改用 agy_flash_38；3.6、3.7 標為 UNAVAILABLE，原因是 Agy 1.3.4 不再提供；fallback 明確設為 null，失敗即 fail closed，validator 已允許。合併後，Nexus-new 要先把 runtime pin 升到這個 commit，再同步 yaml。
 
 ## 進行中
-- 分支 claude/agy-fu1-fu2：修正 #179/#180/#181，full suite 894 passed。新規則下，Nexus-new 有兩處會 fail closed，已告知 Owner：`product_capability_canary_helper` 呼叫 Agy 時沒有帶模型，gateway route 自帶多參數 `online_command`。
-- PR #141 已合併（55c32f3）；#137、#138 仍 open。#138 只修了一半：自簽 authorization 的來源驗證需要新的 authority port，不應直接關閉。
+- #179、#180、#181 已合併（f9adb20，PR #182）。Nexus-new 有兩處會 fail closed，尚待處理：canary helper 沒有帶模型，gateway 的 online_command 帶了多個參數。
+- Nexus-new#1996：自動更新模型版本的機制建置中。
 
 ## 待確認（沒有 Issue 號）
 - Split repair 各階段 issue（#92、#93、#95、#100、#101、#102、#103、#104、#105、#108、#116）對應的 commit 都已在 main（Phase 0–4a、2.5 經 PR #112、#121 合併），但 issue 仍 open。需逐一跑 `nexus-certify issue-check` 確認後關閉。
