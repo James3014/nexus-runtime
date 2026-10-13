@@ -78,6 +78,24 @@ def _capability_stage(
         status = "SUCCEEDED"
     else:
         status = "FAILED"
+    # Producer attestation: simulated is derived from this execution's evidence (physical
+    # callable invoked, evidence present, no skip/stub/block marker), never a constant.
+    from nexus_runtime.planning.evidence.claim_boundary import execution_simulated
+
+    simulated = execution_simulated(
+        invoked=invoked and task_identity_shared,
+        evidence_refs=evidence_refs,
+        # Local edges name their physical method in ``evidence`` (e.g.
+        # "MemoryRetrievalAdapter.retrieve") instead of ``physical_callable``.
+        physical_callable=str(
+            data.get("physical_callable")
+            or (data.get("evidence") if isinstance(data.get("evidence"), str) else "")
+            or ""
+        ),
+        outcome=data,
+        skipped=skipped,
+        stub=bool(data.get("stub", False)),
+    )
     return _stage(
         f"capability:{name}",
         status=status,
@@ -100,6 +118,7 @@ def _capability_stage(
         response=data,
         skipped=skipped,
         skip_reason=skip_reason if skipped else "",
+        simulated=simulated,
     )
 
 
