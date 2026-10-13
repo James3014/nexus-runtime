@@ -522,7 +522,19 @@ class CapabilityReceipt:
         }
         # RC product: additive receipt_base projection (JSON-safe; no class alias)
         try:
+            from nexus_runtime.planning.evidence.claim_boundary import attested_claim_boundary
             from nexus_runtime.planning.evidence.receipt_base import project_child_receipt_base
+
+            # simulated is derived from this receipt's execution evidence (executor_id is the
+            # engine receipt's physical-callable identity); never a constant default.
+            boundary = attested_claim_boundary(
+                invoked=bool(self.invoked and self.evidence_present),
+                evidence_refs=self.evidence_refs,
+                gate_passed=bool(self.gate_passed),
+                model_calls=(self.telemetries or {}).get("model_calls", 0),
+                physical_callable=str(self.executor_id or ""),
+                failure_reason=str(self.failure_reason or ""),
+            )
 
             base["receipt_base"] = project_child_receipt_base(
                 source_world="B",
@@ -545,7 +557,7 @@ class CapabilityReceipt:
                 evidence_present=bool(self.evidence_present),
                 gate_passed=bool(self.gate_passed),
                 outcome_contributed=bool(self.outcome_contributed),
-                claim_boundary={"public_claim_allowed": False},
+                claim_boundary=boundary.to_dict(),
             )
         except Exception as exc:  # noqa: BLE001
             base["receipt_base_error"] = str(exc)[:200]

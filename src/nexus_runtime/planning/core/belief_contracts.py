@@ -178,12 +178,25 @@ class CapabilityReceipt:
         base["public_claim_allowed"] = False
         base["production_ready"] = False
         try:
+            from nexus_runtime.planning.evidence.claim_boundary import execution_simulated
             from nexus_runtime.planning.evidence.receipt_base import project_child_receipt_base
 
             refs: list[str] = []
             eid = str(self.evidence_id or "").strip()
             if eid:
                 refs.append(eid)
+            outcome_map = self.outcome if isinstance(self.outcome, dict) else {}
+            outcome_refs = outcome_map.get("evidence_refs")
+            if isinstance(outcome_refs, (list, tuple)):
+                refs.extend(str(r) for r in outcome_refs if str(r or "").strip())
+            refs = list(dict.fromkeys(refs))
+            # simulated is derived from execution evidence (invoked + evidence + a non-skip,
+            # non-stub, non-construct outcome); never left at the fail-closed constant.
+            simulated = execution_simulated(
+                invoked=bool(self.invoked),
+                evidence_refs=refs,
+                outcome=outcome_map,
+            )
             base["receipt_base"] = project_child_receipt_base(
                 source_world="C",
                 source_component="belief_capability_receipt",
@@ -208,7 +221,10 @@ class CapabilityReceipt:
                 claim_boundary={
                     "public_claim_allowed": False,
                     "production_ready": False,
-                    "claim_eligible": bool(self.is_claimable),
+                    "simulated": simulated,
+                    "receipt_present": bool(refs),
+                    "claim_eligible": bool(self.is_claimable and not simulated),
+                    "model_calls": int(_telemetry_numeric((self.telemetries or {}).get("model_calls")) or 0),
                 },
             )
         except Exception as exc:  # noqa: BLE001

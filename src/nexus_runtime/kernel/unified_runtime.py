@@ -15,6 +15,7 @@ from .receipts import _assert_runtime_context_active, _assert_runtime_receipt_ow
 from .replan import build_execution_replan_request, execution_replan_request_authority_projection
 from .request import build_canonical_runtime_context, canonical_execution_identity
 from .transport import _physical_online_invoker
+from nexus_runtime.planning.evidence.claim_boundary import evaluate_claim_boundary, execution_simulated
 
 if TYPE_CHECKING:
     CapabilityPlanner = Any
@@ -1707,6 +1708,32 @@ class UnifiedRuntime:
                 cap_status = "SKIPPED"
                 cap_reason = "caller_omitted_auto_skip"
                 skip_reason = "caller_omitted_auto_skip"
+            row_evidence_refs = list(stage.get("evidence_refs", []) or [])
+            row_physical_callable = (
+                local_physical_callable
+                if name == "local_model_executor"
+                else str(stage.get("physical_callable", "") or "")
+            )
+            stage_response = stage.get("response") if isinstance(stage.get("response"), Mapping) else {}
+            # Producer attestation from evidence; a stage that already attested
+            # simulated=True (capability stages) can never be upgraded here.
+            row_simulated = bool(stage.get("simulated", False)) or execution_simulated(
+                invoked=bool(invoked and cap_status == "INVOKED"),
+                evidence_refs=row_evidence_refs,
+                physical_callable=row_physical_callable
+                or str(stage_response.get("physical_callable", "") or ""),
+                outcome=stage,
+                skipped=cap_status == "SKIPPED",
+                stub=bool(stage.get("stub", False) or stage_response.get("stub", False)),
+            )
+            row_claim_boundary = evaluate_claim_boundary(
+                simulated=row_simulated,
+                claim_eligible=bool(
+                    not row_simulated and stage.get("gate_passed", False) and cap_status != "SKIPPED"
+                ),
+                receipt_present=bool(row_evidence_refs),
+                model_calls=0,
+            ).to_dict()
             capability_receipts.append(
                 {
                     "name": name,
@@ -1738,6 +1765,8 @@ class UnifiedRuntime:
                         if name == "local_model_executor"
                         else str(stage.get("physical_callable", "") or "")
                     ),
+                    "simulated": row_simulated,
+                    "claim_boundary": row_claim_boundary,
                 }
             )
         # FCM coverage fields on receipt (machine-checkable)

@@ -167,6 +167,144 @@ def evaluate_claim_boundary(
     return boundary
 
 
+# --- Execution attestation (simulated from evidence, never from a constant) ---------------
+#
+# ``simulated`` is the producer's statement about whether a physical executor ran.  It must be
+# derived from the receipt's own execution evidence: False only when the executor was invoked,
+# evidence refs exist, and nothing in the payload marks the run as a skip, stub, block,
+# auth gate, or import/construct-only result.  Anything else (including missing evidence)
+# stays simulated=True (fail-closed).
+
+NON_EXECUTION_ACTIONS = frozenset(
+    {
+        "auth_gate",
+        "skip",
+        "resolve",
+        "resolve_service",
+        "resolve_module",
+        "resolve_providers",
+        "probe",
+        "fixture",
+        "construct",
+        "should_run",
+        "health_check",
+        "bind",
+        "cleanup",
+        "hash_fallback",
+        "import_success",
+        "deterministic_confidence_probe",
+    }
+)
+# A gate that physically ran and returned a BLOCK verdict is a real execution, so plain
+# "BLOCKED"/"BLOCK" is not listed; only executor-unavailable blocks are non-execution.
+_NON_EXECUTION_STATUS_PREFIXES = (
+    "SKIP",
+    "STUB",
+    "NOT_",
+    "SELECTED_NOT_EXECUTED",
+    "SIMULATED",
+    "BLOCKED_EXECUTOR_UNAVAILABLE",
+)
+_NON_EXECUTION_CALLABLE_MARKERS = (
+    "capability_registry.structural_stub",
+    "capability_registry.explicit_skip",
+    "capability_registry.escalate_unavailable",
+)
+_NON_EXECUTION_REASON_MARKERS = ("skip", "stub", "simulat", "not_executed", "not_invoked", "construct")
+
+
+def _non_execution_outcome(outcome: Mapping[str, Any] | None) -> bool:
+    if not isinstance(outcome, Mapping):
+        return False
+    if outcome.get("skipped") is True or outcome.get("stub") is True or outcome.get("simulated") is True:
+        return True
+    if outcome.get("auth_required") or outcome.get("shallow_rejected"):
+        return True
+    if str(outcome.get("action") or "") in NON_EXECUTION_ACTIONS:
+        return True
+    if str(outcome.get("error") or "") == "import_construct_not_execution":
+        return True
+    for key in ("semantic_status", "status"):
+        value = str(outcome.get(key) or "").strip().upper()
+        if value and value.startswith(_NON_EXECUTION_STATUS_PREFIXES):
+            return True
+    nested = outcome.get("outcome")
+    if isinstance(nested, Mapping) and nested is not outcome and _non_execution_outcome(nested):
+        return True
+    nested = outcome.get("response")
+    if isinstance(nested, Mapping) and nested is not outcome and _non_execution_outcome(nested):
+        return True
+    return False
+
+
+def execution_simulated(
+    *,
+    invoked: bool,
+    evidence_refs: Any = (),
+    physical_callable: str | None = None,
+    outcome: Mapping[str, Any] | None = None,
+    skipped: bool = False,
+    stub: bool = False,
+    failure_reason: str = "",
+) -> bool:
+    """Return the honest ``simulated`` flag for one execution, derived from its evidence.
+
+    ``physical_callable=None`` means the producer type has no callable field (receipt
+    dataclasses); an empty string means the field exists but nothing physical was recorded,
+    which is treated as simulated.
+    """
+    if not invoked or skipped or stub:
+        return True
+    refs = [str(ref).strip() for ref in (evidence_refs or ()) if str(ref or "").strip()]
+    if not refs:
+        return True
+    if physical_callable is not None:
+        callable_text = str(physical_callable or "").strip()
+        if not callable_text or callable_text.startswith(_NON_EXECUTION_CALLABLE_MARKERS):
+            return True
+    reason = str(failure_reason or "").lower()
+    if reason and any(marker in reason for marker in _NON_EXECUTION_REASON_MARKERS):
+        return True
+    if _non_execution_outcome(outcome):
+        return True
+    return False
+
+
+def attested_claim_boundary(
+    *,
+    invoked: bool,
+    evidence_refs: Any = (),
+    gate_passed: bool = False,
+    model_calls: Any = 0,
+    physical_callable: str | None = None,
+    outcome: Mapping[str, Any] | None = None,
+    skipped: bool = False,
+    stub: bool = False,
+    failure_reason: str = "",
+) -> ClaimBoundary:
+    """Evaluated claim boundary whose ``simulated`` comes from execution evidence."""
+    simulated = execution_simulated(
+        invoked=invoked,
+        evidence_refs=evidence_refs,
+        physical_callable=physical_callable,
+        outcome=outcome,
+        skipped=skipped,
+        stub=stub,
+        failure_reason=failure_reason,
+    )
+    refs_present = any(str(ref or "").strip() for ref in (evidence_refs or ()))
+    try:
+        calls = int(model_calls or 0)
+    except (TypeError, ValueError):
+        calls = 0
+    return evaluate_claim_boundary(
+        simulated=simulated,
+        claim_eligible=bool(not simulated and gate_passed),
+        receipt_present=refs_present,
+        model_calls=calls,
+    )
+
+
 CLAIM_RULES = [
     "defaults fail-closed: simulated=true, claim_eligible=false, receipt_present=false, public_claim_allowed=false",
     "simulated=true -> public_claim blocked",
@@ -176,4 +314,5 @@ CLAIM_RULES = [
     "producer public_claim_allowed=true ignored (from_dict / evaluate)",
     "public_claim_allowed never True without external release authority",
     "workspace_provisioning_failure -> not counted as patcher failure",
+    "simulated is derived from execution evidence (execution_simulated), never a producer constant",
 ]
