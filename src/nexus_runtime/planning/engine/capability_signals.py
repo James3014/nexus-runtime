@@ -218,6 +218,10 @@ def build_capability_signals(
         plateau_detected=bool(route_features.get("plateau_detected", False)),
         doc_scout_hits=_as_int(route_features.get("doc_scout_hits"), 0),
         blocked_assumptions_count=_as_int(route_features.get("blocked_assumptions_count"), 0),
+        # Only an explicit request: the audit runs on an output the caller supplies
+        # (codeintel.entropy_audit_text), never on the task text.
+        entropy_audit_signal=bool(route_features.get("output_entropy_audit", False))
+        or "entropy audit" in task_lower,
     )
 
 

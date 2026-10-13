@@ -197,6 +197,8 @@ def apply_signal_policies(
         enable("nightshift", "long_or_critical_risk")
     if signals.ui_signal:
         enable("ui_validator", "ui_validation_signal")
+    if signals.entropy_audit_signal:
+        enable("entropy_guard_v2", "output_entropy_audit_requested")
     if signals.continuity_signal:
         enable("metabolism", "continuity_or_resume_signal")
     if signals.benchmark_signal:

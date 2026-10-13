@@ -427,6 +427,16 @@ def default_capability_nodes() -> dict[str, CapabilityNode]:
             evidence_outputs=("architecture_map", "blast_radius", "boundary_refs"),
         ),
         CapabilityNode(
+            "entropy_guard_v2",
+            ("S", "A"),
+            category="validation",
+            maturity="beta",
+            cost=1,
+            benefit=2,
+            risk_reduction=3,
+            evidence_outputs=("text_entropy", "token_entropy", "entropy_verdict"),
+        ),
+        CapabilityNode(
             "external_doc_scout",
             ("X",),
             category="recon",

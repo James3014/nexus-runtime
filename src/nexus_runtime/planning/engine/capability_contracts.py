@@ -360,6 +360,8 @@ class CapabilitySignalSet:
     forecast_signal: bool = False
     xray_signal: bool = False
     research_control_signal: bool = False
+    # Output under review carries text to audit for entropy (nexus-runtime entropy_guard_v2).
+    entropy_audit_signal: bool = False
     skill_candidates: tuple[str, ...] = ()
     skill_confidence: float = 0.0
     autonomic_suggested_mode: str = ""
