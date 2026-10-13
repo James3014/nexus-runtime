@@ -173,7 +173,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/constants.py",
-      "sha256": "1c95ae995ddccfc3cc3819599977c15a7f058068d91ec6a75a8b51c5feab6960"
+      "sha256": "a3df85a05275cfc80a309fd8be7f371c24610f5371bfe6c6ebc0a90e7ab9cb7d"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -327,7 +327,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/transport.py",
-      "sha256": "0ad826501d62dbbf56edfd568c7b0884818770a8654999b2721f3041a93c3456"
+      "sha256": "e0c3b9781212c8654aa2fb1aa2749b057332b2def5849772f26085a2aa017993"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -467,7 +467,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/engine/capability_planner.py",
-      "sha256": "580de576df9240659a110e628b96af20fb1b0fcfba255d97a38164575cf2199a"
+      "sha256": "8d59ac431f9cd7b88b9a5ede0f76be725c4a923bb8e698b92da856e551b6c319"
     },
     {
       "canonical_owner": "runtime planning",
@@ -615,6 +615,13 @@
       "lineage_status": "known",
       "path": "nexus_runtime/planning/services/capability_evidence_bundle.py",
       "sha256": "f15ea4c5eae4a94fb1434f7c40b75a1c1c7ecb3d672a05191e09bc9ee37cb0c1"
+    },
+    {
+      "canonical_owner": "runtime planning",
+      "donor": "authored in nexus-runtime (#185 fail-closed model defaults)",
+      "lineage_status": "known",
+      "path": "nexus_runtime/planning/services/model_default_resolution.py",
+      "sha256": "f70a6d5c48b2ef40cbdbdfa3474ee164f7f4ec24ec4f15b3bca19550f29d8b37"
     },
     {
       "canonical_owner": "runtime planning",
@@ -906,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "13408cdd7dc7732bf01407ac6b5ea5b60f80dea6",
-  "source_tree": "347f31aa016e9883809571cf15c0de04e70ee9c0",
+  "source_head": "7f2c909febae5220b7319cc26193feabeda7c2bd",
+  "source_tree": "8302c9a6b1945ba6e7398d96a5f280b7c6795e7e",
   "unknown_lineage": []
 }
