@@ -467,7 +467,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/engine/capability_planner.py",
-      "sha256": "7a7b9fb2e2d5a2ea3ea70dca24dec61b472a1eec554106e2c96c3b633cab139a"
+      "sha256": "0d1d64b45e97214566ca4788606960f79a5fad352dfc2e027cf3b1952f688f44"
     },
     {
       "canonical_owner": "runtime planning",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "b40da5fd5583cd8613b97c712b550ec8097d5f77",
-  "source_tree": "7e45a7fe567d75ee072e3aea3cf55d5c80489385",
+  "source_head": "4e608860d6d1ed2119f181283e7a851f15c4d504",
+  "source_tree": "b61d8d7c5c3fc77660ecf580cec8e44653123228",
   "unknown_lineage": []
 }
