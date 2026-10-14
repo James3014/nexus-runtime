@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -81,6 +82,12 @@ def agy_permission_mode(argv: tuple[str, ...] | list[str], *, print_flag: str = 
 AGY_PRINT_TIMEOUT_GRACE_SEC = 15
 AGY_PER_CALL_CAP_ENV = "NEXUS_BENCH_PER_CALL_CAP_SEC"
 _AGY_RESOLVING_MODEL_RE = re.compile(r"Resolving model (?P<resolved>[^\s]+)")
+_AGY_ALIAS_RESOLUTION_RE = re.compile(r'model alias "(?P<alias>[^"\n]+)" resolved to "(?P<resolved>[^"\n]+)"')
+_AGY_BACKEND_LABEL_RE = re.compile(r'Propagating selected model override to backend: label="(?P<label>[^"\n]+)"')
+AGY_MODEL_IDENTITY_OK = "MODEL_IDENTITY_OK"
+AGY_MODEL_IDENTITY_MISMATCH = "MODEL_IDENTITY_MISMATCH"
+AGY_MODEL_IDENTITY_UNOBSERVED = "MODEL_IDENTITY_UNOBSERVED"
+AGY_LOG_FILE_NAME = "agy.log"
 
 
 def agy_print_timeout_sec(call_timeout_sec: int | float | None, environ: Mapping[str, str] | None = None) -> int:
@@ -116,7 +123,56 @@ def parse_agy_envelope(stdout: str) -> dict[str, Any] | None:
 
 
 def agy_observed_model_ids(log_text: str) -> list[str]:
-    return sorted({m.group("resolved") for m in _AGY_RESOLVING_MODEL_RE.finditer(str(log_text or ""))})
+    text = str(log_text or "")
+    aliases = {m.group("alias"): m.group("resolved") for m in _AGY_ALIAS_RESOLUTION_RE.finditer(text)}
+    resolving = [m.group("resolved") for m in _AGY_RESOLVING_MODEL_RE.finditer(text)]
+    return sorted({aliases.get(item, item) for item in resolving} | set(aliases.values()))
+
+
+def _identity_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def agy_model_identity_verdict(requested_model: str, log_text: str | None) -> dict[str, Any]:
+    """Same verdict as the bench bare arm (Nexus-new scripts/bench/agy_account_lease.py).
+
+    ``log_text=None`` means the log could not be read safely (missing or not a regular file).
+    """
+    ids = agy_observed_model_ids(log_text or "")
+    labels = sorted({m.group("label") for m in _AGY_BACKEND_LABEL_RE.finditer(str(log_text or ""))})
+    record: dict[str, Any] = {
+        "provider_observed_model_ids": ids,
+        "provider_observed_model_labels": labels,
+    }
+    if log_text is None:
+        return {**record, "model_identity_status": AGY_MODEL_IDENTITY_UNOBSERVED, "model_identity_reason": "log_unreadable"}
+    if not ids or not labels:
+        missing = [name for name, values in (("resolved_model", ids), ("backend_label", labels)) if not values]
+        return {
+            **record,
+            "model_identity_status": AGY_MODEL_IDENTITY_UNOBSERVED,
+            "model_identity_reason": "missing:" + ",".join(missing),
+        }
+    if ids != [requested_model]:
+        return {**record, "model_identity_status": AGY_MODEL_IDENTITY_MISMATCH, "model_identity_reason": "resolved_model_differs"}
+    if any(_identity_token(label) != _identity_token(requested_model) for label in labels):
+        return {**record, "model_identity_status": AGY_MODEL_IDENTITY_MISMATCH, "model_identity_reason": "backend_label_differs"}
+    return {**record, "model_identity_status": AGY_MODEL_IDENTITY_OK, "model_identity_reason": ""}
+
+
+def read_private_agy_log(log_path: str) -> str | None:
+    """Read the agy log only if it is a regular file (never follow a planted symlink)."""
+    try:
+        info = os.lstat(log_path)
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return None
 
 
 def _agy_preflight_failure(
@@ -769,19 +825,20 @@ def build_subprocess_online_invoker(
         print_flag = str(meta.get("print_flag") or "").strip()
         argv = list(spec.command)
         agy_log_path = ""
+        agy_log_dir = ""
         agy_print_timeout = agy_print_timeout_sec(spec.timeout_sec)
         if spec.provider == "agy":
-            # Outside the ephemeral working directory, like the bench's bare arm. Only a name is
-            # reserved here; Agy creates the file, and it is removed after the turn.
-            agy_log_path = str(
-                Path(tempfile.gettempdir()) / f"nexus-agy-online-{os.getpid()}-{time.monotonic_ns()}.log"
-            )
+            # Outside the ephemeral working directory, like the bench's bare arm, inside a private
+            # (0700) directory so no other local user can pre-plant the log or a symlink there.
+            agy_log_dir = tempfile.mkdtemp(prefix="nexus-agy-online-log-")
+            agy_log_path = str(Path(agy_log_dir) / AGY_LOG_FILE_NAME)
         stdin_input: str | None = None
         prompt_transport = "stdin"
 
         model_binding = REGISTERED_CLI_MODEL_BINDING_FLAGS.get(spec.provider)
         if context.get("gateway_invocation_authority") is not None and admitted_model and model_binding and len(argv) != 1:
             if spec.provider == "agy":
+                shutil.rmtree(agy_log_dir, ignore_errors=True)
                 return ctx.normalize_online_invoker_payload(
                     provider=spec.provider,
                     task_id=task_id,
@@ -938,6 +995,8 @@ def build_subprocess_online_invoker(
         if spec.provider == "agy":
             permission_mode = agy_permission_mode(argv, print_flag=print_flag)
             if permission_mode != AGY_PERMISSION_MODE_PLAN:
+                if agy_log_dir:
+                    shutil.rmtree(agy_log_dir, ignore_errors=True)
                 return ctx.normalize_online_invoker_payload(
                     provider=spec.provider,
                     task_id=task_id,
@@ -1040,8 +1099,8 @@ def build_subprocess_online_invoker(
         except subprocess.TimeoutExpired as exc:
             if agy_isolated_working_directory:
                 shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
-            if agy_log_path:
-                Path(agy_log_path).unlink(missing_ok=True)
+            if agy_log_dir:
+                shutil.rmtree(agy_log_dir, ignore_errors=True)
             elapsed = int((time.monotonic() - start_time) * 1000)
             pe = _build_process_evidence(True, "", str(exc), None, max(0, elapsed))
             return attach_context_receipt(ctx.normalize_online_invoker_payload(
@@ -1063,8 +1122,8 @@ def build_subprocess_online_invoker(
         except OSError as exc:
             if agy_isolated_working_directory:
                 shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
-            if agy_log_path:
-                Path(agy_log_path).unlink(missing_ok=True)
+            if agy_log_dir:
+                shutil.rmtree(agy_log_dir, ignore_errors=True)
             elapsed = int((time.monotonic() - start_time) * 1000)
             pe = _build_process_evidence(False, "", str(exc), None, max(0, elapsed))
             return attach_context_receipt(ctx.normalize_online_invoker_payload(
@@ -1092,20 +1151,24 @@ def build_subprocess_online_invoker(
         response_text = stdout
         provider_usage: dict[str, Any] = {}
         agy_extra: dict[str, Any] = {}
+        agy_identity_failure = ""
         if agy_log_path:
-            log_text = ""
             try:
-                log_text = Path(agy_log_path).read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                log_text = ""
+                log_text = read_private_agy_log(agy_log_path)
             finally:
-                Path(agy_log_path).unlink(missing_ok=True)
+                shutil.rmtree(agy_log_dir, ignore_errors=True)
             envelope = parse_agy_envelope(stdout)
+            identity = agy_model_identity_verdict(admitted_model, log_text)
             agy_extra = {
                 "provider_output_format": "agy_json_envelope" if envelope is not None else "text",
-                "provider_observed_model_ids": agy_observed_model_ids(log_text),
                 "provider_print_timeout_sec": agy_print_timeout,
+                **identity,
             }
+            if envelope is not None and identity["model_identity_status"] != AGY_MODEL_IDENTITY_OK:
+                # A real agy JSON turn whose model cannot be attested is never delivered (fails
+                # closed like the bench bare arm). Plain-text output (no envelope, e.g. an older
+                # agy or a test stub) keeps the legacy behaviour with the status recorded.
+                agy_identity_failure = identity["model_identity_status"].lower()
             if envelope is not None:
                 response_text = str(envelope.get("response") or "")
                 usage = envelope.get("usage")
@@ -1116,7 +1179,10 @@ def build_subprocess_online_invoker(
             stdout
         ) or online_text_indicates_headless_permission_denial(stderr)
         delivered = bool(response_text.strip()) and not permission_denied
-        if permission_denied:
+        if agy_identity_failure:
+            delivered = False
+            failure_error = agy_identity_failure
+        elif permission_denied:
             failure_error = "provider_headless_permission_denied"
         elif returncode == 0 and delivered:
             failure_error = ""
