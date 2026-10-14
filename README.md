@@ -19,7 +19,7 @@ Live repository HEAD is intentionally not hard-coded here; read Git/GitHub when
 current revision identity matters.
 
 The current Python source-ownership snapshot is bound to
-`4e608860d6d1ed2119f181283e7a851f15c4d504`. That SHA is a source-scope anchor for
+`64a64ade621b689a48370eb31d215a9ed2a69fe6`. That SHA is a source-scope anchor for
 the `src/**/*.py` hashes in `docs/current-source-ownership.json`, not a standing
 claim about the live repository HEAD. Later non-`src` commits do not invalidate
 the snapshot; any `src` mutation requires refreshing the ownership map with
