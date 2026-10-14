@@ -115,12 +115,20 @@ def _agy_context(model: str = "gemini-3.7-flash-medium"):
 def test_agy_registered_cli_binds_exact_admitted_model_in_argv():
     captured = {}
 
+    model = "gemini-3.7-flash-medium"
+
     def runner(argv, **kwargs):
         captured["argv"] = list(argv)
         captured.update(kwargs)
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        # A real Agy JSON turn: identity lines in the private log plus the JSON envelope.
+        Path(argv[argv.index("--log-file") + 1]).write_text(
+            f"I1014 10:00:00.000001       1 model_resolver.go:93] Resolving model {model}\n"
+            "I1014 10:00:00.000002       1 model_config_manager.go:328] "
+            'Propagating selected model override to backend: label="Gemini 3.7 Flash (Medium)"\n',
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout='{"status": "SUCCESS", "response": "ok"}', stderr="")
 
-    model = "gemini-3.7-flash-medium"
     exports, context = _agy_context(model)
     result = exports.build_registered_online_invoker(
         "agy",
@@ -130,15 +138,19 @@ def test_agy_registered_cli_binds_exact_admitted_model_in_argv():
         include_local_context=False,
     )(context)
 
+    # Same print-mode argv as the bench's bare arm (online A/B S18/S19).
     assert captured["argv"][1:7] == [
+        "--new-project",
         "--mode",
         "plan",
         "--sandbox",
         "--model",
         model,
-        "-p",
     ]
-    assert captured["argv"][7]
+    assert captured["argv"][7] == "--log-file"
+    assert captured["argv"][9:13] == ["--output-format", "json", "--print-timeout", captured["argv"][12]]
+    assert captured["argv"][13] == "-p"
+    assert captured["argv"][14]
     assert "--dangerously-skip-permissions" not in captured["argv"]
     assert result["process_evidence"]["provider_permission_mode"] == "plan_no_autoapprove"
     assert result["gate_passed"] is True
@@ -171,7 +183,7 @@ def test_agy_registered_cli_uses_runtime_isolated_working_directory(tmp_path, mo
     assert source_probe.read_text(encoding="utf-8") == "BEFORE\n"
     assert not Path(observed["cwd"]).exists()
     assert "--sandbox" in observed["argv"]
-    assert ["--mode", "plan"] == observed["argv"][1:3]
+    assert ["--new-project", "--mode", "plan"] == observed["argv"][1:4]
     assert "--dangerously-skip-permissions" not in observed["argv"]
     evidence = result["process_evidence"]
     assert evidence["sandboxed_working_directory"] is True

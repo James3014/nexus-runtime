@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -710,6 +711,101 @@ def default_capability_nodes() -> dict[str, CapabilityNode]:
         ),
     ]
     return {node.name: node for node in nodes}
+
+
+# A task *requests* review/audit work only when a sentence asks for one in an imperative or
+# request form, and that same sentence asks for no fix/implementation:
+#   * imperative: "Review the diff", "Please audit the ledger", "Reviewing the logging module, ...",
+#     "Code review: check ...", "Security audit of the API";
+#   * request: "Can you review ...", "... and review it", "I need a review of ...",
+#     "Give me an audit of ...", "A code review of ...", "Conduct a thorough security review of ...".
+# Noun uses are implementation work: "Audit trail entries ...", "Audit log rotation is broken",
+# "Review comments are not saved", "Review of the logs shows ...", "The offline audit of ... crashes",
+# "Review: config loader ..., fix it".
+_REVIEW_AUDIT_WORD = r"(?:re-?)?(?:review|audit)"
+_REVIEW_AUDIT_OBJECT = (
+    r"(?:the|this|these|that|those|my|our|your|its|their|it|them|all|each|every|a|an|any|"
+    r"pr|prs|pull\s+request|diff|diffs|code|changes|commit|commits|patch|branch)\b"
+)
+_REVIEW_AUDIT_ADJ = r"(?:[a-z][\w-]*\s+){1,2}"
+_REVIEW_AUDIT_INTENT_RES = (
+    # Imperative opening: the verb takes an object (or a "Code review:" heading).
+    re.compile(
+        r"^\s*(?:please\s+)?(?:(?:code|security|independent|design|architecture)\s+)?"
+        r"(?:" + _REVIEW_AUDIT_WORD + r"|reviewing|auditing)"
+        r"(?:\s+" + _REVIEW_AUDIT_OBJECT + r"|\s*:)",
+        re.IGNORECASE,
+    ),
+    # "Security audit of the API" / "A code review of ..." opening a sentence (not a report on one).
+    re.compile(
+        r"^\s*(?:(?:a|an)\s+(?:[a-z][\w-]*\s+){0,2}|" + _REVIEW_AUDIT_ADJ + r")(?:review|audit)\s+of\b"
+        r"(?!.*\b(?:shows|showed|found|finds|revealed|reveals|reported|reports|indicates|indicated|"
+        r"is|are|was|were|has|have|crashes|fails|failed)\b)",
+        re.IGNORECASE,
+    ),
+    # Asked for as the object of a request verb: "I need a review of", "give me an audit of".
+    re.compile(
+        r"\b(?:need|want|give\s+me|get\s+me|request|requesting|provide|do|perform|conduct|run|"
+        r"carry\s+out|start|schedule)\s+(?:a|an|the)\s+(?:[a-z][\w-]*\s+){0,2}(?:review|audit)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bcode\s+review\s+of\b", re.IGNORECASE),
+    # "Can you review ...", "... and audit it", "please review this PR".
+    re.compile(
+        r"\b(?:can|could|would|will)\s+you\s+(?:please\s+)?" + _REVIEW_AUDIT_WORD + r"\b"
+        r"|\b(?:please|and|then|also)\s+" + _REVIEW_AUDIT_WORD + r"\s+" + _REVIEW_AUDIT_OBJECT,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b" + _REVIEW_AUDIT_WORD + r"\s+(?:this|these|that|my|our)\s+(?:proposed\s+)?"
+        r"(?:pr|pull\s+request|diff|diffs|change|changes|changeset|patch|patches|code|commit|commits|"
+        r"branch|implementation|plan|design|merge\s+request)\b",
+        re.IGNORECASE,
+    ),
+)
+_FIX_OR_IMPLEMENT_VERB_RE = re.compile(
+    r"\b(?:fix|fixes|fixing|repair|repairs|repairing|implement|implements|implementing|"
+    r"rewrite|rewrites|refactor|refactors|resolve|resolves|correct)\b",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"[.!?]+(?=\s|$)|\n+")
+
+
+# An explicit bounded implementation task_type (a bug fix / repair) is authoritative: a
+# description that merely mentions "security", "integration" or "architecture" while
+# describing a bug does not turn it into main-engineering work (online A/B S15).
+_BOUNDED_IMPLEMENTATION_TASK_TYPE_RE = re.compile(r"(?:^|[_\-\s])(?:bugfix|bug_fix|bug|fix|repair|hotfix)(?:$|[_\-\s])")
+# Stems match as whole-word prefixes ("architectural layering", "Add integrations"), with an
+# explicit inflection list so an identifier like ``securityContext`` stays a non-match.
+_COMPLEX_DESC_KEYWORD_RE = re.compile(
+    r"\b(?:architect(?:s|ure|ures|ural|urally|ed|ing)?|secur(?:e|es|ed|ing|ely|ity|ities)"
+    r"|irrevers(?:e|ible|ibly|ibility)|integrat(?:e|es|ed|ing|ion|ions|ive)"
+    r"|runtime[-_]closure|cross[-_]module)\b",
+    re.IGNORECASE,
+)
+
+
+def _task_type_is_bounded_implementation(task_type: str) -> bool:
+    return bool(_BOUNDED_IMPLEMENTATION_TASK_TYPE_RE.search(str(task_type or "").lower()))
+
+
+def _task_desc_signals_complex_work(task_desc: str, task_type: str) -> bool:
+    """Whole-word complex keyword in the description, unless task_type says bounded fix."""
+
+    if _task_type_is_bounded_implementation(task_type):
+        return False
+    return bool(_COMPLEX_DESC_KEYWORD_RE.search(str(task_desc or "")))
+
+
+def _task_desc_requests_review_audit(task_desc: str) -> bool:
+    """True when the description's intent is a review/audit, not a mere mention of one."""
+
+    for sentence in _SENTENCE_SPLIT_RE.split(str(task_desc or "")):
+        if _FIX_OR_IMPLEMENT_VERB_RE.search(sentence):
+            continue
+        if any(pattern.search(sentence) for pattern in _REVIEW_AUDIT_INTENT_RES):
+            return True
+    return False
 
 
 class CapabilityPlanner:
@@ -1901,7 +1997,7 @@ class CapabilityPlanner:
 
             is_complex = (
                 any(kw in task_type_str for kw in complex_keywords)
-                or any(kw in task_desc_str for kw in complex_keywords)
+                or _task_desc_signals_complex_work(task_desc_str, task_type_str)
                 or is_cross_module
             )
 
@@ -1909,7 +2005,7 @@ class CapabilityPlanner:
 
             is_review_audit = (
                 is_explicit_type_review_audit
-                or any(kw in task_desc_str for kw in ("review", "audit"))
+                or _task_desc_requests_review_audit(task_desc_str)
             )
 
             if candidate_generation_only:

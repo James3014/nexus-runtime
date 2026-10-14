@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -71,6 +73,154 @@ def agy_permission_mode(argv: tuple[str, ...] | list[str], *, print_flag: str = 
     if plan and "--sandbox" in tokens:
         return AGY_PERMISSION_MODE_PLAN
     return AGY_PERMISSION_MODE_UNVERIFIED
+
+
+# Online A/B S18/S19: the with-Nexus Agy turn runs with the same print-mode argv as the bench's
+# bare arm (scripts/bench/agy_provider.py in Nexus-new): a fresh project, a log file outside the
+# working directory (observed-model witness), the JSON envelope (response + usage), and Agy's own
+# ``--print-timeout``. ``NEXUS_BENCH_PER_CALL_CAP_SEC`` (set by the like-for-like bench) caps it.
+AGY_PRINT_TIMEOUT_GRACE_SEC = 15
+AGY_PER_CALL_CAP_ENV = "NEXUS_BENCH_PER_CALL_CAP_SEC"
+# Identity lines only count when they start a real Agy (glog) log line, e.g.
+# ``I1013 10:36:21.492269       1 model_resolver.go:93] Resolving model gemini-3.8-flash-medium``;
+# prose that merely contains the phrase (echoed prompts, tool output) is not a witness.
+_AGY_LOG_LINE_PREFIX = r"^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+ +\d+ [\w.\-]+:\d+\] "
+_AGY_RESOLVING_MODEL_RE = re.compile(_AGY_LOG_LINE_PREFIX + r"Resolving model (?P<resolved>[^\s]+)", re.MULTILINE)
+_AGY_ALIAS_RESOLUTION_RE = re.compile(
+    _AGY_LOG_LINE_PREFIX + r'model alias "(?P<alias>[^"\n]+)" resolved to "(?P<resolved>[^"\n]+)"', re.MULTILINE
+)
+_AGY_BACKEND_LABEL_RE = re.compile(
+    _AGY_LOG_LINE_PREFIX + r'Propagating selected model override to backend: label="(?P<label>[^"\n]+)"', re.MULTILINE
+)
+AGY_MODEL_IDENTITY_OK = "MODEL_IDENTITY_OK"
+AGY_MODEL_IDENTITY_MISMATCH = "MODEL_IDENTITY_MISMATCH"
+AGY_MODEL_IDENTITY_UNOBSERVED = "MODEL_IDENTITY_UNOBSERVED"
+AGY_LOG_FILE_NAME = "agy.log"
+AGY_LOG_READ_CAP_BYTES = 4 * 1024 * 1024
+
+
+def agy_print_timeout_sec(call_timeout_sec: int | float | None, environ: Mapping[str, str] | None = None) -> int:
+    """Agy ``--print-timeout``: ``clamp(cap, 1, call timeout)``; the call timeout when no cap is set."""
+    values = os.environ if environ is None else environ
+    timeout = max(1, int(call_timeout_sec or 0) or 1)
+    raw = str(values.get(AGY_PER_CALL_CAP_ENV) or "").strip()
+    try:
+        cap = int(raw)
+    except ValueError:
+        cap = 0
+    return max(1, min(timeout, cap)) if cap > 0 else timeout
+
+
+def agy_subprocess_timeout_sec(call_timeout_sec: float | None, print_timeout_sec: int) -> int:
+    """Outer subprocess bound: never more than the call timeout plus a small grace."""
+    timeout = max(1, int(call_timeout_sec or 0) or 1)
+    return min(timeout + 5, int(print_timeout_sec) + AGY_PRINT_TIMEOUT_GRACE_SEC)
+
+
+def agy_print_mode_options(*, log_path: str, print_timeout_sec: int) -> list[str]:
+    return [
+        "--log-file",
+        str(log_path),
+        "--output-format",
+        "json",
+        "--print-timeout",
+        f"{int(print_timeout_sec)}s",
+    ]
+
+
+def parse_agy_envelope(stdout: str) -> dict[str, Any] | None:
+    """The Agy ``--output-format json`` envelope, or None when stdout carries none.
+
+    The envelope is the LAST complete JSON object on stdout: leading non-JSON lines (warnings) are
+    tolerated, trailing text after the object is not.
+    """
+    text = str(stdout or "").strip()
+    if not text.endswith("}"):
+        return None
+    starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
+    for start in reversed(starts):
+        candidate = text[start:].lstrip()
+        if not candidate.startswith("{"):
+            continue
+        try:
+            envelope = json.loads(candidate)
+        except ValueError:
+            continue
+        return envelope if isinstance(envelope, dict) and "response" in envelope else None
+    return None
+
+
+def agy_observed_model_ids(log_text: str) -> list[str]:
+    text = str(log_text or "")
+    aliases = {m.group("alias"): m.group("resolved") for m in _AGY_ALIAS_RESOLUTION_RE.finditer(text)}
+    resolving = [m.group("resolved") for m in _AGY_RESOLVING_MODEL_RE.finditer(text)]
+    return sorted({aliases.get(item, item) for item in resolving} | set(aliases.values()))
+
+
+def _identity_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def agy_model_identity_verdict(requested_model: str, log_text: str | None) -> dict[str, Any]:
+    """Same verdict as the bench bare arm (Nexus-new scripts/bench/agy_account_lease.py).
+
+    ``log_text=None`` means the log could not be read safely (missing or not a regular file).
+    """
+    ids = agy_observed_model_ids(log_text or "")
+    labels = sorted({m.group("label") for m in _AGY_BACKEND_LABEL_RE.finditer(str(log_text or ""))})
+    record: dict[str, Any] = {
+        "provider_observed_model_ids": ids,
+        "provider_observed_model_labels": labels,
+    }
+    if not str(requested_model or "").strip():
+        # No admitted model to attest against: never a MISMATCH guess, an explicit unobserved verdict.
+        return {
+            **record,
+            "model_identity_status": AGY_MODEL_IDENTITY_UNOBSERVED,
+            "model_identity_reason": "agy_model_binding_required",
+        }
+    if log_text is None:
+        return {**record, "model_identity_status": AGY_MODEL_IDENTITY_UNOBSERVED, "model_identity_reason": "log_unreadable"}
+    if not ids or not labels:
+        missing = [name for name, values in (("resolved_model", ids), ("backend_label", labels)) if not values]
+        return {
+            **record,
+            "model_identity_status": AGY_MODEL_IDENTITY_UNOBSERVED,
+            "model_identity_reason": "missing:" + ",".join(missing),
+        }
+    if ids != [requested_model]:
+        return {**record, "model_identity_status": AGY_MODEL_IDENTITY_MISMATCH, "model_identity_reason": "resolved_model_differs"}
+    if any(_identity_token(label) != _identity_token(requested_model) for label in labels):
+        return {**record, "model_identity_status": AGY_MODEL_IDENTITY_MISMATCH, "model_identity_reason": "backend_label_differs"}
+    return {**record, "model_identity_status": AGY_MODEL_IDENTITY_OK, "model_identity_reason": ""}
+
+
+def read_private_agy_log(log_path: str) -> str | None:
+    """Read the agy log only if it is a regular file, never following a planted symlink.
+
+    Opened with ``O_NOFOLLOW`` (no lstat-then-open race) and capped at ``AGY_LOG_READ_CAP_BYTES``.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(log_path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks: list[bytes] = []
+        remaining = AGY_LOG_READ_CAP_BYTES
+        while remaining > 0:
+            chunk = os.read(fd, min(remaining, 1 << 16))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
 
 
 def _agy_preflight_failure(
@@ -722,128 +872,22 @@ def build_subprocess_online_invoker(
         meta = ONLINE_CLI_SPEC_REGISTRY.get(spec.provider, {})
         print_flag = str(meta.get("print_flag") or "").strip()
         argv = list(spec.command)
-        stdin_input: str | None = None
-        prompt_transport = "stdin"
-
-        model_binding = REGISTERED_CLI_MODEL_BINDING_FLAGS.get(spec.provider)
-        if context.get("gateway_invocation_authority") is not None and admitted_model and model_binding and len(argv) != 1:
-            if spec.provider == "agy":
-                return ctx.normalize_online_invoker_payload(
-                    provider=spec.provider,
-                    task_id=task_id,
-                    invoked=False,
-                    output_delivered=False,
-                    gate_passed=False,
-                    provider_call_count=0,
-                    response="",
-                    raw_response="",
-                    usage={},
-                    error="registered_cli_model_binding_command_shape_unsupported",
-                    evidence_refs=[
-                        f"online:{spec.provider}:{task_id}:"
-                        "registered_cli_model_binding_command_shape_unsupported"
-                    ],
-                    transport=TRANSPORT_REGISTERED_CLI,
-                    selection_source=SELECTION_EXPLICIT_REQUEST,
-                    extra={"live_provider_claim": False},
-                )
-            subcommand, model_flag = model_binding
-            accepted_model_flags = {model_flag}
-            if spec.provider == "codex":
-                accepted_model_flags.add("--model")
-            if subcommand:
-                if model_flag:
-                    binding_shape_ok = (
-                        len(argv) >= 4
-                        and argv[1] == subcommand
-                        and argv[2] in accepted_model_flags
-                        and argv[3] == admitted_model
-                    )
-                else:
-                    binding_shape_ok = len(argv) >= 3 and argv[1] == subcommand and argv[2] == admitted_model
-            else:
-                binding_shape_ok = (
-                    len(argv) >= 3
-                    and argv[1] in accepted_model_flags
-                    and argv[2] == admitted_model
-                )
-            if not binding_shape_ok:
-                return ctx.normalize_online_invoker_payload(
-                    provider=spec.provider,
-                    task_id=task_id,
-                    invoked=False,
-                    output_delivered=False,
-                    gate_passed=False,
-                    provider_call_count=0,
-                    response="",
-                    raw_response="",
-                    usage={},
-                    error="registered_cli_model_binding_command_shape_unsupported",
-                    evidence_refs=[
-                        f"online:{spec.provider}:{task_id}:"
-                        "registered_cli_model_binding_command_shape_unsupported"
-                    ],
-                    transport=TRANSPORT_REGISTERED_CLI,
-                    selection_source=SELECTION_EXPLICIT_REQUEST,
-                    extra={"live_provider_claim": False},
-                )
-            stdin_input = stdin
+        agy_log_path = ""
+        agy_log_dir = ""
+        agy_print_timeout = agy_print_timeout_sec(spec.timeout_sec)
+        if spec.provider == "agy":
+            # Outside the ephemeral working directory, like the bench's bare arm, inside a private
+            # (0700) directory so no other local user can pre-plant the log or a symlink there.
+            agy_log_dir = tempfile.mkdtemp(prefix="nexus-agy-online-log-")
+            agy_log_path = str(Path(agy_log_dir) / AGY_LOG_FILE_NAME)
+        try:
+            stdin_input: str | None = None
             prompt_transport = "stdin"
-        elif print_flag and len(argv) == 1:
-            if model_binding and admitted_model:
-                subcommand, model_flag = model_binding
-                if spec.provider == "agy":
-                    argv = [
-                        argv[0],
-                        "--mode",
-                        "plan",
-                        "--sandbox",
-                        model_flag,
-                        admitted_model,
-                        print_flag,
-                        stdin,
-                    ]
-                else:
-                    argv = (
-                        ([argv[0], subcommand, model_flag, admitted_model, stdin] if model_flag else [argv[0], subcommand, admitted_model, stdin])
-                        if subcommand
-                        else [argv[0], model_flag, admitted_model, stdin]
-                    )
-            elif spec.provider == "agy":
-                argv = [
-                    argv[0],
-                    "--mode",
-                    "plan",
-                    "--sandbox",
-                    print_flag,
-                    stdin,
-                ]
-            else:
-                argv = [argv[0], print_flag, stdin]
-            stdin_input = ""
-            prompt_transport = "argv"
-        elif spec.provider == "opencode" and len(argv) == 1:
-            subcommand, model_flag = REGISTERED_CLI_MODEL_BINDING_FLAGS["opencode"]
-            model = admitted_model or str(meta.get("default_model", "") or "").strip()
-            argv = [argv[0], subcommand, model_flag, model, stdin]
-            stdin_input = ""
-            prompt_transport = "argv"
-        elif spec.provider == "cline" and len(argv) == 1:
-            model = admitted_model or str(meta.get("default_model", "glm-5.2") or "glm-5.2").strip()
-            argv = [argv[0], "--json", "--yolo", "--model", model, stdin]
-            stdin_input = ""
-            prompt_transport = "argv"
-        elif spec.provider in {"mimo", "ollama"} and len(argv) == 1:
-            model = admitted_model or str(meta.get("default_model", "") or "").strip()
-            if not model and spec.provider == "ollama":
-                from nexus_runtime.planning.services.model_default_resolution import (
-                    ModelDefaultNotAdmittedError,
-                    resolve_default_model,
-                )
 
-                try:
-                    model = resolve_default_model()
-                except ModelDefaultNotAdmittedError as exc:
+            model_binding = REGISTERED_CLI_MODEL_BINDING_FLAGS.get(spec.provider)
+            if context.get("gateway_invocation_authority") is not None and admitted_model and model_binding and len(argv) != 1:
+                if spec.provider == "agy":
+                    shutil.rmtree(agy_log_dir, ignore_errors=True)
                     return ctx.normalize_online_invoker_payload(
                         provider=spec.provider,
                         task_id=task_id,
@@ -854,33 +898,284 @@ def build_subprocess_online_invoker(
                         response="",
                         raw_response="",
                         usage={},
-                        error=str(exc),
+                        error="registered_cli_model_binding_command_shape_unsupported",
                         evidence_refs=[
-                            f"online:{spec.provider}:{task_id}:MODEL_DEFAULT_NOT_ADMITTED"
+                            f"online:{spec.provider}:{task_id}:"
+                            "registered_cli_model_binding_command_shape_unsupported"
                         ],
                         transport=TRANSPORT_REGISTERED_CLI,
                         selection_source=SELECTION_EXPLICIT_REQUEST,
-                        extra={
-                            "live_provider_claim": False,
-                            "error_code": exc.code,
-                            "role": exc.role,
-                        },
+                        extra={"live_provider_claim": False},
                     )
-            if spec.provider == "mimo":
-                argv = [argv[0], "run", "--model", model, stdin]
-            else:
-                argv = [argv[0], "run", model, stdin]
-            stdin_input = ""
-            prompt_transport = "argv"
-        else:
-            stdin_input = stdin
-            prompt_transport = "stdin"
+                subcommand, model_flag = model_binding
+                accepted_model_flags = {model_flag}
+                if spec.provider == "codex":
+                    accepted_model_flags.add("--model")
+                if subcommand:
+                    if model_flag:
+                        binding_shape_ok = (
+                            len(argv) >= 4
+                            and argv[1] == subcommand
+                            and argv[2] in accepted_model_flags
+                            and argv[3] == admitted_model
+                        )
+                    else:
+                        binding_shape_ok = len(argv) >= 3 and argv[1] == subcommand and argv[2] == admitted_model
+                else:
+                    binding_shape_ok = (
+                        len(argv) >= 3
+                        and argv[1] in accepted_model_flags
+                        and argv[2] == admitted_model
+                    )
+                if not binding_shape_ok:
+                    return ctx.normalize_online_invoker_payload(
+                        provider=spec.provider,
+                        task_id=task_id,
+                        invoked=False,
+                        output_delivered=False,
+                        gate_passed=False,
+                        provider_call_count=0,
+                        response="",
+                        raw_response="",
+                        usage={},
+                        error="registered_cli_model_binding_command_shape_unsupported",
+                        evidence_refs=[
+                            f"online:{spec.provider}:{task_id}:"
+                            "registered_cli_model_binding_command_shape_unsupported"
+                        ],
+                        transport=TRANSPORT_REGISTERED_CLI,
+                        selection_source=SELECTION_EXPLICIT_REQUEST,
+                        extra={"live_provider_claim": False},
+                    )
+                stdin_input = stdin
+                prompt_transport = "stdin"
+            elif print_flag and len(argv) == 1:
+                if model_binding and admitted_model:
+                    subcommand, model_flag = model_binding
+                    if spec.provider == "agy":
+                        argv = [
+                            argv[0],
+                            "--new-project",
+                            "--mode",
+                            "plan",
+                            "--sandbox",
+                            model_flag,
+                            admitted_model,
+                            *agy_print_mode_options(log_path=agy_log_path, print_timeout_sec=agy_print_timeout),
+                            print_flag,
+                            stdin,
+                        ]
+                    else:
+                        argv = (
+                            ([argv[0], subcommand, model_flag, admitted_model, stdin] if model_flag else [argv[0], subcommand, admitted_model, stdin])
+                            if subcommand
+                            else [argv[0], model_flag, admitted_model, stdin]
+                        )
+                elif spec.provider == "agy":
+                    argv = [
+                        argv[0],
+                        "--new-project",
+                        "--mode",
+                        "plan",
+                        "--sandbox",
+                        *agy_print_mode_options(log_path=agy_log_path, print_timeout_sec=agy_print_timeout),
+                        print_flag,
+                        stdin,
+                    ]
+                else:
+                    argv = [argv[0], print_flag, stdin]
+                stdin_input = ""
+                prompt_transport = "argv"
+            elif spec.provider == "opencode" and len(argv) == 1:
+                subcommand, model_flag = REGISTERED_CLI_MODEL_BINDING_FLAGS["opencode"]
+                model = admitted_model or str(meta.get("default_model", "") or "").strip()
+                argv = [argv[0], subcommand, model_flag, model, stdin]
+                stdin_input = ""
+                prompt_transport = "argv"
+            elif spec.provider == "cline" and len(argv) == 1:
+                model = admitted_model or str(meta.get("default_model", "glm-5.2") or "glm-5.2").strip()
+                argv = [argv[0], "--json", "--yolo", "--model", model, stdin]
+                stdin_input = ""
+                prompt_transport = "argv"
+            elif spec.provider in {"mimo", "ollama"} and len(argv) == 1:
+                model = admitted_model or str(meta.get("default_model", "") or "").strip()
+                if not model and spec.provider == "ollama":
+                    from nexus_runtime.planning.services.model_default_resolution import (
+                        ModelDefaultNotAdmittedError,
+                        resolve_default_model,
+                    )
 
-        permission_mode = "provider_default"
-        if spec.provider == "agy":
-            permission_mode = agy_permission_mode(argv, print_flag=print_flag)
-            if permission_mode != AGY_PERMISSION_MODE_PLAN:
-                return ctx.normalize_online_invoker_payload(
+                    try:
+                        model = resolve_default_model()
+                    except ModelDefaultNotAdmittedError as exc:
+                        return ctx.normalize_online_invoker_payload(
+                            provider=spec.provider,
+                            task_id=task_id,
+                            invoked=False,
+                            output_delivered=False,
+                            gate_passed=False,
+                            provider_call_count=0,
+                            response="",
+                            raw_response="",
+                            usage={},
+                            error=str(exc),
+                            evidence_refs=[
+                                f"online:{spec.provider}:{task_id}:MODEL_DEFAULT_NOT_ADMITTED"
+                            ],
+                            transport=TRANSPORT_REGISTERED_CLI,
+                            selection_source=SELECTION_EXPLICIT_REQUEST,
+                            extra={
+                                "live_provider_claim": False,
+                                "error_code": exc.code,
+                                "role": exc.role,
+                            },
+                        )
+                if spec.provider == "mimo":
+                    argv = [argv[0], "run", "--model", model, stdin]
+                else:
+                    argv = [argv[0], "run", model, stdin]
+                stdin_input = ""
+                prompt_transport = "argv"
+            else:
+                stdin_input = stdin
+                prompt_transport = "stdin"
+
+            permission_mode = "provider_default"
+            if spec.provider == "agy":
+                permission_mode = agy_permission_mode(argv, print_flag=print_flag)
+                if permission_mode != AGY_PERMISSION_MODE_PLAN:
+                    if agy_log_dir:
+                        shutil.rmtree(agy_log_dir, ignore_errors=True)
+                    return ctx.normalize_online_invoker_payload(
+                        provider=spec.provider,
+                        task_id=task_id,
+                        invoked=False,
+                        output_delivered=False,
+                        gate_passed=False,
+                        provider_call_count=0,
+                        response="",
+                        raw_response="",
+                        usage={},
+                        error="agy_permission_mode_unverified",
+                        evidence_refs=[f"online:{spec.provider}:{task_id}:agy_permission_mode_unverified"],
+                        transport=TRANSPORT_REGISTERED_CLI,
+                        selection_source=SELECTION_EXPLICIT_REQUEST,
+                        extra={"live_provider_claim": False, "provider_permission_mode": permission_mode},
+                    )
+            cmd_fp = hashlib.sha256(json.dumps(argv, ensure_ascii=False).encode("utf-8")).hexdigest()
+            exec_path = str(shutil.which(argv[0]) or argv[0])
+            exec_hash = hashlib.sha256(exec_path.encode("utf-8")).hexdigest()
+            agy_isolated_working_directory = ""
+            effective_working_directory = str(spec.working_directory or "")
+            # Agy always runs in a runtime-owned ephemeral directory (#181); a
+            # caller-bound working directory is never handed to the provider.
+            if spec.provider == "agy":
+                agy_isolated_working_directory = tempfile.mkdtemp(
+                    prefix="nexus-agy-online-"
+                )
+                effective_working_directory = agy_isolated_working_directory
+            cwd_str = str(effective_working_directory or os.getcwd())
+            cwd_hash = hashlib.sha256(cwd_str.encode("utf-8")).hexdigest()
+            input_sha256 = hashlib.sha256(stdin.encode("utf-8")).hexdigest()
+
+            def attach_context_receipt(result_payload: dict[str, Any]) -> dict[str, Any]:
+                if context_package is not None and build_online_consumption_receipt is not None:
+                    result_payload["model_context_consumption"] = build_online_consumption_receipt(
+                        context_package,
+                        result_payload,
+                        physical_transport=runner is subprocess.run,
+                        expected_provider_input_sha256=input_sha256,
+                    )
+                return result_payload
+
+            proc_inv_id = hashlib.sha256(
+                json.dumps([task_id, attempt_id, spec.provider, cmd_fp, input_sha256, cwd_hash]).encode("utf-8")
+            ).hexdigest()
+
+            start_time = time.monotonic()
+
+            def _build_process_evidence(
+                started: bool,
+                stdout_str: str,
+                stderr_str: str,
+                retcode: int | None,
+                elapsed_ms: int,
+            ) -> dict[str, Any]:
+                return {
+                    "schema": "nexus.provider_process_evidence.v1",
+                    "provider": spec.provider,
+                    "transport": TRANSPORT_REGISTERED_CLI,
+                    "process_started": started,
+                    "prompt_transport": prompt_transport,
+                    "command_fingerprint": cmd_fp,
+                    "executable_path_hash": exec_hash,
+                    "working_directory_hash": cwd_hash,
+                    "sandboxed_working_directory": bool(effective_working_directory),
+                    "working_directory_isolation": (
+                        "runtime_ephemeral"
+                        if agy_isolated_working_directory
+                        else "caller_bound"
+                        if spec.working_directory
+                        else "inherited"
+                    ),
+                    "provider_permission_mode": permission_mode,
+                    "provider_input_sha256": input_sha256,
+                    "stdout_sha256": hashlib.sha256(stdout_str.encode("utf-8")).hexdigest() if started else "",
+                    "stderr_sha256": hashlib.sha256(stderr_str.encode("utf-8")).hexdigest() if started else "",
+                    "returncode": retcode,
+                    "wall_time_ms": elapsed_ms,
+                    "attempt_id": attempt_id,
+                    "process_invocation_id": proc_inv_id,
+                }
+
+            try:
+                # The physical transport runs the provider in its own process group so a
+                # timeout cannot orphan a grandchild worker (Nexus-new online A/B 20261013b).
+                physical_runner = _run_provider_process_group if runner is subprocess.run else runner
+                result = physical_runner(
+                    argv,
+                    input=stdin_input,
+                    cwd=effective_working_directory or None,
+                    capture_output=True,
+                    text=True,
+                    timeout=(
+                        agy_subprocess_timeout_sec(spec.timeout_sec, agy_print_timeout)
+                        if agy_log_path
+                        else spec.timeout_sec
+                    ),
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                if agy_isolated_working_directory:
+                    shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
+                if agy_log_dir:
+                    shutil.rmtree(agy_log_dir, ignore_errors=True)
+                elapsed = int((time.monotonic() - start_time) * 1000)
+                pe = _build_process_evidence(True, "", str(exc), None, max(0, elapsed))
+                return attach_context_receipt(ctx.normalize_online_invoker_payload(
+                    provider=spec.provider,
+                    task_id=task_id,
+                    invoked=True,
+                    output_delivered=False,
+                    gate_passed=False,
+                    provider_call_count=1,
+                    response="",
+                    raw_response="",
+                    usage={},
+                    error="provider_timeout",
+                    evidence_refs=[f"online:{spec.provider}:{task_id}:timeout"],
+                    transport=TRANSPORT_REGISTERED_CLI,
+                    selection_source=SELECTION_EXPLICIT_REQUEST,
+                    extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
+                ))
+            except OSError as exc:
+                if agy_isolated_working_directory:
+                    shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
+                if agy_log_dir:
+                    shutil.rmtree(agy_log_dir, ignore_errors=True)
+                elapsed = int((time.monotonic() - start_time) * 1000)
+                pe = _build_process_evidence(False, "", str(exc), None, max(0, elapsed))
+                return attach_context_receipt(ctx.normalize_online_invoker_payload(
                     provider=spec.provider,
                     task_id=task_id,
                     invoked=False,
@@ -890,176 +1185,110 @@ def build_subprocess_online_invoker(
                     response="",
                     raw_response="",
                     usage={},
-                    error="agy_permission_mode_unverified",
-                    evidence_refs=[f"online:{spec.provider}:{task_id}:agy_permission_mode_unverified"],
+                    error="provider_not_invoked",
+                    evidence_refs=[f"online:{spec.provider}:{task_id}:not_invoked"],
                     transport=TRANSPORT_REGISTERED_CLI,
                     selection_source=SELECTION_EXPLICIT_REQUEST,
-                    extra={"live_provider_claim": False, "provider_permission_mode": permission_mode},
-                )
-        cmd_fp = hashlib.sha256(json.dumps(argv, ensure_ascii=False).encode("utf-8")).hexdigest()
-        exec_path = str(shutil.which(argv[0]) or argv[0])
-        exec_hash = hashlib.sha256(exec_path.encode("utf-8")).hexdigest()
-        agy_isolated_working_directory = ""
-        effective_working_directory = str(spec.working_directory or "")
-        # Agy always runs in a runtime-owned ephemeral directory (#181); a
-        # caller-bound working directory is never handed to the provider.
-        if spec.provider == "agy":
-            agy_isolated_working_directory = tempfile.mkdtemp(
-                prefix="nexus-agy-online-"
-            )
-            effective_working_directory = agy_isolated_working_directory
-        cwd_str = str(effective_working_directory or os.getcwd())
-        cwd_hash = hashlib.sha256(cwd_str.encode("utf-8")).hexdigest()
-        input_sha256 = hashlib.sha256(stdin.encode("utf-8")).hexdigest()
-
-        def attach_context_receipt(result_payload: dict[str, Any]) -> dict[str, Any]:
-            if context_package is not None and build_online_consumption_receipt is not None:
-                result_payload["model_context_consumption"] = build_online_consumption_receipt(
-                    context_package,
-                    result_payload,
-                    physical_transport=runner is subprocess.run,
-                    expected_provider_input_sha256=input_sha256,
-                )
-            return result_payload
-
-        proc_inv_id = hashlib.sha256(
-            json.dumps([task_id, attempt_id, spec.provider, cmd_fp, input_sha256, cwd_hash]).encode("utf-8")
-        ).hexdigest()
-
-        start_time = time.monotonic()
-
-        def _build_process_evidence(
-            started: bool,
-            stdout_str: str,
-            stderr_str: str,
-            retcode: int | None,
-            elapsed_ms: int,
-        ) -> dict[str, Any]:
-            return {
-                "schema": "nexus.provider_process_evidence.v1",
-                "provider": spec.provider,
-                "transport": TRANSPORT_REGISTERED_CLI,
-                "process_started": started,
-                "prompt_transport": prompt_transport,
-                "command_fingerprint": cmd_fp,
-                "executable_path_hash": exec_hash,
-                "working_directory_hash": cwd_hash,
-                "sandboxed_working_directory": bool(effective_working_directory),
-                "working_directory_isolation": (
-                    "runtime_ephemeral"
-                    if agy_isolated_working_directory
-                    else "caller_bound"
-                    if spec.working_directory
-                    else "inherited"
-                ),
-                "provider_permission_mode": permission_mode,
-                "provider_input_sha256": input_sha256,
-                "stdout_sha256": hashlib.sha256(stdout_str.encode("utf-8")).hexdigest() if started else "",
-                "stderr_sha256": hashlib.sha256(stderr_str.encode("utf-8")).hexdigest() if started else "",
-                "returncode": retcode,
-                "wall_time_ms": elapsed_ms,
-                "attempt_id": attempt_id,
-                "process_invocation_id": proc_inv_id,
-            }
-
-        try:
-            # The physical transport runs the provider in its own process group so a
-            # timeout cannot orphan a grandchild worker (Nexus-new online A/B 20261013b).
-            physical_runner = _run_provider_process_group if runner is subprocess.run else runner
-            result = physical_runner(
-                argv,
-                input=stdin_input,
-                cwd=effective_working_directory or None,
-                capture_output=True,
-                text=True,
-                timeout=spec.timeout_sec,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
+                    extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
+                ))
             if agy_isolated_working_directory:
                 shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
             elapsed = int((time.monotonic() - start_time) * 1000)
-            pe = _build_process_evidence(True, "", str(exc), None, max(0, elapsed))
+            stdout = str(getattr(result, "stdout", "") or "")
+            stderr = str(getattr(result, "stderr", "") or "")
+            returncode = int(getattr(result, "returncode", 1))
+            response_text = stdout
+            provider_usage: dict[str, Any] = {}
+            agy_extra: dict[str, Any] = {}
+            agy_identity_failure = ""
+            envelope = None
+            agy_json_mode = bool(agy_log_path) and "--output-format" in argv
+            if agy_log_path:
+                try:
+                    log_text = read_private_agy_log(agy_log_path)
+                finally:
+                    shutil.rmtree(agy_log_dir, ignore_errors=True)
+                envelope = parse_agy_envelope(stdout)
+                identity = agy_model_identity_verdict(admitted_model, log_text)
+                agy_extra = {
+                    "provider_output_format": "agy_json_envelope" if envelope is not None else "text",
+                    "provider_print_timeout_sec": agy_print_timeout,
+                    **identity,
+                }
+                if agy_json_mode and not str(admitted_model or "").strip():
+                    # Identity can only be attested against an admitted model: require the binding.
+                    agy_identity_failure = "agy_model_binding_required"
+                elif agy_json_mode and envelope is None:
+                    # JSON output was requested: no envelope means nothing attributable to deliver
+                    # (fail closed, never the raw stdout with identity and usage unenforced).
+                    agy_identity_failure = "agy_envelope_missing"
+                elif agy_json_mode and identity["model_identity_status"] != AGY_MODEL_IDENTITY_OK:
+                    # A JSON turn whose model cannot be attested is never delivered (fails closed like
+                    # the bench bare arm).
+                    agy_identity_failure = identity["model_identity_status"].lower()
+                if envelope is not None:
+                    response_text = str(envelope.get("response") or "")
+                    usage = envelope.get("usage")
+                    provider_usage = dict(usage) if isinstance(usage, Mapping) else {}
+                    agy_extra["provider_envelope_status"] = str(envelope.get("status") or "")
+                    agy_extra["provider_conversation_id"] = str(envelope.get("conversation_id") or "")
+            if agy_json_mode:
+                # The model's own text lives inside the envelope; only stderr and the envelope status
+                # can report a headless permission denial.
+                permission_denied = online_text_indicates_headless_permission_denial(
+                    stderr
+                ) or online_text_indicates_headless_permission_denial(
+                    str((envelope or {}).get("status") or "") + " " + str((envelope or {}).get("error") or "")
+                )
+            else:
+                permission_denied = online_text_indicates_headless_permission_denial(
+                    stdout
+                ) or online_text_indicates_headless_permission_denial(stderr)
+            if agy_json_mode and envelope is None:
+                response_text = ""
+            delivered = bool(response_text.strip()) and not permission_denied
+            if permission_denied:
+                delivered = False
+                failure_error = "provider_headless_permission_denied"
+            elif agy_identity_failure:
+                delivered = False
+                failure_error = agy_identity_failure
+            elif returncode == 0 and delivered:
+                failure_error = ""
+            else:
+                failure_error = "provider_subprocess_failed"
+            pe = _build_process_evidence(True, stdout, stderr, returncode, max(0, elapsed))
             return attach_context_receipt(ctx.normalize_online_invoker_payload(
                 provider=spec.provider,
                 task_id=task_id,
                 invoked=True,
-                output_delivered=False,
-                gate_passed=False,
+                output_delivered=delivered,
+                gate_passed=returncode == 0 and delivered,
                 provider_call_count=1,
-                response="",
-                raw_response="",
-                usage={},
-                error="provider_timeout",
-                evidence_refs=[f"online:{spec.provider}:{task_id}:timeout"],
+                response=response_text,
+                raw_response=response_text,
+                usage=provider_usage,
+                error=failure_error,
+                evidence_refs=(
+                    [f"online:{spec.provider}:{task_id}:subprocess"]
+                    + ([f"online:{spec.provider}:{task_id}:local_context_forwarded"] if local_context_forwarded else [])
+                    + ([f"online:{spec.provider}:{task_id}:capability_context_forwarded"] if capability_context_forwarded else [])
+                    + ([f"online:{spec.provider}:{task_id}:compressed_context_applied"] if context.get("capability_context_compressed") else [])
+                ),
                 transport=TRANSPORT_REGISTERED_CLI,
                 selection_source=SELECTION_EXPLICIT_REQUEST,
-                extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
+                extra={
+                    "returncode": returncode,
+                    "stderr": stderr,
+                    "process_evidence": pe,
+                    "assembled_online_prompt": stdin,
+                    **agy_extra,
+                },
             ))
-        except OSError as exc:
-            if agy_isolated_working_directory:
-                shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
-            elapsed = int((time.monotonic() - start_time) * 1000)
-            pe = _build_process_evidence(False, "", str(exc), None, max(0, elapsed))
-            return attach_context_receipt(ctx.normalize_online_invoker_payload(
-                provider=spec.provider,
-                task_id=task_id,
-                invoked=False,
-                output_delivered=False,
-                gate_passed=False,
-                provider_call_count=0,
-                response="",
-                raw_response="",
-                usage={},
-                error="provider_not_invoked",
-                evidence_refs=[f"online:{spec.provider}:{task_id}:not_invoked"],
-                transport=TRANSPORT_REGISTERED_CLI,
-                selection_source=SELECTION_EXPLICIT_REQUEST,
-                extra={"returncode": None, "stderr": str(exc), "process_evidence": pe},
-            ))
-        if agy_isolated_working_directory:
-            shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
-        elapsed = int((time.monotonic() - start_time) * 1000)
-        stdout = str(getattr(result, "stdout", "") or "")
-        stderr = str(getattr(result, "stderr", "") or "")
-        returncode = int(getattr(result, "returncode", 1))
-        permission_denied = online_text_indicates_headless_permission_denial(
-            stdout
-        ) or online_text_indicates_headless_permission_denial(stderr)
-        delivered = bool(stdout.strip()) and not permission_denied
-        if permission_denied:
-            failure_error = "provider_headless_permission_denied"
-        elif returncode == 0 and delivered:
-            failure_error = ""
-        else:
-            failure_error = "provider_subprocess_failed"
-        pe = _build_process_evidence(True, stdout, stderr, returncode, max(0, elapsed))
-        return attach_context_receipt(ctx.normalize_online_invoker_payload(
-            provider=spec.provider,
-            task_id=task_id,
-            invoked=True,
-            output_delivered=delivered,
-            gate_passed=returncode == 0 and delivered,
-            provider_call_count=1,
-            response=stdout,
-            raw_response=stdout,
-            usage={},
-            error=failure_error,
-            evidence_refs=(
-                [f"online:{spec.provider}:{task_id}:subprocess"]
-                + ([f"online:{spec.provider}:{task_id}:local_context_forwarded"] if local_context_forwarded else [])
-                + ([f"online:{spec.provider}:{task_id}:capability_context_forwarded"] if capability_context_forwarded else [])
-                + ([f"online:{spec.provider}:{task_id}:compressed_context_applied"] if context.get("capability_context_compressed") else [])
-            ),
-            transport=TRANSPORT_REGISTERED_CLI,
-            selection_source=SELECTION_EXPLICIT_REQUEST,
-            extra={
-                "returncode": returncode,
-                "stderr": stderr,
-                "process_evidence": pe,
-                "assembled_online_prompt": stdin,
-            },
-        ))
+        finally:
+            if agy_log_dir:
+                # Never leak the private log directory, whatever path the turn took.
+                shutil.rmtree(agy_log_dir, ignore_errors=True)
 
     invoke.provider = spec.provider  # type: ignore[attr-defined]
     invoke.online_invoker_provider = spec.provider  # type: ignore[attr-defined]
