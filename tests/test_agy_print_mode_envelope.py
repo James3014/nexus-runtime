@@ -2,7 +2,7 @@
 
 ``--new-project``, ``--log-file`` (outside the working directory), ``--output-format json`` and
 ``--print-timeout`` (capped by ``NEXUS_BENCH_PER_CALL_CAP_SEC``); response text and token usage
-come from the JSON envelope, and plain-text output still works.
+come from the JSON envelope, and plain-text output is never delivered (no envelope).
 """
 
 from __future__ import annotations
@@ -75,7 +75,8 @@ def test_agy_argv_matches_bench_bare_arm_and_envelope_usage_is_captured(monkeypa
     ]
     assert argv[argv.index("--output-format") + 1] == "json"
     print_timeout = int(argv[argv.index("--print-timeout") + 1].rstrip("s"))
-    assert captured["timeout"] == print_timeout + 15
+    # No per-call cap: --print-timeout is the call timeout; the outer bound adds only 5 s.
+    assert captured["timeout"] == print_timeout + 5
     assert not str(captured["log_path"]).startswith(str(captured["cwd"]))
     assert not captured["log_path"].exists()  # removed after the turn
     assert result["response"] == envelope["response"]
@@ -96,10 +97,13 @@ def test_agy_print_timeout_follows_bench_per_call_cap(monkeypatch):
 
 
 def test_plain_text_output_is_still_delivered(monkeypatch):
-    result, _captured = _invoke("plain answer", monkeypatch=monkeypatch)
-    assert result["response"] == "plain answer"
+    # JSON output was requested: plain text carries no envelope, so it is never delivered.
+    result, _captured = _invoke("plain answer", monkeypatch=monkeypatch, log_text=_GOOD_LOG)
+    assert result["response"] == ""
     assert result["provider_output_format"] == "text"
-    assert result["gate_passed"] is True
+    assert result["output_delivered"] is False
+    assert result["gate_passed"] is False
+    assert result["error"] == "agy_envelope_missing"
     assert parse_agy_envelope("plain answer") is None
 
 
@@ -112,8 +116,9 @@ def test_empty_envelope_response_is_not_delivered(monkeypatch):
 
 
 _GOOD_LOG = (
-    f"I1014 x] Resolving model {MODEL}\n"
-    'I1014 x] Propagating selected model override to backend: label="Gemini 3.8 Flash (Medium)"\n'
+    f"I1014 10:36:21.492269       1 model_resolver.go:93] Resolving model {MODEL}\n"
+    "I1014 10:36:21.492300       1 model_config_manager.go:328] "
+    'Propagating selected model override to backend: label="Gemini 3.8 Flash (Medium)"\n'
 )
 
 

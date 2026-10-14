@@ -115,12 +115,20 @@ def _agy_context(model: str = "gemini-3.7-flash-medium"):
 def test_agy_registered_cli_binds_exact_admitted_model_in_argv():
     captured = {}
 
+    model = "gemini-3.7-flash-medium"
+
     def runner(argv, **kwargs):
         captured["argv"] = list(argv)
         captured.update(kwargs)
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        # A real Agy JSON turn: identity lines in the private log plus the JSON envelope.
+        Path(argv[argv.index("--log-file") + 1]).write_text(
+            f"I1014 10:00:00.000001       1 model_resolver.go:93] Resolving model {model}\n"
+            "I1014 10:00:00.000002       1 model_config_manager.go:328] "
+            'Propagating selected model override to backend: label="Gemini 3.7 Flash (Medium)"\n',
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout='{"status": "SUCCESS", "response": "ok"}', stderr="")
 
-    model = "gemini-3.7-flash-medium"
     exports, context = _agy_context(model)
     result = exports.build_registered_online_invoker(
         "agy",

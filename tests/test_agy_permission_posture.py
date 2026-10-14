@@ -6,6 +6,7 @@ executable; no real Agy binary or model is ever invoked.
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import sys
@@ -48,6 +49,21 @@ _DENIAL_HYPHEN = (
 _DENIAL_EMDASH = _DENIAL_HYPHEN.replace(" - ", " — ")
 
 
+def _agy_turn(argv, response: str, *, status: str = "SUCCESS", error: str = "") -> str:
+    """What real agy does in print mode with --log-file/--output-format json: the identity
+    witness goes to the log, the answer comes back inside the JSON envelope."""
+
+    argv = list(argv)
+    log = Path(argv[argv.index("--log-file") + 1])
+    model = argv[argv.index("--model") + 1] if "--model" in argv else MODEL
+    log.write_text(
+        f"I1014 10:00:00.000001       1 model_resolver.go:93] Resolving model {model}\n"
+        f'I1014 10:00:00.000002       1 model_config_manager.go:328] Propagating selected model override to backend: label="{model}"\n',
+        encoding="utf-8",
+    )
+    return json.dumps({"status": status, "response": response, "error": error, "usage": {}})
+
+
 @pytest.fixture()
 def stub(tmp_path):
     """A harmless stand-in for the Agy executable that logs every start."""
@@ -56,7 +72,16 @@ def stub(tmp_path):
     script.write_text(
         "#!/bin/sh\n"
         f'printf "%s\\n" "$*" >> "{log}"\n'
-        'echo "ARGV: $*"\n',
+        'model=""; logf=""; prev=""\n'
+        'for a in "$@"; do\n'
+        '  [ "$prev" = "--model" ] && model="$a"\n'
+        '  [ "$prev" = "--log-file" ] && logf="$a"\n'
+        '  prev="$a"\n'
+        "done\n"
+        'if [ -n "$logf" ]; then\n'
+        '  printf "I1014 10:00:00.000001 1 model_resolver.go:93] Resolving model %s\\nI1014 10:00:00.000002 1 model_config_manager.go:328] Propagating selected model override to backend: label=\\"%s\\"\\n" "$model" "$model" > "$logf"\n'
+        "fi\n"
+        'echo \'{"status": "SUCCESS", "response": "ARGV ok", "usage": {}}\'\n',
         encoding="utf-8",
     )
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -203,7 +228,7 @@ def test_evidence_permission_mode_matches_executed_argv_with_injected_runner():
 
     def runner(argv, **kwargs):
         captured["argv"] = list(argv)
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        return SimpleNamespace(returncode=0, stdout=_agy_turn(argv, "ok"), stderr="")
 
     exports = build_runtime_exports()
     result = exports.build_registered_online_invoker(
@@ -253,7 +278,7 @@ def test_context_model_satisfies_explicit_model_requirement():
 
     def runner(argv, **kwargs):
         captured["argv"] = list(argv)
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        return SimpleNamespace(returncode=0, stdout=_agy_turn(argv, "ok"), stderr="")
 
     exports = build_runtime_exports()
     result = exports.build_registered_online_invoker(
@@ -270,7 +295,7 @@ def test_direct_spec_with_caller_working_directory_still_runs_in_ephemeral_cwd(t
 
     def runner(argv, **kwargs):
         observed["cwd"] = str(kwargs["cwd"])
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        return SimpleNamespace(returncode=0, stdout=_agy_turn(argv, "ok"), stderr="")
 
     exports = build_runtime_exports()
     spec = exports.OnlineCliSpec(
@@ -308,8 +333,11 @@ def test_direct_spec_with_multi_arg_agy_command_fails_closed():
 # --- #180: headless permission denial is not delivery ------------------------
 
 
-def _run_with_output(stdout: str, stderr: str = "", returncode: int = 0):
+def _run_with_output(
+    response: str, stderr: str = "", returncode: int = 0, *, envelope_status: str = "SUCCESS", envelope_error: str = ""
+):
     def runner(argv, **kwargs):
+        stdout = _agy_turn(argv, response, status=envelope_status, error=envelope_error)
         return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
     exports = build_runtime_exports()
@@ -322,7 +350,8 @@ def _run_with_output(stdout: str, stderr: str = "", returncode: int = 0):
 @pytest.mark.parametrize("placement", ["stdout", "stderr", "stderr_with_stdout"])
 def test_headless_permission_denial_is_typed_non_delivery(denial, placement):
     if placement == "stdout":
-        result = _run_with_output(denial)
+        # With --output-format json the denial is reported in the envelope, not as answer text.
+        result = _run_with_output("", envelope_status="ERROR", envelope_error=denial)
     elif placement == "stderr":
         result = _run_with_output("", denial)
     else:
