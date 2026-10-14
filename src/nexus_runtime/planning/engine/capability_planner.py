@@ -734,6 +734,28 @@ _REVIEW_AUDIT_REQUEST_RE = re.compile(
 )
 
 
+# An explicit bounded implementation task_type (a bug fix / repair) is authoritative: a
+# description that merely mentions "security", "integration" or "architecture" while
+# describing a bug does not turn it into main-engineering work (online A/B S15).
+_BOUNDED_IMPLEMENTATION_TASK_TYPE_RE = re.compile(r"(?:^|[_\-\s])(?:bugfix|bug_fix|bug|fix|repair|hotfix)(?:$|[_\-\s])")
+_COMPLEX_DESC_KEYWORD_RE = re.compile(
+    r"\b(?:architecture|security|irreversible|integration|runtime[-_]closure|cross[-_]module)\b",
+    re.IGNORECASE,
+)
+
+
+def _task_type_is_bounded_implementation(task_type: str) -> bool:
+    return bool(_BOUNDED_IMPLEMENTATION_TASK_TYPE_RE.search(str(task_type or "").lower()))
+
+
+def _task_desc_signals_complex_work(task_desc: str, task_type: str) -> bool:
+    """Whole-word complex keyword in the description, unless task_type says bounded fix."""
+
+    if _task_type_is_bounded_implementation(task_type):
+        return False
+    return bool(_COMPLEX_DESC_KEYWORD_RE.search(str(task_desc or "")))
+
+
 def _task_desc_requests_review_audit(task_desc: str) -> bool:
     """True when the description's intent is a review/audit, not a mere mention of one."""
 
@@ -1930,7 +1952,7 @@ class CapabilityPlanner:
 
             is_complex = (
                 any(kw in task_type_str for kw in complex_keywords)
-                or any(kw in task_desc_str for kw in complex_keywords)
+                or _task_desc_signals_complex_work(task_desc_str, task_type_str)
                 or is_cross_module
             )
 

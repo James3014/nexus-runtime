@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -71,6 +72,51 @@ def agy_permission_mode(argv: tuple[str, ...] | list[str], *, print_flag: str = 
     if plan and "--sandbox" in tokens:
         return AGY_PERMISSION_MODE_PLAN
     return AGY_PERMISSION_MODE_UNVERIFIED
+
+
+# Online A/B S18/S19: the with-Nexus Agy turn runs with the same print-mode argv as the bench's
+# bare arm (scripts/bench/agy_provider.py in Nexus-new): a fresh project, a log file outside the
+# working directory (observed-model witness), the JSON envelope (response + usage), and Agy's own
+# ``--print-timeout``. ``NEXUS_BENCH_PER_CALL_CAP_SEC`` (set by the like-for-like bench) caps it.
+AGY_PRINT_TIMEOUT_GRACE_SEC = 15
+AGY_PER_CALL_CAP_ENV = "NEXUS_BENCH_PER_CALL_CAP_SEC"
+_AGY_RESOLVING_MODEL_RE = re.compile(r"Resolving model (?P<resolved>[^\s]+)")
+
+
+def agy_print_timeout_sec(call_timeout_sec: int | float | None, environ: Mapping[str, str] | None = None) -> int:
+    """Agy ``--print-timeout``: the bench per-call cap when set, else the call timeout."""
+    values = os.environ if environ is None else environ
+    timeout = max(5, int(call_timeout_sec or 0) or 5)
+    raw = str(values.get(AGY_PER_CALL_CAP_ENV) or "").strip()
+    try:
+        cap = int(raw)
+    except ValueError:
+        cap = 0
+    return max(5, min(timeout, cap)) if cap > 0 else timeout
+
+
+def agy_print_mode_options(*, log_path: str, print_timeout_sec: int) -> list[str]:
+    return [
+        "--log-file",
+        str(log_path),
+        "--output-format",
+        "json",
+        "--print-timeout",
+        f"{int(print_timeout_sec)}s",
+    ]
+
+
+def parse_agy_envelope(stdout: str) -> dict[str, Any] | None:
+    """The Agy ``--output-format json`` envelope, or None for plain-text output."""
+    try:
+        envelope = json.loads(str(stdout or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return envelope if isinstance(envelope, dict) and "response" in envelope else None
+
+
+def agy_observed_model_ids(log_text: str) -> list[str]:
+    return sorted({m.group("resolved") for m in _AGY_RESOLVING_MODEL_RE.finditer(str(log_text or ""))})
 
 
 def _agy_preflight_failure(
@@ -722,6 +768,14 @@ def build_subprocess_online_invoker(
         meta = ONLINE_CLI_SPEC_REGISTRY.get(spec.provider, {})
         print_flag = str(meta.get("print_flag") or "").strip()
         argv = list(spec.command)
+        agy_log_path = ""
+        agy_print_timeout = agy_print_timeout_sec(spec.timeout_sec)
+        if spec.provider == "agy":
+            # Outside the ephemeral working directory, like the bench's bare arm. Only a name is
+            # reserved here; Agy creates the file, and it is removed after the turn.
+            agy_log_path = str(
+                Path(tempfile.gettempdir()) / f"nexus-agy-online-{os.getpid()}-{time.monotonic_ns()}.log"
+            )
         stdin_input: str | None = None
         prompt_transport = "stdin"
 
@@ -795,11 +849,13 @@ def build_subprocess_online_invoker(
                 if spec.provider == "agy":
                     argv = [
                         argv[0],
+                        "--new-project",
                         "--mode",
                         "plan",
                         "--sandbox",
                         model_flag,
                         admitted_model,
+                        *agy_print_mode_options(log_path=agy_log_path, print_timeout_sec=agy_print_timeout),
                         print_flag,
                         stdin,
                     ]
@@ -812,9 +868,11 @@ def build_subprocess_online_invoker(
             elif spec.provider == "agy":
                 argv = [
                     argv[0],
+                    "--new-project",
                     "--mode",
                     "plan",
                     "--sandbox",
+                    *agy_print_mode_options(log_path=agy_log_path, print_timeout_sec=agy_print_timeout),
                     print_flag,
                     stdin,
                 ]
@@ -972,12 +1030,18 @@ def build_subprocess_online_invoker(
                 cwd=effective_working_directory or None,
                 capture_output=True,
                 text=True,
-                timeout=spec.timeout_sec,
+                timeout=(
+                    agy_print_timeout + AGY_PRINT_TIMEOUT_GRACE_SEC
+                    if agy_log_path
+                    else spec.timeout_sec
+                ),
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
             if agy_isolated_working_directory:
                 shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
+            if agy_log_path:
+                Path(agy_log_path).unlink(missing_ok=True)
             elapsed = int((time.monotonic() - start_time) * 1000)
             pe = _build_process_evidence(True, "", str(exc), None, max(0, elapsed))
             return attach_context_receipt(ctx.normalize_online_invoker_payload(
@@ -999,6 +1063,8 @@ def build_subprocess_online_invoker(
         except OSError as exc:
             if agy_isolated_working_directory:
                 shutil.rmtree(agy_isolated_working_directory, ignore_errors=True)
+            if agy_log_path:
+                Path(agy_log_path).unlink(missing_ok=True)
             elapsed = int((time.monotonic() - start_time) * 1000)
             pe = _build_process_evidence(False, "", str(exc), None, max(0, elapsed))
             return attach_context_receipt(ctx.normalize_online_invoker_payload(
@@ -1023,10 +1089,33 @@ def build_subprocess_online_invoker(
         stdout = str(getattr(result, "stdout", "") or "")
         stderr = str(getattr(result, "stderr", "") or "")
         returncode = int(getattr(result, "returncode", 1))
+        response_text = stdout
+        provider_usage: dict[str, Any] = {}
+        agy_extra: dict[str, Any] = {}
+        if agy_log_path:
+            log_text = ""
+            try:
+                log_text = Path(agy_log_path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                log_text = ""
+            finally:
+                Path(agy_log_path).unlink(missing_ok=True)
+            envelope = parse_agy_envelope(stdout)
+            agy_extra = {
+                "provider_output_format": "agy_json_envelope" if envelope is not None else "text",
+                "provider_observed_model_ids": agy_observed_model_ids(log_text),
+                "provider_print_timeout_sec": agy_print_timeout,
+            }
+            if envelope is not None:
+                response_text = str(envelope.get("response") or "")
+                usage = envelope.get("usage")
+                provider_usage = dict(usage) if isinstance(usage, Mapping) else {}
+                agy_extra["provider_envelope_status"] = str(envelope.get("status") or "")
+                agy_extra["provider_conversation_id"] = str(envelope.get("conversation_id") or "")
         permission_denied = online_text_indicates_headless_permission_denial(
             stdout
         ) or online_text_indicates_headless_permission_denial(stderr)
-        delivered = bool(stdout.strip()) and not permission_denied
+        delivered = bool(response_text.strip()) and not permission_denied
         if permission_denied:
             failure_error = "provider_headless_permission_denied"
         elif returncode == 0 and delivered:
@@ -1041,9 +1130,9 @@ def build_subprocess_online_invoker(
             output_delivered=delivered,
             gate_passed=returncode == 0 and delivered,
             provider_call_count=1,
-            response=stdout,
-            raw_response=stdout,
-            usage={},
+            response=response_text,
+            raw_response=response_text,
+            usage=provider_usage,
             error=failure_error,
             evidence_refs=(
                 [f"online:{spec.provider}:{task_id}:subprocess"]
@@ -1058,6 +1147,7 @@ def build_subprocess_online_invoker(
                 "stderr": stderr,
                 "process_evidence": pe,
                 "assembled_online_prompt": stdin,
+                **agy_extra,
             },
         ))
 

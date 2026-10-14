@@ -185,7 +185,10 @@ def test_single_executable_runs_with_runtime_owned_plan_argv_and_matching_eviden
     starts = _starts(stub)
     assert len(starts) == 1
     executed = starts[0].split(" ")
-    assert executed[:6] == ["--mode", "plan", "--sandbox", "--model", MODEL, "-p"]
+    # Same print-mode argv as the bench's bare arm (online A/B S18/S19).
+    assert executed[:7] == ["--new-project", "--mode", "plan", "--sandbox", "--model", MODEL, "--log-file"]
+    assert executed[8:13] == ["--output-format", "json", "--print-timeout", executed[11], "-p"]
+    assert executed[11].endswith("s") and int(executed[11][:-1]) >= 5
     assert result["gate_passed"] is True
     assert result["output_delivered"] is True
     evidence = result["process_evidence"]
@@ -257,7 +260,7 @@ def test_context_model_satisfies_explicit_model_requirement():
         "agy", command=(sys.executable,), runner=runner, include_local_context=False
     )({"task_id": "t", "online_prompt": "hi", "online_model_name": MODEL})
     assert result["gate_passed"] is True
-    assert captured["argv"][4:6] == ["--model", MODEL]
+    assert captured["argv"][5:7] == ["--model", MODEL]  # after --new-project --mode plan --sandbox
 
 
 def test_direct_spec_with_caller_working_directory_still_runs_in_ephemeral_cwd(tmp_path):
