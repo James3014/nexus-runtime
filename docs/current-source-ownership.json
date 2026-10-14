@@ -327,7 +327,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/transport.py",
-      "sha256": "66233531d71ef59ccd23903e8eb968387719e09bc0e1ba627b2eecce44270fa1"
+      "sha256": "f94af0ab8e86be4b0a9a3c20e30415effc2aca9f251a748a6516f0960f52b179"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -467,7 +467,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/engine/capability_planner.py",
-      "sha256": "777e4d1dff14f09422c1caaa2fd3efb3f917e5017c3f39729b3e12554f4c4c16"
+      "sha256": "7a7b9fb2e2d5a2ea3ea70dca24dec61b472a1eec554106e2c96c3b633cab139a"
     },
     {
       "canonical_owner": "runtime planning",
@@ -628,7 +628,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/services/model_workforce_policy.py",
-      "sha256": "a7f55640756370b780d548510bc7e540d46f5a63912b5a0a2234ca4b684314f7"
+      "sha256": "597311d96b8c32c73b4b4a8e9fdbb1dcb92f1cf318f442b97bb04a3a961d9a2c"
     },
     {
       "canonical_owner": "runtime planning",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "504071f78fdbbfacab0ae2e2281a552adc3a2d70",
-  "source_tree": "dc2206ccd4f7c11091de308e173fd7553d327aeb",
+  "source_head": "e55f648071c5cecb0b17209f3939d9621ffed009",
+  "source_tree": "1c941ec621c211f984d8c03cd6c4946194aa472b",
   "unknown_lineage": []
 }

@@ -53,6 +53,16 @@ def compute_policy_hash(parsed_data: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
+# Largest UTC offset is +14h, so a date that is already "today" somewhere on
+# Earth can be at most one day ahead of UTC today. CI runs in UTC while authors
+# work in e.g. Taipei (UTC+8); allow exactly that skew and nothing more.
+LAST_VERIFIED_TZ_ALLOWANCE_DAYS = 1
+
+
+def _utc_today() -> datetime.date:
+    return datetime.datetime.now(datetime.timezone.utc).date()
+
+
 def get_freshness_evidence(last_verified_str: str) -> dict[str, Any]:
     """Calculate verified age in days and check for future dates without blocking on age."""
     try:
@@ -131,10 +141,12 @@ class WorkforcePolicyLoader:
         except ValueError as exc:
             raise WorkforcePolicyValidationError(f"Invalid ISO last_verified date: {last_verified_raw}") from exc
 
-        today = datetime.date.today()
-        if verified_date > today:
+        today = _utc_today()
+        latest_allowed = today + datetime.timedelta(days=LAST_VERIFIED_TZ_ALLOWANCE_DAYS)
+        if verified_date > latest_allowed:
             raise WorkforcePolicyValidationError(
-                f"last_verified date '{last_verified_raw}' is in the future relative to '{today}'"
+                f"last_verified date '{last_verified_raw}' is in the future relative to '{today}' "
+                f"(UTC, +{LAST_VERIFIED_TZ_ALLOWANCE_DAYS} day timezone allowance)"
             )
 
         # 5. Declared states check
