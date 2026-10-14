@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -710,6 +711,34 @@ def default_capability_nodes() -> dict[str, CapabilityNode]:
         ),
     ]
     return {node.name: node for node in nodes}
+
+
+# A task *requests* review/audit work only when it says so as its intent: it opens with
+# the review/audit verb ("Review the diff", "Please audit ...", "Security audit of ...")
+# or explicitly asks for one ("review this PR", "perform an audit"). A bug report that
+# merely mentions a review or audit ("Review found cases ...", "The offline audit of
+# ... crashes", "explicit, reviewed state") is still implementation work.
+_REVIEW_AUDIT_OPENING_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:(?:code|security|independent|design|architecture)\s+)?"
+    r"(?:re-?)?(?:review|audit)\b"
+    r"(?!\s+(?:found|finds|showed|shows|revealed|reveals|reported|reports|identified|flagged|noted|"
+    r"discovered|uncovered|turned\s+up)\b)",
+    re.IGNORECASE,
+)
+_REVIEW_AUDIT_REQUEST_RE = re.compile(
+    r"\b(?:review|audit)\s+(?:this|these|that|the|my|our)\s+(?:proposed\s+)?"
+    r"(?:pr|pull\s+request|diff|diffs|change|changes|changeset|patch|patches|code|commit|commits|"
+    r"branch|implementation|plan|design|merge\s+request)\b"
+    r"|\b(?:perform|do|conduct|run|carry\s+out)\s+(?:an?\s+|the\s+)?(?:[\w-]+\s+)?(?:review|audit)\b",
+    re.IGNORECASE,
+)
+
+
+def _task_desc_requests_review_audit(task_desc: str) -> bool:
+    """True when the description's intent is a review/audit, not a mere mention of one."""
+
+    text = str(task_desc or "")
+    return bool(_REVIEW_AUDIT_OPENING_RE.search(text) or _REVIEW_AUDIT_REQUEST_RE.search(text))
 
 
 class CapabilityPlanner:
@@ -1909,7 +1938,7 @@ class CapabilityPlanner:
 
             is_review_audit = (
                 is_explicit_type_review_audit
-                or any(kw in task_desc_str for kw in ("review", "audit"))
+                or _task_desc_requests_review_audit(task_desc_str)
             )
 
             if candidate_generation_only:
