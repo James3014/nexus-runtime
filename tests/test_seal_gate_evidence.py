@@ -466,3 +466,13 @@ def test_replay_snapshot_receipts(snap):
     if "acceptance_check" in results:
         assert sealed_entries["acceptance_check"]["status"] == EVALUATED_REJECTED_STATUS
     assert not set(sealed["summary"]["real_invoked"]) & set(POSTFLIGHT)
+
+
+def test_runtime_digest_never_raises_on_cycles_or_unsortable_keys():
+    from nexus_runtime.kernel.capabilities import _runtime_digest
+
+    cyclic: dict[str, Any] = {"a": 1}
+    cyclic["self"] = cyclic
+    for value in (cyclic, {1: "x", "y": 2}, object()):
+        digest = _runtime_digest(value)
+        assert len(digest) == 64 and int(digest, 16) >= 0

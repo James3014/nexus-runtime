@@ -132,8 +132,11 @@ def _runtime_digest(value: Any) -> str:
         text = json.dumps(
             value, sort_keys=True, default=str, ensure_ascii=False, separators=(",", ":")
         )
-    except Exception:  # noqa: BLE001 - unsortable keys / exotic objects
-        text = repr(value)
+    except Exception:  # noqa: BLE001 - unsortable keys / cycles / exotic objects
+        try:
+            text = repr(value)
+        except Exception:  # noqa: BLE001 - e.g. RecursionError on pathological nesting
+            text = f"<unrepresentable:{type(value).__name__}>"
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
 
