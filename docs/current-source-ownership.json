@@ -166,7 +166,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/capabilities.py",
-      "sha256": "c9f80b534565b18abdb5e50cf0aff1f6cd3ec751e357d878baa275e3b819ec55"
+      "sha256": "16b0feec8bca09b072116d35cb5de8b34f8725f193be9e93835c6f9157233ac5"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -334,7 +334,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/unified_runtime.py",
-      "sha256": "205cb94e0241b0ac2915a49725bbf920b4cf39c7b7f4e40a3d3b52841bf8a4a4"
+      "sha256": "eee1dea5f0fede37330e8f75e0e0f20942b5497d9ca18662529b9b50b3326e6e"
     },
     {
       "canonical_owner": "memory adapter",
@@ -558,7 +558,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/evidence/receipt_base.py",
-      "sha256": "f9586030981b482b464d41903c3819bed1f06ab7a055b77a0cd420c97ba05c82"
+      "sha256": "270c48aaaa3123c04bbee5d9bd55a7de09800d56c43308cbe65322e9f61044cc"
     },
     {
       "canonical_owner": "runtime planning",
@@ -614,7 +614,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/services/capability_evidence_bundle.py",
-      "sha256": "270a282aaad94bfececdea3b5cf95631492c4820fc7e6dea427b31dc59c2660c"
+      "sha256": "d4d7e83b740f00649a0b35f1f87f0687ef0476ef625edf88de7786522d3ed3fd"
     },
     {
       "canonical_owner": "runtime planning",
@@ -768,7 +768,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/services/online_nexus_context.py",
-      "sha256": "15c2cca9dc7970b51212a920370083b28145a56a1be4831db62c93a0f5e676cb"
+      "sha256": "4dac0dbc49034c86f1a499d7b85d9a5e00789af7570d599afc4f1c381b9781d1"
     },
     {
       "canonical_owner": "runtime support",
@@ -803,7 +803,7 @@
       "donor": "docs/task-context-provenance.json",
       "lineage_status": "integrated_pending_acceptance",
       "path": "nexus_runtime/task_context/consumer_projection.py",
-      "sha256": "49cb9172cc3b25b025e053082a21339eb57c755a42bc05a8d21c212aeaabe472"
+      "sha256": "422ac86df57d4623e3233dc8ce43a5fa2eea2e6420cb919e13a7b9cfdb4565bb"
     },
     {
       "canonical_owner": "runtime context",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "f618dfa19bc1089b15ff0010b81c791f80182733",
-  "source_tree": "c37f453d81ec417dda789955b9f42549172214fe",
+  "source_head": "14ab633f20abcc0247dc1081b07e7682afc4f318",
+  "source_tree": "8a6a543b4318eb8c5e05f8d68ae95c3204e56d7c",
   "unknown_lineage": []
 }
