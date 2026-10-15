@@ -2451,7 +2451,9 @@ class UnifiedRuntime:
         vap_credit = finalized.get("verified_assist", {}).get("credit", {}) if isinstance(finalized.get("verified_assist"), Mapping) else {}
         finalized_local = finalized.get("local") if isinstance(finalized.get("local"), Mapping) else {}
         finalized_local_response = finalized_local.get("response") if isinstance(finalized_local.get("response"), Mapping) else {}
-        local_vap_required = bool(
+        # Nexus-new#2245: only a forwardable Local stage can earn VAP credit, so
+        # only it may require that credit; a refused stage never vetoes Online.
+        local_vap_required = _local_stage_forwardable(finalized_local) and bool(
             finalized_local.get("invoked")
             and (
                 finalized_local.get("verified_assist_packet_expected_hash")

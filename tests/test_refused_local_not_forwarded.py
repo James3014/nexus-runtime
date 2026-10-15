@@ -538,3 +538,32 @@ def test_finalize_never_credits_refused_local_when_online_contributed():
     assert finalized["claim_boundary"]["outcome_contributed"] is True
     assert finalized["local"]["outcome_contributed"] is False
     assert finalized["local"]["substitution_trace"]["final_outcome_contributed"] is False
+
+
+def test_finalize_gate_failed_vap_local_does_not_veto_online_contribution():
+    exports = build_runtime_exports()
+    runtime, receipt, _captured = _workforce_e2e(exports)
+    contributing = dict(receipt)
+    contributing["online"] = {**receipt["online"], "outcome_contributed": True}
+    # SUCCEEDED but gate-failed Local stage carrying a VAP: it can never earn
+    # VAP credit, so it must neither be credited nor veto Online's contribution.
+    contributing["local"] = {
+        **receipt["local"],
+        "status": "SUCCEEDED",
+        "gate_passed": False,
+        "invoked": True,
+        "verified_assist_packet_expected_hash": "c" * 64,
+        "verified_assist_packet_id": "pkt-2245",
+        "response": {
+            **dict(receipt["local"].get("response") or {}),
+            "consume_verified_assist": True,
+            "verified_assist_packet": {"packet_hash": "c" * 64, "packet_id": "pkt-2245"},
+        },
+    }
+    finalized = runtime.finalize_receipt(
+        contributing, verifier=_authoritative_verifier(receipt),
+        learning={"task_id": "t2245", "invoked": True, "gate_passed": True, "evidence_refs": ["l"]},
+    )
+    assert finalized["claim_boundary"]["outcome_contributed"] is True
+    assert finalized["local"]["outcome_contributed"] is False
+    assert finalized["local"]["substitution_trace"]["final_outcome_contributed"] is False
