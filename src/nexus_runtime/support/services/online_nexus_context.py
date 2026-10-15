@@ -236,8 +236,10 @@ def compact_capability_evidence_for_prompt(
         consumer_payload_markers,
         hash_consumer_payloads,
         entry_prompt_visible,
+        receipt_only_evidence_ids,
     )
 
+    hidden_ids = receipt_only_evidence_ids(b)
     entries_out: list[dict[str, Any]] = []
     payloads: list[dict[str, Any]] = []
     payload_markers: list[str] = []
@@ -245,14 +247,22 @@ def compact_capability_evidence_for_prompt(
         if not isinstance(raw_entry, Mapping):
             continue
         entry = raw_entry
-        if not entry_prompt_visible(raw_entry) and str(raw_entry.get("status") or "") in _INVOKED_ENTRY_STATUSES:
-            # receipt_only (CONTRACT_B): render the pre-PR-4 placeholder so the prompt does
-            # not depend on the gate's verdict; the sealed entry keeps the real one.
+        if not entry_prompt_visible(raw_entry):
+            # receipt_only (CONTRACT_B): a neutral placeholder identical for pass / blocked /
+            # rejected -- invoked statuses render as the pre-PR-4 INVOKED_NOT_SUCCESS, and no
+            # entry-derived ids or callable (refs such as ``ev_pregate_blocked_<task>`` can
+            # encode the outcome).  The sealed entry keeps the real verdict.
+            status = str(raw_entry.get("status") or "")
             entry = {
-                **raw_entry,
-                "status": _WITHHELD_GATE_STATUS,
+                "name": raw_entry.get("name"),
+                "status": _WITHHELD_GATE_STATUS if status in _INVOKED_ENTRY_STATUSES else status,
                 "success": False,
                 "invoked_real": False,
+                "invoked_stub": False,
+                "skipped": bool(raw_entry.get("skipped")) if status not in _INVOKED_ENTRY_STATUSES else False,
+                "evidence_ids": [],
+                "evidence_refs": [],
+                "physical_callable": "",
                 "consumer_payload": {},
                 "has_consumer_payload": False,
             }
@@ -287,7 +297,9 @@ def compact_capability_evidence_for_prompt(
         "source_hash": str(b.get("source_hash") or ""),
         "plan_hash": str(b.get("plan_hash") or ""),
         "selected_capabilities": list(b.get("selected_capabilities") or [])[:16],
-        "evidence_ids": list(b.get("evidence_ids") or [])[:32],
+        "evidence_ids": [
+            eid for eid in (b.get("evidence_ids") or []) if str(eid).strip() not in hidden_ids
+        ][:32],
         "entries": entries_out[:24],
         "consumer_payloads": payloads[:16],
         "payload_markers": payload_markers[:32],
@@ -461,6 +473,14 @@ def build_online_nexus_context(
             if isinstance(cp, Mapping) and cp:
                 consumed_capability_payloads.append(dict(cp))
         consumed_evidence_ids = entry_ids or [i for i in raw_ids if not i.startswith("bundle:")]
+        # receipt_only ids are never consumed by Online (defence in depth: the compact view
+        # already carries none of them).
+        from nexus_runtime.planning.services.capability_evidence_bundle import (
+            receipt_only_evidence_ids as _receipt_only_ids,
+        )
+
+        _hidden_ids = _receipt_only_ids(evidence_bundle if isinstance(evidence_bundle, Mapping) else {})
+        consumed_evidence_ids = [i for i in consumed_evidence_ids if i not in _hidden_ids]
         # Payload markers only count when actually present in the serialized prompt.
         for m in evidence_compact.get("payload_markers") or []:
             ms = str(m)

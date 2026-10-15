@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -39,6 +40,7 @@ from nexus_runtime.planning.services.capability_evidence_bundle import (
 )
 from nexus_runtime.support.services.online_nexus_context import (
     compact_capability_evidence_for_prompt,
+    make_with_nexus_online_invoker,
 )
 from nexus_runtime.task_context import (
     build_online_context_package,
@@ -334,6 +336,132 @@ def test_unreadable_route_override_falls_back_to_the_declared_set(tmp_path):
         capability_invokers={"memory": seal._registry_invoker("memory", "passed")},
         verifier=seal._verifier("passed"), receipt_path=tmp_path / "receipt.json",
     )
-    assert receipt["context_trace"]["receipt_only_override_invalid"] is True
+    assert receipt["context_trace"]["receipt_only_override_invalid"] == {"reason": "not_a_list", "type": "str"}
     assert receipt["context_trace"]["receipt_only_capabilities"] == sorted(RECEIPT_ONLY_CAPABILITIES)
+    assert seal._entry(receipt, "memory")[CONSUMER_VISIBILITY_FIELD] == "receipt_only"
+
+
+# --- round 2 ---------------------------------------------------------------------------
+
+
+def _refs_only_pregate(outcome: str):
+    """A pregate record with no ``evidence_ids`` whose refs / callable encode the outcome."""
+
+    def invoke(context):
+        task_id = context["task_id"]
+        passed = outcome == "passed"
+        ref = f"ev_pregate_{outcome}_{task_id}"
+        detail = {"action": "run_cli_pregate", "evidence_refs": [ref],
+                  "physical_callable": f"host.pregate.{outcome}"}
+        if passed:
+            detail.update(semantic_status="SUCCEEDED", results=[{"rc": 0}])
+        elif outcome == "blocked":
+            detail.update(semantic_status="BLOCKED", error="EXPLICIT_VERIFY_COMMANDS_REQUIRED")
+        else:
+            detail.update(semantic_status="FAILED", blockers=["verify_command_failed"])
+        status = "SUCCEEDED" if passed else "FAILED"
+        return {"task_id": task_id, "invoked": True, "status": status, "gate_passed": passed,
+                "evidence_refs": [ref], "physical_callable": f"capability_executor_registry:pregate:{outcome}",
+                "response": {"status": status, "capability": "pregate", "outcome": detail}}
+
+    return invoke
+
+
+def _prompt_for(tmp_path: Path, outcome: str) -> tuple[dict[str, Any], str]:
+    exports = build_runtime_exports()
+    prompts: list[str] = []
+
+    def capture(context):
+        prompts.append(str(context.get("online_prompt") or ""))
+        return seal._online(context)
+
+    capture.physical_provider_transport = False
+    online = wrap_online_invoker(make_with_nexus_online_invoker(capture))
+    online.physical_provider_transport = False
+
+    class ForcedPlanner(exports.CapabilityPlanner):
+        def plan(self, **kwargs):
+            plan = super().plan(**kwargs)
+            return replace(plan, selected_capabilities=type(plan.selected_capabilities)(("pregate",)))
+
+    request = exports.UnifiedRuntimeRequest(
+        task_id="ro-neutral", workspace_revision=seal.REV, task_statement=seal.STATEMENT,
+        task_type="repair",
+        route={"recommended_flow": "direct", "receipt_only_capabilities": ["pregate"]},
+        online_enabled=True, online_prompt="hi",
+    )
+    root = tmp_path / outcome
+    root.mkdir()
+    receipt = exports.UnifiedRuntime(planner=ForcedPlanner(), project_root=root).run(
+        request, online_invoker=online,
+        capability_invokers={"pregate": _refs_only_pregate(outcome)},
+        verifier=seal._verifier("passed"), receipt_path=root / "receipt.json",
+    )
+    assert len(prompts) == 1, receipt["online"]
+    return receipt, prompts[0]
+
+
+def _opaque(prompt: str, receipt: dict[str, Any]) -> str:
+    """Replace only the three opaque per-run hashes (bundle, projection, package)."""
+    text = prompt.replace(receipt["capability_evidence_bundle"]["bundle_hash"], "<bundle_hash>")
+    return re.sub(r'"(consumer_projection_hash|package_hash)":"[0-9a-f]{64}"', r'"\1":"<h>"', text)
+
+
+def test_receipt_only_gate_outcome_never_changes_the_online_prompt(tmp_path):
+    """L2: pass vs blocked vs rejected of a receipt-only gate whose refs encode the outcome:
+    compact view and the whole Online prompt are byte-identical except opaque hashes."""
+    runs = {o: _prompt_for(tmp_path, o) for o in ("passed", "blocked", "rejected")}
+    statuses = {o: seal._entry(r, "pregate")["status"] for o, (r, _) in runs.items()}
+    assert statuses == {"passed": "REAL_INVOKED", "blocked": "INVOKED_NOT_SUCCESS",
+                        "rejected": "EVALUATED_REJECTED"}
+    normalized = {o: _opaque(p, r) for o, (r, p) in runs.items()}
+    assert normalized["passed"] == normalized["blocked"] == normalized["rejected"]
+    compact = {
+        o: json.dumps(compact_capability_evidence_for_prompt(r["capability_evidence_bundle"]), sort_keys=True)
+        .replace(r["capability_evidence_bundle"]["bundle_hash"], "<bundle_hash>")
+        for o, (r, _) in runs.items()
+    }
+    assert compact["passed"] == compact["blocked"] == compact["rejected"]
+    for outcome, (receipt, prompt) in runs.items():
+        assert f"ev_pregate_{outcome}" not in prompt and f"host.pregate.{outcome}" not in prompt
+        assert f"pregate:{outcome}" not in prompt
+        assert "[NEXUS CAPABILITY EVIDENCE]" in prompt and "[NEXUS MODEL CONTEXT]" in prompt
+        assert not any(i.startswith("ev_pregate_") for i in receipt["consumed_evidence_ids"])
+    passed_receipt = runs["passed"][0]
+    assert seal._attest(passed_receipt, "pregate") == ucp.ATTESTATION_REAL
+
+
+def test_compact_placeholder_carries_no_entry_derived_ids():
+    bundle = _bundle(receipt_only=["memory"])
+    view = compact_capability_evidence_for_prompt(bundle)
+    row = next(r for r in view["entries"] if r["name"] == "memory")
+    assert row["evidence_ids"] == [] and row["physical_callable"] == ""
+    assert "ev:memory" not in view["evidence_ids"] and "ev:codeintel" in view["evidence_ids"]
+
+
+def test_route_list_with_invalid_items_keeps_valid_names_plus_default(tmp_path):
+    """L1: ``["artifact_gate", 5]`` -> artifact_gate stays receipt-only, plus the default set."""
+    exports = build_runtime_exports()
+
+    class ForcedPlanner(exports.CapabilityPlanner):
+        def plan(self, **kwargs):
+            plan = super().plan(**kwargs)
+            return replace(plan, selected_capabilities=type(plan.selected_capabilities)(("memory", "artifact_gate")))
+
+    request = exports.UnifiedRuntimeRequest(
+        task_id="ro-3", workspace_revision=seal.REV, task_statement=seal.STATEMENT,
+        task_type="repair",
+        route={"recommended_flow": "direct", "receipt_only_capabilities": ["artifact_gate", 5]},
+        online_enabled=True, online_prompt="hi",
+    )
+    invokers = dict(seal.build_plan_gated_postflight_invokers())
+    invokers["memory"] = seal._registry_invoker("memory", "passed")
+    receipt = exports.UnifiedRuntime(planner=ForcedPlanner(), project_root=tmp_path).run(
+        request, online_invoker=seal._online, capability_invokers=invokers,
+        verifier=seal._verifier("passed"), receipt_path=tmp_path / "receipt.json",
+    )
+    trace = receipt["context_trace"]
+    assert trace["receipt_only_override_invalid"] == {"reason": "invalid_items", "items": ["5"]}
+    assert trace["receipt_only_capabilities"] == sorted(RECEIPT_ONLY_CAPABILITIES | {"artifact_gate"})
+    assert seal._entry(receipt, "artifact_gate")[CONSUMER_VISIBILITY_FIELD] == "receipt_only"
     assert seal._entry(receipt, "memory")[CONSUMER_VISIBILITY_FIELD] == "receipt_only"

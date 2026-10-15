@@ -980,21 +980,32 @@ class UnifiedRuntime:
             for name, invoker in preflight_items
         }
         # Consumer visibility: capabilities the host request declares receipt-only (route
-        # list of names; absent -> none, records may still opt in).  An unreadable value
-        # falls back to RECEIPT_ONLY_CAPABILITIES (fail closed: hides, never widens).
+        # list of names; absent -> none, records may still opt in).  Fail closed, never
+        # widening visibility: a non-list value -> RECEIPT_ONLY_CAPABILITIES; a list with
+        # invalid items -> its valid names UNION RECEIPT_ONLY_CAPABILITIES.  Invalid input is
+        # recorded in context_trace.receipt_only_override_invalid.
         receipt_only_override = (
             request.route.get(RECEIPT_ONLY_ROUTE_KEY) if isinstance(request.route, Mapping) else None
         )
-        receipt_only_invalid = False
+        receipt_only_invalid: Any = None
         if receipt_only_override is None:
             receipt_only_capabilities: frozenset[str] = frozenset()
-        elif isinstance(receipt_only_override, (list, tuple)) and all(
-            isinstance(item, str) and item.strip() for item in receipt_only_override
-        ):
-            receipt_only_capabilities = frozenset(item.strip() for item in receipt_only_override)
+        elif isinstance(receipt_only_override, (list, tuple)):
+            valid = frozenset(
+                item.strip() for item in receipt_only_override if isinstance(item, str) and item.strip()
+            )
+            bad = [
+                repr(item) for item in receipt_only_override
+                if not (isinstance(item, str) and item.strip())
+            ]
+            if bad:
+                receipt_only_capabilities = valid | RECEIPT_ONLY_CAPABILITIES
+                receipt_only_invalid = {"reason": "invalid_items", "items": bad[:16]}
+            else:
+                receipt_only_capabilities = valid
         else:
             receipt_only_capabilities = RECEIPT_ONLY_CAPABILITIES
-            receipt_only_invalid = True
+            receipt_only_invalid = {"reason": "not_a_list", "type": type(receipt_only_override).__name__}
         try:
             capability_results, evidence_bundle = materialize_selected_capability_evidence(
                 self._ctx,
@@ -2161,7 +2172,7 @@ class UnifiedRuntime:
                 else {}
             ),
             "receipt_only_capabilities": sorted(receipt_only_capabilities),
-            **({"receipt_only_override_invalid": True} if receipt_only_invalid else {}),
+            **({"receipt_only_override_invalid": receipt_only_invalid} if receipt_only_invalid else {}),
             "capability_context_compressed": capability_context_compressed,
             "codeintel_hash": codeintel_hash,
             "route": {
