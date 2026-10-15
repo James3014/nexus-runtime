@@ -841,3 +841,110 @@ def test_runtime_digest_is_independent_of_hash_seed():
         out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
         digests.add(out.stdout.strip())
     assert len(digests) == 1 and len(digests.pop()) == 64
+
+
+# --- scanner items: fail-closed verifier, preflight / postflight guard parity -----------
+
+
+class _ExplodingBundle(dict):
+    def get(self, key, default=None):  # noqa: D401 - deliberately broken mapping
+        raise RuntimeError("boom")
+
+
+def test_verifier_fails_closed_on_exception():
+    verdict = verify_capability_evidence_bundle(_ExplodingBundle(schema="x"))
+    assert verdict["ok"] is False and verdict["gate_passed"] is False
+    assert verdict["blockers"] == ["verifier_exception:RuntimeError"]
+
+
+@pytest.mark.parametrize(
+    "drop,blocker",
+    [
+        ("seal_phase", "missing_field:seal_phase"),
+        ("preflight_bundle_hash", "missing_field:preflight_bundle_hash"),
+        ("postflight_sealed_capabilities", "missing_field:postflight_sealed_capabilities"),
+    ],
+)
+def test_verifier_fails_closed_on_missing_seal_field(drop, blocker):
+    pre, sealed = _sealed_pair()
+    forged = copy.deepcopy(sealed)
+    forged.pop(drop)
+    forged = _rehash(forged)
+    for kwargs in ({}, {"preflight_bundle": pre, "expected_preflight_bundle_hash": pre["bundle_hash"]}):
+        verdict = verify_capability_evidence_bundle(forged, **kwargs)
+        assert verdict["ok"] is False and blocker in verdict["blockers"], (kwargs.keys(), verdict["blockers"])
+
+
+def test_verifier_fails_closed_when_a_reseal_is_expected_but_absent():
+    pre, _ = _sealed_pair()
+    verdict = verify_capability_evidence_bundle(pre, expected_preflight_bundle_hash=pre["bundle_hash"])
+    assert verdict["ok"] is False and "seal_phase_missing" in verdict["blockers"]
+    verdict = verify_capability_evidence_bundle(pre, preflight_bundle=pre)
+    assert verdict["ok"] is False and "seal_phase_missing" in verdict["blockers"]
+
+
+# Same guards on both sibling paths: one preflight gate, one postflight gate.
+_PARITY = {"preflight": "pregate", "postflight": "acceptance_check"}
+
+
+def _variant_invoker(name: str, variant: str):
+    base = _registry_invoker(name, "passed")
+
+    def invoke(context):
+        if variant == "exception":
+            raise RuntimeError("executor exploded")
+        result = base(context)
+        if variant == "no_task_id":
+            result.pop("task_id")
+        elif variant == "nested_stub":
+            result["response"]["stub"] = True
+        return result
+
+    return invoke
+
+
+@pytest.mark.parametrize("phase", list(_PARITY))
+@pytest.mark.parametrize("variant", ["no_task_id", "nested_stub", "exception"])
+def test_guards_apply_equally_on_preflight_and_postflight(tmp_path, phase, variant):
+    name = _PARITY[phase]
+    receipt = _run(tmp_path, "passed", invokers={name: _variant_invoker(name, variant)})
+    entry = _entry(receipt, name)
+    record = receipt["capability_results"][name]
+    assert entry["status"] != "REAL_INVOKED" and entry["invoked_real"] is False
+    assert "runtime_evidence_ids" not in entry and "runtime_evidence_ids" not in record
+    assert _attest(receipt, name) != ucp.ATTESTATION_REAL
+    expected = {"no_task_id": "INVOKED_NOT_SUCCESS", "nested_stub": "STUB_INVOKED",
+                "exception": "INVOKED_NOT_SUCCESS"}[variant]
+    assert entry["status"] == expected
+    if phase == "postflight":
+        assert entry["seal_phase"] == "postflight"
+    # Its sibling on the other path is unaffected and still real.
+    other = _PARITY["postflight" if phase == "preflight" else "preflight"]
+    assert _attest(receipt, other) == ucp.ATTESTATION_REAL
+
+
+@pytest.mark.parametrize("phase", list(_PARITY))
+def test_forgery_guard_applies_on_both_paths(tmp_path, phase):
+    """A forger on either path cannot turn the other path's gate into real."""
+    seen: list = []
+    forger_name, victim = ("pregate", "plan_quality_gate") if phase == "preflight" else ("bdd_acceptance_skill", "acceptance_check")
+    receipt = _run(tmp_path, "blocked", invokers={
+        forger_name: _forger(_registry_invoker(forger_name, "blocked"), (victim, "artifact_gate"), seen),
+    })
+    _assert_no_forgery(receipt, (victim, "artifact_gate"))
+
+
+def test_preflight_seal_exception_fails_closed_like_postflight(tmp_path, monkeypatch):
+    """Sibling of test_reseal_exception_is_dropped_not_raised: a preflight seal failure
+    ends the run BLOCKED instead of raising, and nothing is attested."""
+
+    def boom(*args, **kwargs):
+        raise KeyError("preflight seal broke")
+
+    monkeypatch.setattr(_unified_runtime_module, "materialize_selected_capability_evidence", boom)
+    receipt = _run(tmp_path, "passed")
+    assert receipt["terminal_status"] != "SUCCEEDED"
+    stage = next(s for s in receipt["stages"] if s.get("name") == "shared_capability_evidence")
+    assert stage["status"] == "BLOCKED"
+    for name in ALL_GATES:
+        assert _attest(receipt, name) != ucp.ATTESTATION_REAL

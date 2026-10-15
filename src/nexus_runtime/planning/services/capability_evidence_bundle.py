@@ -971,6 +971,36 @@ def verify_capability_evidence_bundle(
     preflight_bundle: Mapping[str, Any] | None = None,
     expected_preflight_bundle_hash: str | None = None,
 ) -> dict[str, Any]:
+    """Fail-closed wrapper: any exception while verifying is ``ok=False``."""
+    try:
+        return _verify_capability_evidence_bundle(
+            bundle,
+            source_hash_subject=source_hash_subject,
+            preflight_bundle=preflight_bundle,
+            expected_preflight_bundle_hash=expected_preflight_bundle_hash,
+        )
+    except Exception as exc:  # noqa: BLE001 - never ok by default
+        return {
+            "schema": VERDICT_SCHEMA,
+            "ok": False,
+            "gate_passed": False,
+            "blockers": [f"verifier_exception:{type(exc).__name__}"],
+            "bundle_hash": "",
+            "expected_bundle_hash": "",
+            "source_hash_verified": False,
+            "source_hash_kind": "",
+            "immutable_alone_insufficient": True,
+            "public_claim_allowed": False,
+        }
+
+
+def _verify_capability_evidence_bundle(
+    bundle: Mapping[str, Any] | None,
+    *,
+    source_hash_subject: Mapping[str, Any] | None = None,
+    preflight_bundle: Mapping[str, Any] | None = None,
+    expected_preflight_bundle_hash: str | None = None,
+) -> dict[str, Any]:
     """Public verifier: fail-closed on missing/tampered hash-sealed bundles.
 
     ``immutable=True`` alone is **not** sufficient proof.  A post-postflight re-seal
@@ -1095,9 +1125,16 @@ def verify_capability_evidence_bundle(
     if bundle.get("public_claim_allowed") is True:
         blockers.append("public_claim_allowed_must_be_false")
 
-    if any(
-        key in bundle for key in ("seal_phase", "preflight_bundle_hash", "postflight_sealed_capabilities")
+    seal_keys = ("seal_phase", "preflight_bundle_hash", "postflight_sealed_capabilities")
+    if not any(key in bundle for key in seal_keys) and (
+        preflight_bundle is not None or expected_preflight_bundle_hash is not None
     ):
+        # The caller expects a postflight re-seal: an unsealed bundle fails closed.
+        blockers.append("seal_phase_missing")
+    if any(key in bundle for key in seal_keys):
+        for key in seal_keys:
+            if key not in bundle:
+                blockers.append(f"missing_field:{key}")
         blockers.extend(
             _postflight_seal_blockers(
                 bundle,

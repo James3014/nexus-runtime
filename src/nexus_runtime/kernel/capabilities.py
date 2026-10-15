@@ -220,7 +220,10 @@ def _runtime_snapshot(value: Any) -> Any:
     try:
         return copy.deepcopy(value)
     except Exception:  # noqa: BLE001 - non-copyable members
-        return json.loads(json.dumps(_canonical(value, 0, set()), allow_nan=True))
+        try:
+            return json.loads(json.dumps(_canonical(value, 0, set()), allow_nan=True))
+        except Exception:  # noqa: BLE001 - never raise; never share the original
+            return {"__unsnapshotable__": type(value).__name__}
 
 
 def _stub_marked(stage: Mapping[str, Any]) -> bool:

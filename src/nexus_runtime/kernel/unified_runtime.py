@@ -975,20 +975,26 @@ class UnifiedRuntime:
             )
             for name, invoker in preflight_items
         }
-        capability_results, evidence_bundle = materialize_selected_capability_evidence(
-            self._ctx,
-            planner_output=plan_payload,
-            selected_capabilities=list(plan.selected_capabilities),
-            task_id=request.task_id,
-            task_statement=request.task_statement,
-            workspace_revision=request.workspace_revision,
-            plan_hash=plan_hash,
-            planner_decision_id=planner_decision_id,
-            capability_invokers=preflight_invokers,
-            capability_context=capability_context,
-            codeintel=dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {},
-            invocation_executed=lambda name: name in executed_capabilities_this_run,
-        )
+        try:
+            capability_results, evidence_bundle = materialize_selected_capability_evidence(
+                self._ctx,
+                planner_output=plan_payload,
+                selected_capabilities=list(plan.selected_capabilities),
+                task_id=request.task_id,
+                task_statement=request.task_statement,
+                workspace_revision=request.workspace_revision,
+                plan_hash=plan_hash,
+                planner_decision_id=planner_decision_id,
+                capability_invokers=preflight_invokers,
+                capability_context=capability_context,
+                codeintel=dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {},
+                invocation_executed=lambda name: name in executed_capabilities_this_run,
+            )
+        except Exception as exc:  # noqa: BLE001 - same fail-closed rule as the postflight seal
+            # The preflight seal failed: no records are trusted and the empty bundle fails
+            # verification below, so the run ends BLOCKED (never crashes, never attests).
+            capability_results = {}
+            evidence_bundle = {"preflight_seal_error": type(exc).__name__}
         for _name, _record in capability_results.items():
             record_store[str(_name)] = _runtime_snapshot(_record)
         # Runtime-held copy of the sealed preflight bundle: the re-seal starts from it,
