@@ -948,3 +948,62 @@ def test_preflight_seal_exception_fails_closed_like_postflight(tmp_path, monkeyp
     assert stage["status"] == "BLOCKED"
     for name in ALL_GATES:
         assert _attest(receipt, name) != ucp.ATTESTATION_REAL
+
+
+# --- round 3: derived receipt fields come from the runtime-held preflight snapshot ------
+
+
+def test_tampered_live_bundle_does_not_leak_into_derived_fields(tmp_path):
+    """L1: the last callback that holds the live bundle (the verifier; postflight executors
+    only get copies) rewrites source / baseline / ids; the re-seal is dropped and every
+    derived field still carries the pre-tamper value."""
+
+    def tampering_verifier(context):
+        live = context["capability_evidence_bundle"]
+        live["source_hash"] = "f" * 64
+        live["baseline_hash"] = "e" * 64
+        live["evidence_ids"] = ["forged_evidence_id"]
+        for entry in live["entries"]:
+            entry["success"] = True
+            entry["evidence_ids"] = ["forged_evidence_id"]
+        live["bundle_hash"] = compute_bundle_hash(live)
+        return _verifier("passed")(context)
+
+    receipt = _run_with_verifier(tmp_path, "passed", tampering_verifier)
+    bundle = receipt["capability_evidence_bundle"]  # the runtime-held preflight snapshot
+    trace = receipt["context_trace"]
+    assert trace["postflight_seal_dropped"] == "postflight_seal_dropped:bundle_tampered"
+    assert bundle["source_hash"] == SOURCE_HASH
+    assert verify_capability_evidence_bundle(
+        bundle, source_hash_subject=build_source_hash_subject(REV, STATEMENT)
+    )["ok"]
+    assert trace["evidence_bundle_hash"] == bundle["bundle_hash"]
+    assert trace["baseline_hash"] == bundle["baseline_hash"] != "e" * 64
+    for name in RUNTIME_POSTFLIGHT_GATES:
+        proof = receipt["capability_results"][name]["response"]["response"]["proof"]
+        assert proof["source_hash"] == SOURCE_HASH
+        assert proof["bundle_hash"] == bundle["bundle_hash"]
+    assert "forged_evidence_id" not in json.dumps(receipt["consumed_evidence_ids"])
+    assert "forged_evidence_id" not in json.dumps(bundle)
+    assert receipt["terminal_status"] != "SUCCEEDED"
+
+
+def test_unverifiable_reseal_is_dropped(tmp_path, monkeypatch):
+    """LOW-7: a re-seal whose lineage does not verify is dropped (reseal_not_verified)."""
+    real_seal = _unified_runtime_module.seal_postflight_capability_evidence
+
+    def bad_lineage(*args, **kwargs):
+        sealed = real_seal(*args, **kwargs)
+        sealed = dict(sealed)
+        sealed["preflight_bundle_hash"] = "0" * 64
+        return _rehash(sealed)
+
+    monkeypatch.setattr(_unified_runtime_module, "seal_postflight_capability_evidence", bad_lineage)
+    receipt = _run(tmp_path, "passed")
+    trace = receipt["context_trace"]
+    assert trace["postflight_seal_dropped"] == "postflight_seal_dropped:reseal_not_verified"
+    assert "postflight_evidence_bundle_hash" not in trace
+    assert "seal_phase" not in receipt["capability_evidence_bundle"]
+    for name in POSTFLIGHT:
+        assert _entry(receipt, name)["status"] == "PENDING_OR_STAGE_OWNED"
+        assert _attest(receipt, name) != ucp.ATTESTATION_REAL

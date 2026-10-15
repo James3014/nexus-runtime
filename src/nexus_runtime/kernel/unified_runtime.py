@@ -1416,7 +1416,7 @@ class UnifiedRuntime:
         postflight_context["route"] = dict(route_map)
         postflight_context["capability_results"] = capability_results
         postflight_context["capability_evidence_bundle"] = _runtime_snapshot(preflight_bundle_snapshot)
-        postflight_context["source_hash"] = str(evidence_bundle.get("source_hash") or "")
+        postflight_context["source_hash"] = str(preflight_bundle_snapshot.get("source_hash") or "")
         postflight_context["task_statement"] = request.task_statement
         for capability_name, invoker in postflight_items:
             if capability_name in plan.selected_capabilities:
@@ -1718,7 +1718,7 @@ class UnifiedRuntime:
 
         # Traceability: keep only IDs that exist on successful bundle entries.
         bundle_success_ids: set[str] = set()
-        for ent in evidence_bundle.get("entries") or []:
+        for ent in preflight_bundle_snapshot.get("entries") or []:
             if not isinstance(ent, Mapping):
                 continue
             if not bool(ent.get("success") or ent.get("invoked_real")):
@@ -1727,7 +1727,7 @@ class UnifiedRuntime:
                 s = str(eid).strip()
                 if s:
                     bundle_success_ids.add(s)
-        for eid in evidence_bundle.get("evidence_ids") or []:
+        for eid in preflight_bundle_snapshot.get("evidence_ids") or []:
             s = str(eid).strip()
             if s:
                 bundle_success_ids.add(s)
@@ -2011,7 +2011,7 @@ class UnifiedRuntime:
                     runtime_task_id=request.task_id,
                     runtime_canonical_execution=canonical_execution,
                     runtime_execution_attempt=execution_attempt,
-                    runtime_source_hash=str(evidence_bundle.get("source_hash") or ""),
+                    runtime_source_hash=str(preflight_bundle_snapshot.get("source_hash") or ""),
                     runtime_execution_world=str(_mapping(canonical_execution).get("execution_world") or "product_runtime"),
                     final_prompt=assembled,
                 )
@@ -2022,7 +2022,7 @@ class UnifiedRuntime:
                     task_id=request.task_id,
                     canonical_execution=canonical_execution or {},
                     execution_attempt=execution_attempt,
-                    source_hash=str(evidence_bundle.get("source_hash") or ""),
+                    source_hash=str(preflight_bundle_snapshot.get("source_hash") or ""),
                     execution_world=str(_mapping(canonical_execution).get("execution_world") or "product_runtime"),
                 )
                 if not vap_binding.get("ok"):
@@ -2037,7 +2037,7 @@ class UnifiedRuntime:
                     runtime_task_id=request.task_id,
                     runtime_canonical_execution=canonical_execution or {},
                     runtime_execution_attempt=execution_attempt,
-                    runtime_source_hash=str(evidence_bundle.get("source_hash") or ""),
+                    runtime_source_hash=str(preflight_bundle_snapshot.get("source_hash") or ""),
                     runtime_execution_world=str(_mapping(canonical_execution).get("execution_world") or "product_runtime"),
                 )
                 verified_assist_block = dict(online_safe_forward.get("verified_assist") or {})
@@ -2061,8 +2061,8 @@ class UnifiedRuntime:
                 and str(verifier_response.get("task_id") or "") == request.task_id
                 and execution_attempt.get("attempt_id")
                 and str(verifier_response.get("attempt_id") or verifier_response.get("execution_attempt_id") or "") == str(execution_attempt.get("attempt_id") or "")
-                and evidence_bundle.get("source_hash")
-                and str(verifier_response.get("source_hash") or "") == str(evidence_bundle.get("source_hash") or "")
+                and preflight_bundle_snapshot.get("source_hash")
+                and str(verifier_response.get("source_hash") or "") == str(preflight_bundle_snapshot.get("source_hash") or "")
             )
             vap_credit = _mapping(verified_assist_block.get("credit"))
             outcome_contributed = bool(vap_credit.get("assist_credited")) and verifier_bound
@@ -2120,8 +2120,8 @@ class UnifiedRuntime:
             "capability_results_hash": _hash_json(capability_results),
             "selected_capabilities": list(plan.selected_capabilities),
             "selection_authority": "CapabilityPlanner",
-            "baseline_hash": evidence_bundle["baseline_hash"],
-            "evidence_bundle_hash": evidence_bundle["bundle_hash"],
+            "baseline_hash": preflight_bundle_snapshot["baseline_hash"],
+            "evidence_bundle_hash": preflight_bundle_snapshot["bundle_hash"],
             **(
                 {"postflight_evidence_bundle_hash": receipt_evidence_bundle["bundle_hash"]}
                 if postflight_sealed
