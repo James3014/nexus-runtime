@@ -1,6 +1,6 @@
 # HANDOFF
 
-更新：2026-10-16 · by Claude · HEAD `64e7422`（分支 feat/receipt-only-consumer-visibility：#216）
+更新：2026-10-16 · by Claude · HEAD `7b736ce`（分支 feat/receipt-only-consumer-visibility：#216）
 <!-- 規則見 AGENTS.md「Handoff」。上限 150 行；過期內容移到 docs/archive/HANDOFF-YYYY-MM.md。 -->
 
 ## ▶ 下一步（只放一件，必須帶 #Issue）
