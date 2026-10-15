@@ -300,6 +300,15 @@ def _formal_local_advisor_lineage(payload: Mapping[str, Any]) -> dict[str, Any]:
 # Nexus-new#2245: statuses under which a Local stage may contribute to Online.
 LOCAL_STAGE_SUCCESS_STATUSES = frozenset({"SUCCEEDED", "PASS", "COMPLETED"})
 LOCAL_CONTEXT_WITHHELD_REASON = "local_stage_not_succeeded_or_gate_failed"
+_WITHHELD_STAGE_KEYS = frozenset(
+    {
+        "local_outputs",
+        "evidence_refs",
+        "verified_artifact",
+        "consume_verified_assist",
+        "vap_integrity_failure",
+    }
+)
 
 
 def _local_stage_forwardable(local_stage: Any) -> bool:
@@ -323,16 +332,24 @@ def _online_local_context_view(local_stage: Any) -> Any:
     """Return the Local stage view handed to an Online invoker.
 
     A forwardable stage is passed through unchanged.  Any other stage keeps its
-    status/reason/identity fields (so Online pre-provider gates still see the
-    refusal) but drops the raw model output and is flagged, so no transport can
-    forward it.  The full stage record (with response) stays in the receipt.
+    status/reason/gate/identity fields but drops the raw model output, stage
+    evidence refs and every verified-assist binding, reports ``invoked=False``
+    and is flagged, so no transport can forward it.  Online pre-provider gates
+    run on the full stage before this view is built, and the full stage record
+    (with response) stays in the receipt.
     """
     if not isinstance(local_stage, Mapping) or _local_stage_forwardable(local_stage):
         return local_stage
     view = dict(local_stage)
     had_output = bool(view.get("response") or view.get("local_outputs"))
     view["response"] = {}
-    view.pop("local_outputs", None)
+    # Anything a consumer could turn into Local context or a VAP binding is
+    # dropped; ``invoked`` is reported False so consumers that gate only on it
+    # (e.g. older with_nexus copies) forward nothing and raise nothing.
+    for key in list(view):
+        if key in _WITHHELD_STAGE_KEYS or key.startswith("verified_assist_packet"):
+            view.pop(key, None)
+    view["invoked"] = False
     view["online_context_withheld"] = True
     if had_output:
         view["online_context_withheld_reason"] = LOCAL_CONTEXT_WITHHELD_REASON

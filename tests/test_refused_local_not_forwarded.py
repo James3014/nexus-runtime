@@ -194,3 +194,173 @@ def test_workforce_refused_local_stage_not_forwarded_through_registered_cli():
         (online.get("response") or {}).get("evidence_refs") or []
     )
     assert not any("local_context_forwarded" in str(ref) for ref in refs)
+
+
+# --- Review round 2 (PR #214) -------------------------------------------------
+
+_VAP_KEYS = (
+    "verified_assist_packet_hash",
+    "verified_assist_packet_expected_hash",
+    "verified_assist_packet_id",
+)
+_WITHHELD_ABSENT = ("evidence_refs", "verified_artifact", "consume_verified_assist", "local_outputs") + _VAP_KEYS
+
+
+def _refused_failed_stage() -> dict:
+    stage = _local_stage(status="FAILED", gate_passed=False, reason="local_action_not_executor_bound")
+    stage["evidence_refs"] = ["local:t2245:formal_runtime:local_action_not_executor_bound"]
+    stage["local_outputs"] = {"concise_summary": SUMMARY}
+    return stage
+
+
+def _succeeded_gate_failed_vap_stage() -> dict:
+    packet = {"packet_hash": "a" * 64, "packet_id": "pkt-2245"}
+    stage = _local_stage(status="SUCCEEDED", gate_passed=False, reason="")
+    stage["response"]["verified_assist_packet"] = packet
+    stage["response"]["consume_verified_assist"] = True
+    stage.update(
+        {
+            "evidence_refs": ["local:t2245:vap:aaaaaaaaaaaaaaaa"],
+            "verified_assist_packet_hash": packet["packet_hash"],
+            "verified_assist_packet_expected_hash": packet["packet_hash"],
+            "verified_assist_packet_id": packet["packet_id"],
+            "verified_artifact": {"path": "target.py"},
+            "consume_verified_assist": True,
+        }
+    )
+    return stage
+
+
+def _naive_consumer_block(local: dict) -> str:
+    """Mimic a with_nexus copy that gates only on ``invoked`` (e.g. Nexus-new's)."""
+    if not local.get("invoked"):
+        return ""
+    response = local.get("response") if isinstance(local.get("response"), dict) else {}
+    expected = str(local.get("verified_assist_packet_expected_hash") or "")
+    packet = response.get("verified_assist_packet")
+    if expected and (not isinstance(packet, dict) or packet.get("packet_hash") != expected):
+        raise ValueError("vap_runtime_binding_failed:packet_hash_substitution")
+    refs = list(response.get("evidence_refs") or local.get("evidence_refs") or [])
+    return "[LOCAL_ASSIST_CONTEXT]\naction=unknown;status=completed;refs=" + ",".join(refs)
+
+
+def test_withheld_view_drops_invocation_refs_and_vap_bindings_for_both_shapes():
+    for stage in (_refused_failed_stage(), _succeeded_gate_failed_vap_stage()):
+        view = _online_local_context_view(stage)
+        assert view["invoked"] is False
+        assert view["online_context_withheld"] is True
+        assert view["response"] == {}
+        for key in _WITHHELD_ABSENT:
+            assert key not in view, key
+        assert not any(key.startswith("verified_assist_packet") for key in view)
+        # refusal / identity fields survive for the receipt-facing consumer
+        assert view["status"] == stage["status"]
+        assert view["gate_passed"] is False
+        assert view["reason"] == stage["reason"]
+        # a consumer that gates only on invoked forwards nothing and raises nothing
+        assert _naive_consumer_block(view) == ""
+        # the original stage record is untouched (receipt evidence)
+        assert stage["invoked"] is True and stage["evidence_refs"]
+
+
+def test_run_online_still_runs_without_local_block_for_both_refused_shapes(monkeypatch):
+    import nexus_runtime.support.composition as composition
+
+    # The pre-provider VAP gate is not under test here; let a well-formed
+    # declared packet bind so Online actually reaches the invoker.
+    monkeypatch.setattr(composition, "validate_vap_runtime_binding", lambda *_a, **_k: {"ok": True})
+    exports = build_runtime_exports()
+    request = exports.UnifiedRuntimeRequest(
+        task_id="t2245", workspace_revision="rev", task_statement="repair", task_type="repair",
+        route={}, local_enabled=True, online_enabled=True, local_request={"task_id": "t2245"},
+    )
+    runtime = exports.UnifiedRuntime()
+    for stage in (_refused_failed_stage(), _succeeded_gate_failed_vap_stage()):
+        prompts: list = []
+
+        def invoker(context, prompts=prompts):
+            block = _naive_consumer_block(context["local"])  # must not raise
+            prompts.append(BASE_PROMPT + ("\n\n" + block if block else ""))
+            return {"invoked": True, "output_delivered": True, "gate_passed": True,
+                    "response": "ok", "provider_call_count": 1}
+
+        online = runtime._run_online(
+            request, invoker,
+            {"task_id": "t2245", "planner_decision_id": "plan", "planner": {},
+             "local": stage, "online_prompt": BASE_PROMPT},
+            workforce_admission_required=False,
+        )
+        assert online["invoked"] is True, online.get("reason")
+        assert prompts == [BASE_PROMPT]
+
+
+def test_with_nexus_builder_forwards_nothing_from_raw_refused_stage():
+    from nexus_runtime.support.services.online_nexus_context import (
+        build_online_nexus_context_from_runtime,
+    )
+
+    base = {"task_id": "t2245", "task_statement": "inspect repository", "route": {}}
+    for stage in (_refused_failed_stage(), _succeeded_gate_failed_vap_stage()):
+        # Raw stage passed directly (not the runtime's withheld view).
+        assert "online_context_withheld" not in stage
+        ctx = build_online_nexus_context_from_runtime({**base, "local": stage})
+        assert "[LOCAL_ASSIST_CONTEXT]" not in ctx.prompt
+        assert SUMMARY not in ctx.prompt
+        assert "local:t2245:" not in ctx.prompt
+    ok = _local_stage(status="SUCCEEDED", gate_passed=True)
+    forwarded = build_online_nexus_context_from_runtime({**base, "local": ok})
+    assert "[LOCAL_ASSIST_CONTEXT]" in forwarded.prompt
+
+
+def test_refused_stage_gets_no_post_online_vap_credit(monkeypatch):
+    import nexus_runtime.support.composition as composition
+    from nexus_runtime.planning.engine.capability_contracts import CapabilityPlan
+
+    attach_calls: list = []
+
+    def credited_attach(forward_base, packet, **_kwargs):
+        # A consumer that claims consumption/credit regardless of the stage.
+        attach_calls.append(dict(packet))
+        return {**dict(forward_base), "verified_assist": {"packet": dict(packet), "credit": {"assist_credited": True}}}
+
+    monkeypatch.setattr(composition, "attach_verified_assist_to_forward", credited_attach)
+    monkeypatch.setattr(composition, "validate_vap_runtime_binding", lambda *_a, **_k: {"ok": True})
+
+    class LocalPlanner:
+        def plan(self, **_kwargs):
+            return CapabilityPlan(
+                schema_version="nexus_capability_plan_v1",
+                selected_capabilities=["local_model_executor"], required_capabilities=[],
+                optional_capabilities=[], conditional_capabilities=[], pending_capabilities=[],
+                forbidden_capabilities=[], constraints=[], decision_trace=[], replan_trace=[], score=1.0,
+            )
+
+    def local_service(_request):
+        # Delivered output whose verifier failed: SUCCEEDED but gate_passed False,
+        # carrying a self-declared VAP packet.
+        return {
+            "task_id": "t2245", "action": "candidate", "invoked": True, "local_model_invoked": True,
+            "output_delivered": True, "evidence_refs": ["local:t2245:x"],
+            "verifier_summary": {"verifier_status": "fail", "verifier_reached": True},
+            "verified_assist_packet": {"packet_hash": "b" * 64, "packet_id": "pkt"},
+        }
+
+    exports = build_runtime_exports()
+    request = exports.UnifiedRuntimeRequest(
+        task_id="t2245", workspace_revision="rev", task_statement="repair", task_type="repair",
+        route={"recommended_flow": "direct"}, local_enabled=True, online_enabled=True,
+        local_request={"task_id": "t2245", "action": "candidate"},
+    )
+    receipt = exports.UnifiedRuntime(planner=LocalPlanner(), local_service=local_service).run(
+        request,
+        online_invoker=lambda _c: {"invoked": True, "output_delivered": True, "gate_passed": True,
+                                   "response": "ok", "provider_call_count": 1},
+    )
+    local = receipt["local"]
+    assert local["status"] == "SUCCEEDED" and local["gate_passed"] is False
+    assert local["response"]["verified_assist_packet"]  # kept as evidence
+    assert receipt["online"]["invoked"] is True
+    assert attach_calls == []
+    assert receipt["verified_assist"] == {}
+    assert local["substitution_trace"]["online_consumed"] is False
+    assert receipt["claim_boundary"]["outcome_contributed"] is False

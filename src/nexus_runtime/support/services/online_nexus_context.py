@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from nexus_runtime.kernel.services.online_payload_contract import normalize_online_invoker_payload
+from nexus_runtime.kernel.local_stage import _local_stage_forwardable
 
 SELECTION_EXPLICIT_REQUEST = "explicit_request"
 TRANSPORT_STRUCTURED_CALLABLE = "structured_callable"
@@ -599,12 +600,13 @@ def build_online_nexus_context_from_runtime(
     local_forward: dict[str, Any] = {}
     vap_injection = ""
     local_stage = ctx.get("local")
-    # Nexus-new#2245: a Local stage the runtime withheld from Online (refused,
-    # failed or gate-failed) contributes no forward and no VAP injection.
+    # Nexus-new#2245: only a succeeded, gate-passed Local stage contributes a
+    # forward or VAP injection; refused / failed / withheld stages contribute
+    # nothing, whether or not the runtime pre-filtered them.
     if (
         isinstance(local_stage, Mapping)
         and local_stage.get("invoked")
-        and local_stage.get("online_context_withheld") is not True
+        and _local_stage_forwardable(local_stage)
     ):
         declared = False
         expected_packet_hash = ""

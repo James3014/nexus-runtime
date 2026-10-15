@@ -42,6 +42,9 @@ def test_online_context_delayed_owner_calls_work_without_nexus_package():
             "capability_evidence_bundle": bundle,
             "local": {
                 "invoked": True,
+                # Nexus-new#2245: only a succeeded, gate-passed Local stage forwards.
+                "status": "SUCCEEDED",
+                "gate_passed": True,
                 "task_id": "online-runtime-imports",
                 "response": {
                     "action": "advisor",
