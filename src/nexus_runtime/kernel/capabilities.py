@@ -122,6 +122,55 @@ def _capability_stage(
     )
 
 
+RUNTIME_INPUT_EVIDENCE_PREFIX = "rt:input"
+RUNTIME_OUTPUT_EVIDENCE_PREFIX = "rt:output"
+
+
+def _runtime_digest(value: Any) -> str:
+    """sha256 over a canonical JSON rendering (``repr`` fallback); never raises."""
+    try:
+        text = json.dumps(
+            value, sort_keys=True, default=str, ensure_ascii=False, separators=(",", ":")
+        )
+    except Exception:  # noqa: BLE001 - unsortable keys / exotic objects
+        text = repr(value)
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+
+def attach_runtime_invocation_evidence(
+    stage: dict[str, Any],
+    name: str,
+    *,
+    input_digest: str,
+    result: Any,
+) -> dict[str, Any]:
+    """Stamp runtime-authored evidence ids on a stage whose callable physically ran.
+
+    ``runtime_evidence_ids`` = [``rt:input:<name>:sha256:<digest of the context the
+    callable consumed>``, ``rt:output:<name>:sha256:<digest of its raw result>``].  Only
+    stamped when the stage is invoked, not skipped / stub, names a ``physical_callable``
+    and keeps task identity; otherwise the stage is returned unchanged (no evidence is
+    minted for a capability that did not run).  The key ends in ``_ids`` on purpose: it
+    is identity, never physical output.
+    """
+    response = stage.get("response") if isinstance(stage.get("response"), Mapping) else {}
+    if (
+        not stage.get("invoked")
+        or stage.get("skipped")
+        or stage.get("stub")
+        or bool(response.get("stub"))
+        or not str(stage.get("physical_callable") or "").strip()
+        or stage.get("task_identity_shared") is False
+        or not input_digest
+    ):
+        return stage
+    stage["runtime_evidence_ids"] = [
+        f"{RUNTIME_INPUT_EVIDENCE_PREFIX}:{name}:sha256:{input_digest}",
+        f"{RUNTIME_OUTPUT_EVIDENCE_PREFIX}:{name}:sha256:{_runtime_digest(result)}",
+    ]
+    return stage
+
+
 def materialize_selected_capability_evidence(
     ctx: KernelContext,
     *, planner_output: Mapping[str, Any], selected_capabilities: list[str],
@@ -147,17 +196,23 @@ def materialize_selected_capability_evidence(
     for name, invoker in invokers.items():
         if name in local_stage_capabilities or name in postflight_names or name not in set(selected):
             continue
+        input_digest = ""
         if not callable(invoker):
             value: Any = {"task_id": task_id, "invoked": False, "gate_passed": False,
                           "evidence_refs": [f"capability:{name}:{task_id}:not_callable"]}
         else:
+            input_digest = _runtime_digest(context)
             try:
                 value = invoker(context)
             except Exception as exc:
+                input_digest = ""
                 value = {"task_id": task_id, "invoked": True, "gate_passed": False,
                          "evidence_refs": [f"capability:{name}:{task_id}:exception"],
                          "error": f"{exc.__class__.__name__}:{exc}"}
-        results[name] = _capability_stage(name, task_id, value)
+        results[name] = attach_runtime_invocation_evidence(
+            _capability_stage(name, task_id, value), name,
+            input_digest=input_digest, result=value,
+        )
     bundle = ctx.build_capability_evidence_bundle(
         task_id=task_id, workspace_revision=workspace_revision,
         task_statement=task_statement, plan_payload=dict(planner_output), plan_hash=plan_hash,

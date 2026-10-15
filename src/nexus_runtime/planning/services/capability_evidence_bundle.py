@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from typing import Any, Mapping
 
 BUNDLE_SCHEMA = "nexus.capability_evidence_bundle.v1"
@@ -424,6 +425,332 @@ def compute_bundle_hash(bundle: Mapping[str, Any]) -> str:
     return _hash_json(_canonical_payload_for_hash(bundle))
 
 
+EVALUATED_REJECTED_STATUS = "EVALUATED_REJECTED"
+_OUTCOME_SUCCESS_WORDS = frozenset({"SUCCEEDED", "VERIFIED", "PASS", "PASSED", "OK", "SUCCESS"})
+_MISSING_INPUT_ERROR = re.compile(r"^[A-Z0-9_]+_REQUIRED$")
+_MAX_OUTCOME_DEPTH = 8
+
+
+def _outcome_layers(stage: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The record and every nested ``response`` / ``outcome`` mapping, outermost first."""
+    layers: list[Mapping[str, Any]] = []
+    frontier: list[Any] = [stage]
+    depth = 0
+    while frontier and depth <= _MAX_OUTCOME_DEPTH:
+        nxt: list[Any] = []
+        for item in frontier:
+            if isinstance(item, Mapping):
+                layers.append(item)
+                nxt.extend(item.get(key) for key in ("response", "outcome"))
+        frontier = nxt
+        depth += 1
+    return layers
+
+
+def _str_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple)):
+        return [str(x) for x in value if isinstance(x, str) and x.strip()]
+    return []
+
+
+def invoked_failure_disposition(stage: Mapping[str, Any]) -> str:
+    """Why an invoked, non-stub, non-successful stage did not succeed.
+
+    * ``refused_missing_inputs`` -- the executor refused before evaluating: an explicit
+      ``*_REQUIRED`` error code, a ``missing_inputs`` list, or verdict lists
+      (``missing_evidence`` / ``blockers``) whose every item is ``missing_*``;
+    * ``evaluated_rejected`` -- the executor evaluated its inputs and rejected them: a
+      non-success ``semantic_status`` with at least one non-``missing_*`` verdict, or an
+      explicit ``REJECTED`` status, and no exception / missing-input error;
+    * ``failed`` -- anything else (exceptions, task-id mismatch, no semantic status).
+    """
+    layers = _outcome_layers(stage)
+    errors = [str(layer.get("error") or "").strip() for layer in layers]
+    errors = [e for e in errors if e]
+    if any(_MISSING_INPUT_ERROR.match(e) for e in errors):
+        return "refused_missing_inputs"
+    if any(_str_list(layer.get("missing_inputs")) for layer in layers) and not any(
+        str(layer.get("semantic_status") or "").strip().upper() == "REJECTED" for layer in layers
+    ):
+        return "refused_missing_inputs"
+    if errors:
+        return "failed"
+    statuses = [
+        str(layer.get("semantic_status") or "").strip().upper()
+        for layer in layers
+        if "semantic_status" in layer
+    ]
+    if not statuses or all(s in _OUTCOME_SUCCESS_WORDS for s in statuses):
+        return "failed"
+    verdicts: list[str] = []
+    for layer in layers:
+        for field in ("missing_evidence", "blockers"):
+            verdicts.extend(_str_list(layer.get(field)))
+    if "REJECTED" in statuses:
+        return "evaluated_rejected"
+    if verdicts and all(v.startswith("missing_") for v in verdicts):
+        return "refused_missing_inputs"
+    if verdicts:
+        return "evaluated_rejected"
+    return "failed"
+
+
+PENDING_ENTRY_STATUS = "PENDING_OR_STAGE_OWNED"
+# Capabilities the UnifiedRuntime evaluates after Local/Online + verifier (postflight).
+POSTFLIGHT_CAPABILITIES = (
+    "acceptance_check",
+    "artifact_gate",
+    "bdd_acceptance_skill",
+    "claim_gate",
+    "delivery_gate",
+)
+POSTFLIGHT_SEAL_PHASE = "postflight"
+
+
+def _pending_entry(key: str) -> dict[str, Any]:
+    return {
+        "name": key,
+        "status": PENDING_ENTRY_STATUS,
+        "invoked_real": False,
+        "invoked_stub": False,
+        "skipped": False,
+        "success": False,
+        "skip_reason": "",
+        "evidence_refs": [],
+        "evidence_ids": [],
+        "physical_callable": "",
+        "telemetry": {"token_usage": 0, "model_calls": 0},
+    }
+
+
+def _bundle_entry(key: str, stage: Any) -> tuple[dict[str, Any], str]:
+    """One bundle entry for a capability stage record and its summary bucket.
+
+    Buckets: ``pending`` (no stage record yet), ``skipped``, ``stub``, ``real``
+    (``REAL_INVOKED``: invoked, record status ``SUCCEEDED``, evidence refs, no stub) and
+    ``failed`` (invoked but not successful -- refused, rejected, exception -- or selected
+    and not executed).  Only ``real`` entries carry ``invoked_real``/``success``.
+    """
+    if not isinstance(stage, Mapping):
+        return _pending_entry(key), "pending"
+
+    response = stage.get("response") if isinstance(stage.get("response"), Mapping) else {}
+    skipped_flag = bool(stage.get("skipped")) or str(stage.get("status") or "") == "SKIPPED"
+    if not skipped_flag and isinstance(response, Mapping):
+        skipped_flag = bool(response.get("skipped"))
+    stub_flag = bool(response.get("stub")) if isinstance(response, Mapping) else False
+    if not stub_flag:
+        stub_flag = bool(stage.get("stub"))
+    invoked = bool(stage.get("invoked")) and not skipped_flag
+    evidence_refs = [str(r) for r in (stage.get("evidence_refs") or [])]
+    entry_evidence_ids = [
+        str(r) for r in (stage.get("evidence_ids") or evidence_refs or [])
+    ]
+    skip_reason = str(
+        stage.get("skip_reason")
+        or stage.get("reason")
+        or (response.get("skip_reason") if isinstance(response, Mapping) else "")
+        or ""
+    )
+    physical = str(stage.get("physical_callable") or "")
+    status = str(stage.get("status") or "")
+    telemetry = _mapping(stage.get("telemetry"))
+    if "token_usage" not in telemetry:
+        telemetry["token_usage"] = int(stage.get("token_usage") or 0)
+    if "model_calls" not in telemetry:
+        telemetry["model_calls"] = int(stage.get("model_calls") or 0)
+
+    if skipped_flag:
+        success = False
+        outcome = "SKIPPED"
+        bucket = "skipped"
+    elif invoked and stub_flag:
+        success = False
+        outcome = "STUB_INVOKED"
+        bucket = "stub"
+    elif invoked and status == "SUCCEEDED" and evidence_refs and not stub_flag:
+        success = True
+        outcome = "REAL_INVOKED"
+        bucket = "real"
+    elif invoked:
+        success = False
+        failure = invoked_failure_disposition(stage)
+        if (
+            failure == "evaluated_rejected"
+            and physical
+            and stage.get("gate_passed") is not True
+            and stage.get("task_identity_shared") is not False
+        ):
+            # Ran over its inputs and rejected them: distinct from a refusal, still
+            # never success / invoked_real.
+            outcome = EVALUATED_REJECTED_STATUS
+            bucket = "rejected"
+        else:
+            outcome = "INVOKED_NOT_SUCCESS"
+            bucket = "failed"
+    else:
+        success = False
+        outcome = "SELECTED_NOT_EXECUTED"
+        bucket = "failed"
+
+    # Bounded consumer_payload only for successful real invocations.
+    consumer_payload = extract_bounded_consumer_payload(
+        capability=key,
+        stage=stage,
+        response=response if isinstance(response, Mapping) else None,
+        success=bool(success and not stub_flag and not skipped_flag),
+    )
+    # Also accept stage-level consumer_payload set by production invokers.
+    if not consumer_payload and success:
+        raw_cp = stage.get("consumer_payload")
+        if isinstance(raw_cp, Mapping) and raw_cp:
+            consumer_payload = extract_bounded_consumer_payload(
+                capability=key,
+                stage={"consumer_payload": raw_cp, "response": {"consumer_payload": raw_cp}},
+                success=True,
+            )
+
+    entry: dict[str, Any] = {
+        "name": key,
+        "status": outcome,
+        "invoked_real": outcome == "REAL_INVOKED",
+        "invoked_stub": outcome == "STUB_INVOKED",
+        "skipped": skipped_flag,
+        "success": success,
+        "skip_reason": skip_reason if skipped_flag else "",
+        "evidence_refs": evidence_refs,
+        "evidence_ids": entry_evidence_ids,
+        "physical_callable": physical,
+        "stage_status": status,
+        "telemetry": telemetry,
+        "consumer_payload": consumer_payload,
+        "has_consumer_payload": bool(consumer_payload),
+    }
+    if bucket in ("failed", "rejected") and invoked:
+        entry["failure_disposition"] = invoked_failure_disposition(stage)
+    # Runtime-authored digests of the inputs the callable consumed and of its raw
+    # output; attached by the runtime only when the callable physically ran.
+    runtime_ids = [str(r) for r in (stage.get("runtime_evidence_ids") or []) if str(r).strip()]
+    if runtime_ids and invoked and physical and not stub_flag:
+        entry["runtime_evidence_ids"] = runtime_ids
+    return entry, bucket
+
+
+def _bucket_into(
+    bucket: str,
+    entry: Mapping[str, Any],
+    *,
+    real_invoked: list[str],
+    stub_invoked: list[str],
+    skipped: list[dict[str, str]],
+    failed: list[str],
+    evidence_ids: list[str],
+    evaluated_rejected: list[str] | None = None,
+) -> None:
+    if bucket == "pending":
+        return
+    key = str(entry.get("name") or "")
+    if bucket == "skipped":
+        skipped.append({"name": key, "skip_reason": str(entry.get("skip_reason") or "") or "explicit_skip"})
+    elif bucket == "stub":
+        stub_invoked.append(key)
+    elif bucket == "real":
+        real_invoked.append(key)
+    else:
+        failed.append(key)
+        if bucket == "rejected" and evaluated_rejected is not None:
+            evaluated_rejected.append(key)
+    for eid in entry.get("evidence_ids") or []:
+        if eid not in evidence_ids:
+            evidence_ids.append(eid)
+
+
+def seal_postflight_capability_evidence(
+    bundle: Mapping[str, Any],
+    capability_results: Mapping[str, Any],
+    *,
+    postflight_capabilities: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Re-seal the shared bundle with the postflight capability records.
+
+    The preflight bundle is sealed before Local/Online, so every postflight capability
+    (``acceptance_check``, ``artifact_gate``, ``claim_gate``, ``delivery_gate``,
+    ``bdd_acceptance_skill``) is ``PENDING_OR_STAGE_OWNED`` there.  After the postflight
+    stage ran, this returns a new bundle whose pending postflight entries are replaced by
+    entries derived from their stage records with the same rules as the preflight entries
+    (``REAL_INVOKED`` only for a successful physical run), summary and ``evidence_ids``
+    extended, ``preflight_bundle_hash`` = the hash Local/Online consumed, and a recomputed
+    ``bundle_hash``.  Baseline fields are untouched, so the result verifies with
+    ``verify_capability_evidence_bundle``.  No record -> the entry stays pending; no
+    postflight record at all -> the input bundle is returned unchanged (same object).
+    """
+    names = [
+        str(n)
+        for n in (postflight_capabilities if postflight_capabilities is not None else POSTFLIGHT_CAPABILITIES)
+    ]
+    entries = bundle.get("entries") if isinstance(bundle, Mapping) else None
+    if not isinstance(entries, list) or not isinstance(capability_results, Mapping):
+        return bundle  # type: ignore[return-value]
+    targets = [
+        index
+        for index, entry in enumerate(entries)
+        if isinstance(entry, Mapping)
+        and str(entry.get("name") or "") in names
+        and str(entry.get("status") or "") == PENDING_ENTRY_STATUS
+        and isinstance(capability_results.get(str(entry.get("name") or "")), Mapping)
+    ]
+    if not targets:
+        return bundle  # type: ignore[return-value]
+    sealed: dict[str, Any] = {k: copy.deepcopy(v) for k, v in bundle.items() if k != "bundle_hash"}
+    new_entries = list(sealed.get("entries") or [])
+    summary = _mapping(sealed.get("summary"))
+    real_invoked = [str(x) for x in summary.get("real_invoked") or []]
+    stub_invoked = [str(x) for x in summary.get("stub_invoked") or []]
+    skipped = [dict(x) for x in summary.get("skipped") or [] if isinstance(x, Mapping)]
+    failed = [str(x) for x in summary.get("failed_or_not_executed") or []]
+    evaluated_rejected = [str(x) for x in summary.get("evaluated_rejected") or []]
+    evidence_ids = [str(x) for x in sealed.get("evidence_ids") or []]
+    sealed_names: list[str] = []
+    for index in targets:
+        key = str(new_entries[index].get("name") or "")
+        entry, bucket = _bundle_entry(key, capability_results.get(key))
+        entry["seal_phase"] = POSTFLIGHT_SEAL_PHASE
+        new_entries[index] = entry
+        sealed_names.append(key)
+        _bucket_into(
+            bucket,
+            entry,
+            real_invoked=real_invoked,
+            stub_invoked=stub_invoked,
+            skipped=skipped,
+            failed=failed,
+            evidence_ids=evidence_ids,
+            evaluated_rejected=evaluated_rejected,
+        )
+    if evaluated_rejected:
+        summary["evaluated_rejected"] = evaluated_rejected
+    summary.update(
+        {
+            "real_invoked": real_invoked,
+            "stub_invoked": stub_invoked,
+            "skipped": skipped,
+            "failed_or_not_executed": failed,
+            "real_success_count": len(real_invoked),
+        }
+    )
+    sealed["entries"] = new_entries
+    sealed["summary"] = summary
+    sealed["evidence_ids"] = evidence_ids
+    sealed["preflight_bundle_hash"] = str(bundle.get("bundle_hash") or "")
+    sealed["postflight_sealed_capabilities"] = sealed_names
+    sealed["seal_phase"] = POSTFLIGHT_SEAL_PHASE
+    sealed["public_claim_allowed"] = False
+    sealed["bundle_hash"] = compute_bundle_hash(sealed)
+    return sealed
+
+
 def build_capability_evidence_bundle(
     *,
     task_id: str,
@@ -458,114 +785,22 @@ def build_capability_evidence_bundle(
     stub_invoked: list[str] = []
     skipped: list[dict[str, str]] = []
     failed: list[str] = []
+    evaluated_rejected: list[str] = []
     evidence_ids: list[str] = []
 
     for name in selected:
         key = str(name)
-        stage = capability_results.get(key)
-        if not isinstance(stage, Mapping):
-            entries.append(
-                {
-                    "name": key,
-                    "status": "PENDING_OR_STAGE_OWNED",
-                    "invoked_real": False,
-                    "invoked_stub": False,
-                    "skipped": False,
-                    "success": False,
-                    "skip_reason": "",
-                    "evidence_refs": [],
-                    "evidence_ids": [],
-                    "physical_callable": "",
-                    "telemetry": {"token_usage": 0, "model_calls": 0},
-                }
-            )
-            continue
-
-        response = stage.get("response") if isinstance(stage.get("response"), Mapping) else {}
-        skipped_flag = bool(stage.get("skipped")) or str(stage.get("status") or "") == "SKIPPED"
-        if not skipped_flag and isinstance(response, Mapping):
-            skipped_flag = bool(response.get("skipped"))
-        stub_flag = bool(response.get("stub")) if isinstance(response, Mapping) else False
-        if not stub_flag:
-            stub_flag = bool(stage.get("stub"))
-        invoked = bool(stage.get("invoked")) and not skipped_flag
-        evidence_refs = [str(r) for r in (stage.get("evidence_refs") or [])]
-        entry_evidence_ids = [
-            str(r) for r in (stage.get("evidence_ids") or evidence_refs or [])
-        ]
-        skip_reason = str(
-            stage.get("skip_reason")
-            or stage.get("reason")
-            or (response.get("skip_reason") if isinstance(response, Mapping) else "")
-            or ""
-        )
-        physical = str(stage.get("physical_callable") or "")
-        status = str(stage.get("status") or "")
-        telemetry = _mapping(stage.get("telemetry"))
-        if "token_usage" not in telemetry:
-            telemetry["token_usage"] = int(stage.get("token_usage") or 0)
-        if "model_calls" not in telemetry:
-            telemetry["model_calls"] = int(stage.get("model_calls") or 0)
-
-        if skipped_flag:
-            success = False
-            outcome = "SKIPPED"
-            skipped.append({"name": key, "skip_reason": skip_reason or "explicit_skip"})
-        elif invoked and stub_flag:
-            success = False
-            outcome = "STUB_INVOKED"
-            stub_invoked.append(key)
-        elif invoked and status == "SUCCEEDED" and evidence_refs and not stub_flag:
-            success = True
-            outcome = "REAL_INVOKED"
-            real_invoked.append(key)
-        elif invoked:
-            success = False
-            outcome = "INVOKED_NOT_SUCCESS"
-            failed.append(key)
-        else:
-            success = False
-            outcome = "SELECTED_NOT_EXECUTED"
-            failed.append(key)
-
-        for eid in entry_evidence_ids:
-            if eid not in evidence_ids:
-                evidence_ids.append(eid)
-
-        # Bounded consumer_payload only for successful real invocations.
-        consumer_payload = extract_bounded_consumer_payload(
-            capability=key,
-            stage=stage,
-            response=response if isinstance(response, Mapping) else None,
-            success=bool(success and not stub_flag and not skipped_flag),
-        )
-        # Also accept stage-level consumer_payload set by production invokers.
-        if not consumer_payload and success:
-            raw_cp = stage.get("consumer_payload")
-            if isinstance(raw_cp, Mapping) and raw_cp:
-                consumer_payload = extract_bounded_consumer_payload(
-                    capability=key,
-                    stage={"consumer_payload": raw_cp, "response": {"consumer_payload": raw_cp}},
-                    success=True,
-                )
-
-        entries.append(
-            {
-                "name": key,
-                "status": outcome,
-                "invoked_real": outcome == "REAL_INVOKED",
-                "invoked_stub": outcome == "STUB_INVOKED",
-                "skipped": skipped_flag,
-                "success": success,
-                "skip_reason": skip_reason if skipped_flag else "",
-                "evidence_refs": evidence_refs,
-                "evidence_ids": entry_evidence_ids,
-                "physical_callable": physical,
-                "stage_status": status,
-                "telemetry": telemetry,
-                "consumer_payload": consumer_payload,
-                "has_consumer_payload": bool(consumer_payload),
-            }
+        entry, bucket = _bundle_entry(key, capability_results.get(key))
+        entries.append(entry)
+        _bucket_into(
+            bucket,
+            entry,
+            real_invoked=real_invoked,
+            stub_invoked=stub_invoked,
+            skipped=skipped,
+            failed=failed,
+            evidence_ids=evidence_ids,
+            evaluated_rejected=evaluated_rejected,
         )
 
     baseline = {
@@ -603,6 +838,7 @@ def build_capability_evidence_bundle(
             "real_success_count": len(real_invoked),
             "stub_does_not_count_as_success": True,
             "selected_not_executed_not_success": True,
+            **({"evaluated_rejected": evaluated_rejected} if evaluated_rejected else {}),
         },
         "public_claim_allowed": False,
     }

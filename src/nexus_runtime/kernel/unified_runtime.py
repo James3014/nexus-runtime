@@ -7,7 +7,17 @@ from typing import Any, Callable, ClassVar, Mapping, TYPE_CHECKING
 
 from .context import KernelContext
 from .admission import _build_gateway_invocation_authority, _build_local_model_invocation_authority, _build_workforce_admission_lineage, _local_authority_failure_stage, _online_authority_failure_stage, _validate_workforce_route, _workforce_admission_required
-from .capabilities import _capability_stage, _stage, build_prompt_compression_capability_invoker, materialize_selected_capability_evidence
+from .capabilities import (
+    _capability_stage,
+    _runtime_digest,
+    _stage,
+    attach_runtime_invocation_evidence,
+    build_prompt_compression_capability_invoker,
+    materialize_selected_capability_evidence,
+)
+from nexus_runtime.planning.services.capability_evidence_bundle import (
+    seal_postflight_capability_evidence,
+)
 from .constants import GATEWAY_INVOCATION_AUTHORITY_SCHEMA, LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA, ONLINE_DECISION_CONTEXT_KEY, RECEIPT_SCHEMA, REQUEST_SCHEMA, UNTRUSTED_ROUTE_AUTHORIZATION_KEYS
 from .identity import _hash_json, _mapping
 from .local_stage import _formal_local_advisor_lineage, _formal_local_runtime_lineage, _local_action_from_request, _local_executor_invoked_proven, _physical_local_service, _repair_loop_result_from_local_stage
@@ -870,6 +880,7 @@ class UnifiedRuntime:
         ) -> None:
             if capability_name not in plan.selected_capabilities:
                 return
+            input_digest = ""
             if not callable(invoker):
                 result: Any = {
                     "task_id": request.task_id,
@@ -878,9 +889,11 @@ class UnifiedRuntime:
                     "evidence_refs": [f"capability:{capability_name}:{request.task_id}:not_callable"],
                 }
             else:
+                input_digest = _runtime_digest(capability_context)
                 try:
                     result = _guarded_capability_invoker(capability_name, invoker, capability_context)
                 except Exception as exc:  # fail closed in the shared receipt
+                    input_digest = ""
                     result = {
                         "task_id": request.task_id,
                         "invoked": True,
@@ -888,10 +901,15 @@ class UnifiedRuntime:
                         "evidence_refs": [f"capability:{capability_name}:{request.task_id}:exception"],
                         "error": f"{exc.__class__.__name__}:{exc}",
                     }
-            capability_results[capability_name] = _capability_stage(
+            capability_results[capability_name] = attach_runtime_invocation_evidence(
+                _capability_stage(
+                    capability_name,
+                    request.task_id,
+                    result,
+                ),
                 capability_name,
-                request.task_id,
-                result,
+                input_digest=input_digest,
+                result=result,
             )
 
         # Empty local placeholder until after shared preflight.
@@ -1358,6 +1376,20 @@ class UnifiedRuntime:
             _invoke_capability(capability_name, invoker, postflight_context)
             # Keep context capability_results live for subsequent stages.
             context["capability_results"] = capability_results
+        # Seal the postflight records into the evidence bundle the receipt carries.  The
+        # preflight bundle Local/Online consumed stays the lineage anchor
+        # (``preflight_bundle_hash``); a re-seal that does not verify is dropped and the
+        # postflight entries stay PENDING_OR_STAGE_OWNED (fail closed, never attested).
+        receipt_evidence_bundle = evidence_bundle
+        postflight_sealed = seal_postflight_capability_evidence(
+            evidence_bundle,
+            capability_results,
+            postflight_capabilities=[name for name, _ in postflight_items],
+        )
+        if postflight_sealed is not evidence_bundle and _verify_evidence_bundle(
+            postflight_sealed, source_hash_subject=source_hash_subject
+        ).get("ok"):
+            receipt_evidence_bundle = postflight_sealed
 
         learning_stage = self._run_callback("learning", learning, context, required=True)
         stages["learning"] = learning_stage
@@ -2009,6 +2041,11 @@ class UnifiedRuntime:
             "selection_authority": "CapabilityPlanner",
             "baseline_hash": evidence_bundle["baseline_hash"],
             "evidence_bundle_hash": evidence_bundle["bundle_hash"],
+            **(
+                {"postflight_evidence_bundle_hash": receipt_evidence_bundle["bundle_hash"]}
+                if receipt_evidence_bundle is not evidence_bundle
+                else {}
+            ),
             "capability_context_compressed": capability_context_compressed,
             "codeintel_hash": codeintel_hash,
             "route": {
@@ -2098,7 +2135,7 @@ class UnifiedRuntime:
             "terminal_status": "SUCCEEDED" if receipt_complete else "INCOMPLETE",
             "claim_boundary": claim_boundary,
             "capability_coverage": capability_coverage,
-            "capability_evidence_bundle": evidence_bundle,
+            "capability_evidence_bundle": receipt_evidence_bundle,
             "selection_authority": "CapabilityPlanner",
             "public_claim_allowed": False,
             "verified_assist": verified_assist_block,
