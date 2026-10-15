@@ -10,6 +10,10 @@ import json
 from pathlib import Path, PurePath as _PurePath
 from typing import Any, Callable, Mapping
 
+from nexus_runtime.planning.services.capability_evidence_bundle import (
+    record_requests_receipt_only,
+)
+
 from .context import KernelContext
 from .constants import REQUEST_SCHEMA
 from .identity import _mapping
@@ -326,6 +330,9 @@ def materialize_selected_capability_evidence(
     invokers = ensure(selected, capability_invokers, codeintel=dict(codeintel or {}))
     results: dict[str, dict[str, Any]] = {}
     runtime_ids: dict[str, list[str]] = {}
+    hidden_from_executors = frozenset(
+        str(n) for n in (receipt_only_capabilities or ()) if isinstance(n, str)
+    )
     context = dict(capability_context or {})
     context.update({"schema": REQUEST_SCHEMA, "task_id": task_id,
                     "workspace_revision": workspace_revision, "task_statement": task_statement,
@@ -334,7 +341,12 @@ def materialize_selected_capability_evidence(
         if name in local_stage_capabilities or name in postflight_names or name not in set(selected):
             continue
         call_context = dict(context)
-        call_context["capability_results"] = _runtime_snapshot(results)
+        # Executors never see a receipt-only capability's record (declared or self-flagged):
+        # nothing downstream -- outputs, input digests, prompts -- may depend on it.
+        call_context["capability_results"] = _runtime_snapshot({
+            n: r for n, r in results.items()
+            if n not in hidden_from_executors and not record_requests_receipt_only(r)
+        })
         if "capability_evidence_bundle" in call_context:
             call_context["capability_evidence_bundle"] = _runtime_snapshot(
                 call_context["capability_evidence_bundle"]
@@ -634,9 +646,19 @@ def build_local_ast_capability_invoker(
 def build_prompt_compression_capability_invoker(
     *,
     max_chars: int = 4096,
+    receipt_only_capabilities: Any = None,
 ) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
-    """Build a deterministic, receipt-backed context compression edge."""
+    """Build a deterministic, receipt-backed context compression edge.
+
+    ``receipt_only_capabilities`` (bound by the runtime, immutable) names capabilities whose
+    records never enter the compressed context; when bound, the context's own
+    ``receipt_only_capabilities`` value is ignored (executors can touch the context).
+    """
     bounded_max_chars = max(256, min(int(max_chars), 32_000))
+    bound_receipt_only = (
+        None if receipt_only_capabilities is None
+        else frozenset(str(n) for n in receipt_only_capabilities)
+    )
 
     def _text(value: Any) -> str:
         return str(value or "")
@@ -653,7 +675,7 @@ def build_prompt_compression_capability_invoker(
             prompt_visible_capability_results,
         )
 
-        capability_results = prompt_visible_capability_results(context)
+        capability_results = prompt_visible_capability_results(context, declared=bound_receipt_only)
         raw_context = _compact(
             {
                 "prompt": prompt,

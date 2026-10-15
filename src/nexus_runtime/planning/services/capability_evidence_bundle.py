@@ -635,18 +635,25 @@ def prompt_visible_evidence_ids(bundle: Mapping[str, Any] | None) -> set[str] | 
     return allowed
 
 
-def receipt_only_capability_names(context: Mapping[str, Any] | None) -> set[str]:
+def receipt_only_capability_names(
+    context: Mapping[str, Any] | None,
+    *,
+    declared: frozenset[str] | tuple[str, ...] | None = None,
+) -> set[str]:
     """Capabilities a prompt builder must treat as receipt-only for this context.
 
-    Union of: the runtime's declared list (``context["receipt_only_capabilities"]``), the
-    bundle entries that are not prompt-visible (``capability_evidence_bundle`` or the
-    planner snapshot), and records that opt in (``consumer_visibility="receipt_only"``).
+    Union of: the runtime-held declared set (``declared``; when given, the context's
+    ``receipt_only_capabilities`` value is ignored, since executors can touch the context),
+    else the context's declared value (a tuple placed by the runtime for builders it does
+    not construct itself); the bundle entries that are not prompt-visible
+    (``capability_evidence_bundle`` or the planner snapshot); and records that opt in
+    (``consumer_visibility="receipt_only"``).
     """
     ctx = context if isinstance(context, Mapping) else {}
     names: set[str] = set()
-    declared = ctx.get(RECEIPT_ONLY_ROUTE_KEY)
-    if isinstance(declared, (list, tuple, set, frozenset)):
-        names.update(str(n) for n in declared if isinstance(n, str) and n.strip())
+    source = declared if declared is not None else ctx.get(RECEIPT_ONLY_ROUTE_KEY)
+    if isinstance(source, (list, tuple, set, frozenset)):
+        names.update(str(n) for n in source if isinstance(n, str) and n.strip())
     bundle = ctx.get("capability_evidence_bundle")
     if not isinstance(bundle, Mapping):
         planner = ctx.get("planner") if isinstance(ctx.get("planner"), Mapping) else {}
@@ -665,13 +672,17 @@ def receipt_only_capability_names(context: Mapping[str, Any] | None) -> set[str]
     return names
 
 
-def prompt_visible_capability_results(context: Mapping[str, Any] | None) -> dict[str, Any]:
+def prompt_visible_capability_results(
+    context: Mapping[str, Any] | None,
+    *,
+    declared: frozenset[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     """``context["capability_results"]`` without any receipt-only capability's record."""
     ctx = context if isinstance(context, Mapping) else {}
     results = ctx.get("capability_results")
     if not isinstance(results, Mapping):
         return {}
-    hidden = receipt_only_capability_names(ctx)
+    hidden = receipt_only_capability_names(ctx, declared=declared)
     return {name: value for name, value in results.items() if str(name) not in hidden}
 
 

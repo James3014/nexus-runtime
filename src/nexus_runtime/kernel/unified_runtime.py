@@ -20,6 +20,7 @@ from nexus_runtime.planning.services.capability_evidence_bundle import (
     compute_bundle_hash as _compute_bundle_hash,
     prompt_visible_entries,
     prompt_visible_evidence_ids,
+    record_requests_receipt_only,
     resolve_receipt_only_capabilities,
     seal_postflight_capability_evidence,
 )
@@ -818,11 +819,18 @@ class UnifiedRuntime:
         LOCAL_STAGE_CAPABILITIES = self._ctx.LOCAL_STAGE_CAPABILITIES
         ensure_selected_coverage_invokers = self._ctx.ensure_selected_coverage_invokers
 
+        # Consumer visibility (#216): the receipt-only set is resolved once and held by the
+        # runtime as a frozenset; prompt builders never trust a value an executor could edit.
+        receipt_only_capabilities, receipt_only_invalid = resolve_receipt_only_capabilities(
+            request.route
+        )
         invoker_map = ensure_selected_coverage_invokers(
             list(plan.selected_capabilities),
             capability_invokers,
             codeintel=dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {},
-            prompt_compression_invoker=build_prompt_compression_capability_invoker(),
+            prompt_compression_invoker=build_prompt_compression_capability_invoker(
+                receipt_only_capabilities=receipt_only_capabilities
+            ),
         )
         # P2: preflight BEFORE Local/Online so both stages share one evidence baseline.
         # Local-owned capabilities are not preflight-invoked here.
@@ -907,7 +915,11 @@ class UnifiedRuntime:
             # Executors get deep copies of the records and of the bundle, never the
             # runtime's own objects.
             call_context = dict(capability_context)
-            call_context["capability_results"] = _runtime_snapshot(record_store)
+            # Executors never see a receipt-only capability's record (#216).
+            call_context["capability_results"] = _runtime_snapshot({
+                n: r for n, r in record_store.items()
+                if n not in receipt_only_capabilities and not record_requests_receipt_only(r)
+            })
             if "capability_evidence_bundle" in call_context:
                 call_context["capability_evidence_bundle"] = _runtime_snapshot(
                     call_context["capability_evidence_bundle"]
@@ -980,12 +992,10 @@ class UnifiedRuntime:
         }
         # Consumer visibility: the capabilities the host request declares receipt-only
         # (fail closed on unreadable input; see resolve_receipt_only_capabilities).
-        receipt_only_capabilities, receipt_only_invalid = resolve_receipt_only_capabilities(
-            request.route
-        )
         if receipt_only_capabilities:
-            # Prompt builders (compression, codeintel summary, transport) consult this list.
-            capability_context["receipt_only_capabilities"] = sorted(receipt_only_capabilities)
+            # Immutable copy for builders the runtime does not construct (transport,
+            # codeintel summary); the runtime's own builders use the bound frozenset.
+            capability_context["receipt_only_capabilities"] = tuple(sorted(receipt_only_capabilities))
         try:
             capability_results, evidence_bundle = materialize_selected_capability_evidence(
                 self._ctx,
@@ -1342,7 +1352,7 @@ class UnifiedRuntime:
             "pillars": dict(request.pillars) if isinstance(request.pillars, Mapping) else {},
             "local": local_stage,
             "capability_results": capability_results,
-            **({"receipt_only_capabilities": sorted(receipt_only_capabilities)} if receipt_only_capabilities else {}),
+            **({"receipt_only_capabilities": tuple(sorted(receipt_only_capabilities))} if receipt_only_capabilities else {}),
             "capability_context_compressed": capability_context_compressed,
             # P2: same immutable baseline for Online as Local saw after preflight.
             "capability_evidence_bundle": evidence_bundle,

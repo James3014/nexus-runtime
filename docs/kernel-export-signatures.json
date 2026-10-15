@@ -243,7 +243,7 @@
     },
     "build_prompt_compression_capability_invoker": {
       "kind": "callable",
-      "signature": "(*, max_chars: 'int' = 4096) -> 'Callable[[Mapping[str, Any]], dict[str, Any]]'"
+      "signature": "(*, max_chars: 'int' = 4096, receipt_only_capabilities: 'Any' = None) -> 'Callable[[Mapping[str, Any]], dict[str, Any]]'"
     },
     "build_registered_online_invoker": {
       "kind": "callable",

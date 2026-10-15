@@ -644,3 +644,85 @@ def test_prompt_builders_drop_receipt_only_records():
         assert compressed["response"]["compressed_context"] == empty["response"]["compressed_context"]
     assert prompt_visible_capability_results({"capability_results": {"codeintel": record}}) == {"codeintel": record}
     assert compact_codeintel_for_prompt({})["risk_score"] == 0
+
+
+# --- round 4: the receipt-only set is runtime-held and immutable -----------------------
+
+
+def _tamperer(mode: str):
+    base = seal._registry_invoker("pregate", "passed")
+
+    def invoke(context):
+        key = "receipt_only_capabilities"
+        value = context.get(key)
+        if mode == "clear" and hasattr(value, "clear"):
+            value.clear()
+        elif mode == "clear_inplace":
+            try:
+                del value[:]  # list -> emptied in place; tuple -> TypeError
+            except TypeError:
+                pass
+        elif mode == "replace":
+            context[key] = []
+        elif mode == "delete":
+            context.pop(key, None)
+        return base(context)
+
+    return invoke
+
+
+def _prompt_with_tamper(tmp_path: Path, mode: str, outcome: str) -> tuple[dict[str, Any], str]:
+    exports = build_runtime_exports()
+    prompts: list[str] = []
+
+    def capture(context):
+        prompts.append(str(context.get("online_prompt") or ""))
+        return seal._online(context)
+
+    capture.physical_provider_transport = False
+    online = wrap_online_invoker(make_with_nexus_online_invoker(capture))
+    online.physical_provider_transport = False
+
+    class ForcedPlanner(exports.CapabilityPlanner):
+        def plan(self, **kwargs):
+            plan = super().plan(**kwargs)
+            return replace(plan, selected_capabilities=type(plan.selected_capabilities)(
+                ("codeintel", "memory", "pregate", "prompt_compression")))
+
+    request = exports.UnifiedRuntimeRequest(
+        task_id="ro-tamper", workspace_revision=seal.REV, task_statement=seal.STATEMENT,
+        task_type="repair",
+        route={"recommended_flow": "direct", "receipt_only_capabilities": ["memory", "codeintel"]},
+        online_enabled=True, online_prompt="hi",
+    )
+    root = tmp_path / f"{mode}-{outcome}"
+    root.mkdir()
+    receipt = exports.UnifiedRuntime(planner=ForcedPlanner(), project_root=root).run(
+        request, online_invoker=online,
+        capability_invokers={
+            "pregate": _tamperer(mode),
+            "memory": _refs_only_gate("memory", outcome),
+            "codeintel": _refs_only_gate("codeintel", outcome),
+        },
+        verifier=seal._verifier("passed"), receipt_path=root / "receipt.json",
+    )
+    assert len(prompts) == 1, receipt["online"]
+    return receipt, prompts[0]
+
+
+@pytest.mark.parametrize("mode", ["clear", "clear_inplace", "replace", "delete"])
+def test_executor_cannot_unhide_receipt_only_capabilities(tmp_path, mode):
+    """A preflight executor that clears / empties / replaces / deletes the context's
+    receipt-only value changes nothing: the prompt stays identical across the hidden
+    gates' outcomes and equal to the untampered prompt (modulo the three opaque hashes)."""
+    runs = {o: _prompt_with_tamper(tmp_path, mode, o) for o in ("passed", "blocked", "rejected")}
+    masked = {o: _mask_three_hashes(p, r) for o, (r, p) in runs.items()}
+    assert masked["passed"] == masked["blocked"] == masked["rejected"]
+    for outcome, (receipt, prompt) in runs.items():
+        assert "ev_memory_" not in prompt and "ev_codeintel_" not in prompt
+        assert '"risk_score":99' not in prompt.replace(" ", "")
+        assert receipt["context_trace"]["receipt_only_capabilities"] == ["codeintel", "memory"]
+    (tmp_path / "clean").mkdir()
+    clean_receipt, clean_prompt = _prompt_with_tamper(tmp_path / "clean", "none", "passed")
+    clean = _mask_three_hashes(clean_prompt, clean_receipt)
+    assert masked["passed"] == clean
