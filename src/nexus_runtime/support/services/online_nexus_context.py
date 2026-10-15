@@ -215,10 +215,21 @@ def compact_executor_flags_for_prompt(flags: Mapping[str, Any] | None) -> dict[s
     }
 
 
-# Placeholder for receipt_only entries in the compact prompt view (CONTRACT_B item 4; same
-# as Nexus-new ``withhold_fed_gate_verdicts``).
+# Placeholder for receipt_only entries in the compact prompt view (CONTRACT_B item 4, made
+# fully neutral: unlike Nexus-new ``withhold_fed_gate_verdicts`` it keeps no entry ids).
 _WITHHELD_GATE_STATUS = "INVOKED_NOT_SUCCESS"
-_INVOKED_ENTRY_STATUSES = frozenset({"REAL_INVOKED", "INVOKED_NOT_SUCCESS", "EVALUATED_REJECTED"})
+_RECEIPT_ONLY_PLACEHOLDER: dict[str, Any] = {
+    "status": _WITHHELD_GATE_STATUS,
+    "success": False,
+    "invoked_real": False,
+    "invoked_stub": False,
+    "skipped": False,
+    "evidence_ids": [],
+    "evidence_refs": [],
+    "physical_callable": "",
+    "consumer_payload": {},
+    "has_consumer_payload": False,
+}
 
 
 def compact_capability_evidence_for_prompt(
@@ -248,24 +259,11 @@ def compact_capability_evidence_for_prompt(
             continue
         entry = raw_entry
         if not entry_prompt_visible(raw_entry):
-            # receipt_only (CONTRACT_B): a neutral placeholder identical for pass / blocked /
-            # rejected -- invoked statuses render as the pre-PR-4 INVOKED_NOT_SUCCESS, and no
-            # entry-derived ids or callable (refs such as ``ev_pregate_blocked_<task>`` can
-            # encode the outcome).  The sealed entry keeps the real verdict.
-            status = str(raw_entry.get("status") or "")
-            entry = {
-                "name": raw_entry.get("name"),
-                "status": _WITHHELD_GATE_STATUS if status in _INVOKED_ENTRY_STATUSES else status,
-                "success": False,
-                "invoked_real": False,
-                "invoked_stub": False,
-                "skipped": bool(raw_entry.get("skipped")) if status not in _INVOKED_ENTRY_STATUSES else False,
-                "evidence_ids": [],
-                "evidence_refs": [],
-                "physical_callable": "",
-                "consumer_payload": {},
-                "has_consumer_payload": False,
-            }
+            # receipt_only: one fixed opaque placeholder for every status (passing, blocked,
+            # rejected, stub, skipped, not run): no entry-derived ids, refs, callable or
+            # payload, so the prompt never depends on whether / how the gate evaluated.
+            # The sealed entry keeps the real verdict.
+            entry = {"name": raw_entry.get("name"), **_RECEIPT_ONLY_PLACEHOLDER}
         # Failed / non-success entries never forward payload.
         success = bool(entry.get("success") or entry.get("invoked_real"))
         cp = entry.get("consumer_payload") if success else None

@@ -35,6 +35,7 @@ from nexus_runtime.planning.services.capability_evidence_bundle import (
     compute_bundle_hash,
     entry_prompt_visible,
     record_consumption,
+    resolve_receipt_only_capabilities,
     seal_postflight_capability_evidence,
     verify_capability_evidence_bundle,
 )
@@ -119,14 +120,16 @@ def test_receipt_only_entry_absent_from_model_context(source):
     assert [p["capability"] for p in consumption["consumed_capability_payloads"]] == ["codeintel"]
 
 
-def test_compact_prompt_view_renders_the_pre_pr4_placeholder():
+def test_compact_prompt_view_renders_the_neutral_placeholder():
     bundle = _bundle(receipt_only=["memory"])
     view = compact_capability_evidence_for_prompt(bundle)
     row = next(r for r in view["entries"] if r["name"] == "memory")
     assert row["status"] == "INVOKED_NOT_SUCCESS"
     assert row["success"] is False and row["invoked_real"] is False
     assert row["has_consumer_payload"] is False and "consumer_payload" not in row
-    assert "bounded memory result" not in json.dumps(view)
+    assert row["evidence_ids"] == [] and row["physical_callable"] == ""
+    assert "ev:memory" not in view["evidence_ids"]
+    assert "bounded memory result" not in json.dumps(view) and "pkg.memory" not in json.dumps(view)
     assert [p["capability"] for p in view["consumer_payloads"]] == ["codeintel"]
 
 
@@ -344,30 +347,34 @@ def test_unreadable_route_override_falls_back_to_the_declared_set(tmp_path):
 # --- round 2 ---------------------------------------------------------------------------
 
 
-def _refs_only_pregate(outcome: str):
-    """A pregate record with no ``evidence_ids`` whose refs / callable encode the outcome."""
+def _refs_only_gate(name: str, outcome: str):
+    """A gate record with no ``evidence_ids`` whose refs / callable encode the outcome."""
+
+    if outcome == "notrun":
+        return None  # non-callable -> the runtime's explicit skip, the gate never runs
 
     def invoke(context):
         task_id = context["task_id"]
-        passed = outcome == "passed"
-        ref = f"ev_pregate_{outcome}_{task_id}"
-        detail = {"action": "run_cli_pregate", "evidence_refs": [ref],
-                  "physical_callable": f"host.pregate.{outcome}"}
+        passed = outcome in ("passed", "stub")
+        ref = f"ev_{name}_{outcome}_{task_id}"
+        detail = {"action": f"run_{name}", "evidence_refs": [ref],
+                  "physical_callable": f"host.{name}.{outcome}"}
         if passed:
-            detail.update(semantic_status="SUCCEEDED", results=[{"rc": 0}])
+            detail.update(semantic_status="SUCCEEDED", results=[{"rc": 0, "outcome": outcome}])
         elif outcome == "blocked":
             detail.update(semantic_status="BLOCKED", error="EXPLICIT_VERIFY_COMMANDS_REQUIRED")
         else:
-            detail.update(semantic_status="FAILED", blockers=["verify_command_failed"])
+            detail.update(semantic_status="FAILED", blockers=[f"{name}_{outcome}_verdict"])
         status = "SUCCEEDED" if passed else "FAILED"
         return {"task_id": task_id, "invoked": True, "status": status, "gate_passed": passed,
-                "evidence_refs": [ref], "physical_callable": f"capability_executor_registry:pregate:{outcome}",
-                "response": {"status": status, "capability": "pregate", "outcome": detail}}
+                "evidence_refs": [ref], "stub": outcome == "stub",
+                "physical_callable": f"capability_executor_registry:{name}:{outcome}",
+                "response": {"status": status, "capability": name, "outcome": detail}}
 
     return invoke
 
 
-def _prompt_for(tmp_path: Path, outcome: str) -> tuple[dict[str, Any], str]:
+def _prompt_for(tmp_path: Path, name: str, outcome: str) -> tuple[dict[str, Any], str]:
     exports = build_runtime_exports()
     prompts: list[str] = []
 
@@ -382,53 +389,65 @@ def _prompt_for(tmp_path: Path, outcome: str) -> tuple[dict[str, Any], str]:
     class ForcedPlanner(exports.CapabilityPlanner):
         def plan(self, **kwargs):
             plan = super().plan(**kwargs)
-            return replace(plan, selected_capabilities=type(plan.selected_capabilities)(("pregate",)))
+            return replace(plan, selected_capabilities=type(plan.selected_capabilities)((name,)))
 
     request = exports.UnifiedRuntimeRequest(
         task_id="ro-neutral", workspace_revision=seal.REV, task_statement=seal.STATEMENT,
         task_type="repair",
-        route={"recommended_flow": "direct", "receipt_only_capabilities": ["pregate"]},
+        route={"recommended_flow": "direct", "receipt_only_capabilities": [name]},
         online_enabled=True, online_prompt="hi",
     )
-    root = tmp_path / outcome
+    root = tmp_path / f"{name}-{outcome}"
     root.mkdir()
     receipt = exports.UnifiedRuntime(planner=ForcedPlanner(), project_root=root).run(
         request, online_invoker=online,
-        capability_invokers={"pregate": _refs_only_pregate(outcome)},
+        capability_invokers={name: _refs_only_gate(name, outcome)},
         verifier=seal._verifier("passed"), receipt_path=root / "receipt.json",
     )
     assert len(prompts) == 1, receipt["online"]
     return receipt, prompts[0]
 
 
-def _opaque(prompt: str, receipt: dict[str, Any]) -> str:
-    """Replace only the three opaque per-run hashes (bundle, projection, package)."""
+def _mask_three_hashes(prompt: str, receipt: dict[str, Any]) -> str:
+    """Mask exactly the three opaque per-run values: the bundle hash (wherever it is
+    printed, i.e. ``capability-evidence:<bundle_hash>`` and the compact view's
+    ``bundle_hash``), ``consumer_projection_hash`` and ``package_hash``."""
     text = prompt.replace(receipt["capability_evidence_bundle"]["bundle_hash"], "<bundle_hash>")
     return re.sub(r'"(consumer_projection_hash|package_hash)":"[0-9a-f]{64}"', r'"\1":"<h>"', text)
 
 
-def test_receipt_only_gate_outcome_never_changes_the_online_prompt(tmp_path):
-    """L2: pass vs blocked vs rejected of a receipt-only gate whose refs encode the outcome:
-    compact view and the whole Online prompt are byte-identical except opaque hashes."""
-    runs = {o: _prompt_for(tmp_path, o) for o in ("passed", "blocked", "rejected")}
-    statuses = {o: seal._entry(r, "pregate")["status"] for o, (r, _) in runs.items()}
-    assert statuses == {"passed": "REAL_INVOKED", "blocked": "INVOKED_NOT_SUCCESS",
-                        "rejected": "EVALUATED_REJECTED"}
-    normalized = {o: _opaque(p, r) for o, (r, p) in runs.items()}
-    assert normalized["passed"] == normalized["blocked"] == normalized["rejected"]
+_OUTCOMES = ("passed", "blocked", "rejected", "stub", "notrun")
+
+
+@pytest.mark.parametrize("name", ["memory", "pregate"])
+def test_receipt_only_gate_outcome_never_changes_the_online_prompt(tmp_path, name):
+    """G3 / L2: passing vs blocked vs rejected vs stub vs not run of a receipt-only gate whose
+    refs and callable encode the outcome: the whole strict Online prompt
+    (``[NEXUS CAPABILITY EVIDENCE]`` + ``[NEXUS MODEL CONTEXT]``) and the compact view are
+    byte-identical after masking exactly the three opaque hashes; nothing else may differ."""
+    runs = {o: _prompt_for(tmp_path, name, o) for o in _OUTCOMES}
+    statuses = {o: seal._entry(r, name)["status"] for o, (r, _) in runs.items()}
+    assert statuses["passed"] == "REAL_INVOKED"
+    assert statuses["blocked"] == "INVOKED_NOT_SUCCESS"
+    assert statuses["rejected"] == "EVALUATED_REJECTED"
+    assert statuses["stub"] == "STUB_INVOKED"
+    assert statuses["notrun"] in {"SKIPPED", "SELECTED_NOT_EXECUTED"}
+    masked = {o: _mask_three_hashes(p, r) for o, (r, p) in runs.items()}
+    reference = masked["passed"]
+    for outcome in _OUTCOMES:
+        assert masked[outcome] == reference, outcome
     compact = {
         o: json.dumps(compact_capability_evidence_for_prompt(r["capability_evidence_bundle"]), sort_keys=True)
         .replace(r["capability_evidence_bundle"]["bundle_hash"], "<bundle_hash>")
         for o, (r, _) in runs.items()
     }
-    assert compact["passed"] == compact["blocked"] == compact["rejected"]
+    assert len(set(compact.values())) == 1
     for outcome, (receipt, prompt) in runs.items():
-        assert f"ev_pregate_{outcome}" not in prompt and f"host.pregate.{outcome}" not in prompt
-        assert f"pregate:{outcome}" not in prompt
         assert "[NEXUS CAPABILITY EVIDENCE]" in prompt and "[NEXUS MODEL CONTEXT]" in prompt
-        assert not any(i.startswith("ev_pregate_") for i in receipt["consumed_evidence_ids"])
-    passed_receipt = runs["passed"][0]
-    assert seal._attest(passed_receipt, "pregate") == ucp.ATTESTATION_REAL
+        assert f"ev_{name}_" not in prompt and f"host.{name}." not in prompt
+        assert f"{name}:{outcome}" not in prompt and f"capability_executor_registry:{name}" not in prompt
+        assert not any(i.startswith(f"ev_{name}_") for i in receipt["consumed_evidence_ids"])
+    assert seal._attest(runs["passed"][0], name) == ucp.ATTESTATION_REAL
 
 
 def test_compact_placeholder_carries_no_entry_derived_ids():
@@ -465,3 +484,89 @@ def test_route_list_with_invalid_items_keeps_valid_names_plus_default(tmp_path):
     assert trace["receipt_only_capabilities"] == sorted(RECEIPT_ONLY_CAPABILITIES | {"artifact_gate"})
     assert seal._entry(receipt, "artifact_gate")[CONSUMER_VISIBILITY_FIELD] == "receipt_only"
     assert seal._entry(receipt, "memory")[CONSUMER_VISIBILITY_FIELD] == "receipt_only"
+
+
+# Representative bundle (all 11 gates: pass / blocked / rejected records with payloads and
+# outcome-bearing refs, postflight entries pending) -- digests computed on main fc03f60.
+_MAIN_REP = {
+    "bundle_hash": "af69ee5ed16fd278a4de885b7998e49677ad4db19a69e05e7e82ec2c34847501",
+    "compact": "9d6c87df65b2a50331fcd3c2f7f239d639c529f390d99c061c74a0f5a76bdca6",
+    "package": "27488b83c4887cdb06b919dd2eebe6e8af91629f899fee467ddd4af8aa7e8947",
+}
+
+
+def _representative():
+    rep_rev, rep_statement = "r" * 40, "representative strict-lane bundle"
+    outcomes = {"pregate": "passed", "harness_preflight_sensor": "blocked", "plan_quality_gate": "rejected",
+                "mempalace_gate": "passed", "memory": "passed", "codeintel": "blocked",
+                "acceptance_check": "rejected", "bdd_acceptance_skill": "passed"}
+    results = {}
+    for name, outcome in outcomes.items():
+        raw = seal._registry_invoker(name, outcome)({"task_id": "rep-1"})
+        raw.pop("evidence_ids")
+        raw["evidence_refs"] = [f"ev_{name}_{outcome}_rep-1"]
+        results[name] = _capability_stage(name, "rep-1", raw)
+    selected = list(seal.ALL_GATES)
+    bundle = build_capability_evidence_bundle(
+        task_id="rep-1", workspace_revision=rep_rev, task_statement=rep_statement,
+        plan_payload={"selected_capabilities": selected}, plan_hash=P, planner_decision_id=D,
+        capability_results=results, selected_capabilities=selected,
+    )
+    context = {
+        "task_id": "rep-1", "workspace_revision": rep_rev, "attempt_id": "attempt-rep-1",
+        "task_statement": rep_statement, "online_prompt": rep_statement, "planner_decision_id": D,
+        "planner": {"plan_hash": P, "signal_snapshot": {"selected_capabilities": selected}},
+        "capability_evidence_bundle": bundle,
+        "gateway_invocation_authority": {"gate_passed": True, "resolved_worker_id": "agy_flash",
+                                         "resolved_provider": "agy",
+                                         "resolved_model": "gemini-3.6-flash-high"},
+    }
+    return bundle, context
+
+
+def test_representative_unflagged_bundle_is_byte_identical_to_main():
+    bundle, context = _representative()
+    assert sum(1 for e in bundle["entries"] if e.get("consumer_payload")) == 4
+    assert all(CONSUMER_VISIBILITY_FIELD not in e for e in bundle["entries"])
+    assert bundle["bundle_hash"] == _MAIN_REP["bundle_hash"]
+    assert _sha(json.dumps(compact_capability_evidence_for_prompt(bundle), sort_keys=True)) == _MAIN_REP["compact"]
+    assert _sha(serialize_model_context_package(build_online_context_package(context))) == _MAIN_REP["package"]
+
+
+@pytest.mark.parametrize(
+    "route,names,invalid",
+    [
+        (("not", "a", "mapping"), RECEIPT_ONLY_CAPABILITIES, {"reason": "route_not_a_mapping", "type": "tuple"}),
+        (None, RECEIPT_ONLY_CAPABILITIES, {"reason": "route_not_a_mapping", "type": "NoneType"}),
+        ({}, frozenset(), None),
+        ({"receipt_only_capabilities": None}, frozenset(), None),
+        ({"receipt_only_capabilities": ["memory"]}, frozenset({"memory"}), None),
+        ({"receipt_only_capabilities": ["artifact_gate", 5, " "]}, RECEIPT_ONLY_CAPABILITIES | {"artifact_gate"},
+         {"reason": "invalid_items", "items": ["5", "' '"]}),
+        ({"receipt_only_capabilities": "memory"}, RECEIPT_ONLY_CAPABILITIES, {"reason": "not_a_list", "type": "str"}),
+        ({"receipt_only_capabilities": {"memory": 1}}, RECEIPT_ONLY_CAPABILITIES, {"reason": "not_a_list", "type": "dict"}),
+    ],
+    ids=["tuple_route", "none_route", "absent", "none_value", "names", "invalid_items", "string", "mapping"],
+)
+def test_route_declaration_resolution_fails_closed(route, names, invalid):
+    """G4 / L1: unreadable input never widens visibility (the runtime's own entry point also
+    rejects a non-mapping route with ``route_must_be_object`` before this runs)."""
+    assert resolve_receipt_only_capabilities(route) == (names, invalid)
+
+
+def test_non_mapping_route_is_rejected_before_any_prompt():
+    exports = build_runtime_exports()
+    calls: list = []
+
+    def online(context):
+        calls.append(context)
+        return seal._online(context)
+
+    request = exports.UnifiedRuntimeRequest(
+        task_id="ro-4", workspace_revision=seal.REV, task_statement=seal.STATEMENT,
+        task_type="repair", route={"recommended_flow": "direct"}, online_enabled=True, online_prompt="hi",
+    )
+    object.__setattr__(request, "route", ("not", "a", "mapping"))
+    with pytest.raises(ValueError, match="route_must_be_object"):
+        exports.UnifiedRuntime(project_root=tempfile.mkdtemp()).run(request, online_invoker=online)
+    assert calls == []

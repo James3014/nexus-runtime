@@ -562,6 +562,33 @@ RECEIPT_ONLY_CAPABILITIES = frozenset({
 RECEIPT_ONLY_ROUTE_KEY = "receipt_only_capabilities"
 
 
+
+def resolve_receipt_only_capabilities(route: Any) -> tuple[frozenset[str], dict[str, Any] | None]:
+    """The receipt-only capability names a host request declares, failing closed.
+
+    Returns ``(names, invalid)``:
+    * route not a mapping -> ``RECEIPT_ONLY_CAPABILITIES`` + ``route_not_a_mapping``;
+    * key absent / None -> no names (records may still opt in themselves);
+    * list / tuple of non-blank strings -> exactly those names;
+    * list / tuple with invalid items -> its valid names UNION ``RECEIPT_ONLY_CAPABILITIES``
+      + ``invalid_items``;
+    * any other value -> ``RECEIPT_ONLY_CAPABILITIES`` + ``not_a_list``.
+    Unreadable input never widens prompt visibility.
+    """
+    if not isinstance(route, Mapping):
+        return RECEIPT_ONLY_CAPABILITIES, {"reason": "route_not_a_mapping", "type": type(route).__name__}
+    value = route.get(RECEIPT_ONLY_ROUTE_KEY)
+    if value is None:
+        return frozenset(), None
+    if isinstance(value, (list, tuple)):
+        valid = frozenset(item.strip() for item in value if isinstance(item, str) and item.strip())
+        bad = [repr(item) for item in value if not (isinstance(item, str) and item.strip())]
+        if bad:
+            return valid | RECEIPT_ONLY_CAPABILITIES, {"reason": "invalid_items", "items": bad[:16]}
+        return valid, None
+    return RECEIPT_ONLY_CAPABILITIES, {"reason": "not_a_list", "type": type(value).__name__}
+
+
 def entry_prompt_visible(entry: Mapping[str, Any]) -> bool:
     """True only when an entry may reach a prompt-facing view.
 
@@ -598,9 +625,10 @@ def receipt_only_evidence_ids(bundle: Mapping[str, Any] | None) -> set[str]:
 
 
 def _receipt_only_set(receipt_only_capabilities: Any) -> frozenset[str]:
-    # The low-level builder flags nothing unless told; the runtime
-    # (``materialize_selected_capability_evidence``) passes ``RECEIPT_ONLY_CAPABILITIES``
-    # by default.
+    # Nothing is declared receipt-only unless the caller names it: neither this builder
+    # nor ``materialize_selected_capability_evidence`` applies RECEIPT_ONLY_CAPABILITIES by
+    # default.  UnifiedRuntime passes the host's route declaration (and falls back to
+    # RECEIPT_ONLY_CAPABILITIES only when that declaration is unreadable).
     if receipt_only_capabilities is None:
         return frozenset()
     if isinstance(receipt_only_capabilities, str) or not isinstance(
@@ -923,8 +951,8 @@ def build_capability_evidence_bundle(
     """Build hash-sealed shared evidence bundle for Local and Online consumers.
 
     ``receipt_only_capabilities`` names the capabilities whose entries are sealed with
-    ``consumer_visibility="receipt_only"`` (default: none; the runtime passes
-    ``RECEIPT_ONLY_CAPABILITIES`` unless the host overrides it).
+    ``consumer_visibility="receipt_only"`` (default: none; the host declares them via
+    the request route, records may opt in themselves).
 
     ``runtime_evidence_ids`` (name -> ids) is the runtime-held map of input/output digest
     ids for capabilities whose callable physically ran; it is the only source of the
