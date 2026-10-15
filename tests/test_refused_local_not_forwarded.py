@@ -364,3 +364,177 @@ def test_refused_stage_gets_no_post_online_vap_credit(monkeypatch):
     assert receipt["verified_assist"] == {}
     assert local["substitution_trace"]["online_consumed"] is False
     assert receipt["claim_boundary"]["outcome_contributed"] is False
+
+
+# --- Review round 2, cross-model addendum (PR #214) ---------------------------
+
+
+def test_forwardable_predicate_normalises_legacy_status_case():
+    assert _local_stage_forwardable({"status": "succeeded", "gate_passed": True})
+    assert _local_stage_forwardable({"status": " Pass ", "gate_passed": True})
+    assert not _local_stage_forwardable({"status": "failed", "gate_passed": True})
+    assert not _local_stage_forwardable({"status": "succeeded", "gate_passed": 1})
+
+
+def test_refused_stage_declaring_vap_consumption_does_not_abort_online():
+    exports = build_runtime_exports()
+    request = exports.UnifiedRuntimeRequest(
+        task_id="t2245", workspace_revision="rev", task_statement="repair", task_type="repair",
+        route={}, local_enabled=True, online_enabled=True, local_request={"task_id": "t2245"},
+    )
+    stage = _local_stage(status="FAILED", gate_passed=False, reason="local_action_not_executor_bound")
+    stage["response"]["consume_verified_assist"] = True  # model payload claims VAP, no packet
+    prompts: list = []
+
+    def invoker(context):
+        block = _naive_consumer_block(context["local"])
+        prompts.append(BASE_PROMPT + ("\n\n" + block if block else ""))
+        return {"invoked": True, "output_delivered": True, "gate_passed": True,
+                "response": "ok", "provider_call_count": 1}
+
+    online = exports.UnifiedRuntime()._run_online(
+        request, invoker,
+        {"task_id": "t2245", "planner_decision_id": "plan", "planner": {},
+         "local": stage, "online_prompt": BASE_PROMPT},
+        workforce_admission_required=False,
+    )
+    assert online["invoked"] is True, online.get("reason")
+    assert "vap_runtime_binding_failed" not in str(online.get("reason") or "")
+    assert prompts == [BASE_PROMPT]
+
+
+_LOCAL_WORKER = {
+    "worker_id": "local_coder_7b", "provider": "ollama", "model": "qwen2.5-coder:7b-instruct",
+    "controls": ["small_scope", "parser", "compile", "focused_tests", "reversible_application"],
+}
+_ONLINE_WORKER = {
+    "worker_id": "codex_luna", "provider": "codex", "model": "gpt-5.6-luna",
+    "controls": ["task_card", "allowed_files", "mandatory_commands", "independent_verification",
+                 "governed_adapter", "receipt"],
+}
+
+
+def _workforce_e2e(exports):
+    """UnifiedRuntime.run with Workforce admission on, a Local stage refused by
+    formal lineage (local_action_not_executor_bound) and a registered CLI Online."""
+    from dataclasses import replace
+
+    route = {
+        "recommended_flow": "direct", "online_policy": "auto", "injected_transport": True,
+        "demand_id": "online:implementer", "task_card_path": "tasks/t2245.md",
+        "provider": "codex", "online_model_name": "gpt-5.6-luna",
+        "allowed_files": ["src/example.py"], "mandatory_commands": ["pytest"],
+        "workforce_admission_enabled": True,
+        "workforce_bindings": {"online": _ONLINE_WORKER, "local": _LOCAL_WORKER},
+    }
+    request = exports.UnifiedRuntimeRequest(
+        task_id="t2245", workspace_revision="rev", task_statement="bounded online assembly",
+        task_type="repair", route=route, local_enabled=True, online_enabled=True,
+        online_prompt=BASE_PROMPT, local_request={"task_id": "t2245", "action": "explain"},
+    )
+
+    class Planner(exports.CapabilityPlanner):
+        def plan(self, **kwargs):
+            plan = super().plan(**kwargs)
+            snapshot = dict(plan.signal_snapshot)
+            common = {"schema": "nexus.workforce_demand.v1", "context_class": "nexus_bounded",
+                      "mutation_intent": True, "external_verification_required": True,
+                      "route_authority": "CapabilityPlanner"}
+            snapshot["workforce_demands"] = {
+                "schema": "nexus.workforce_demands.v1", "route_authority": "CapabilityPlanner",
+                "demands": [
+                    {**common, "demand_id": "online-runtime-1", "execution_channel": "online",
+                     "requested_role": "main_engineering", "minimum_autonomy": "L1"},
+                    {**common, "demand_id": "local-runtime-1", "execution_channel": "local",
+                     "requested_role": "bounded_code_candidate", "minimum_autonomy": "L1"},
+                ],
+            }
+            selected = list(plan.selected_capabilities)
+            if "local_model_executor" not in selected:
+                selected.append("local_model_executor")
+            return replace(plan, signal_snapshot=snapshot, selected_capabilities=selected)
+
+    plan_probe = exports.CapabilityPlanner().plan(
+        task_desc=request.task_statement, task_type=request.task_type, route=dict(route),
+        pillars=dict(request.pillars), codeintel=dict(request.codeintel),
+        phase_trace=dict(request.phase_trace), budget=dict(request.budget), skills=[],
+    )
+    capability_invokers = {
+        name: (lambda context, name=name: {
+            "task_id": context["task_id"], "invoked": True, "status": "SUCCEEDED",
+            "gate_passed": True, "evidence_refs": [f"t2245:{name}"],
+        }) for name in plan_probe.selected_capabilities
+    }
+    captured: dict = {}
+
+    def runner(argv, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="provider output\n", stderr="")
+
+    online_invoker = exports.build_registered_online_invoker(
+        "codex", command=(sys.executable, "exec", "-m", "gpt-5.6-luna", "-c", "pass"),
+        model_name="gpt-5.6-luna", runner=runner,
+    )
+
+    def local_service(_request):
+        return {
+            "schema": "nexus.local_assist.response.v1", "task_id": "t2245", "action": "explain",
+            "invoked": True, "local_model_invoked": True, "output_delivered": True,
+            "concise_summary": SUMMARY, "local_outputs": {"concise_summary": SUMMARY},
+            "consume_verified_assist": True, "evidence_refs": ["local:t2245:fixture"],
+        }
+
+    runtime = exports.UnifiedRuntime(planner=Planner(), local_service=local_service)
+    receipt = runtime.run(
+        request, online_invoker=online_invoker, capability_invokers=capability_invokers,
+        verifier=lambda c: {"task_id": c["task_id"], "invoked": True, "gate_passed": True, "evidence_refs": ["v"]},
+        learning=lambda c: {"task_id": c["task_id"], "invoked": True, "gate_passed": True, "evidence_refs": ["l"]},
+    )
+    return runtime, receipt, captured
+
+
+def _authoritative_verifier(receipt):
+    return {
+        "task_id": "t2245", "invoked": True, "gate_passed": True, "evidence_refs": ["verifier:final"],
+        "response": {
+            "task_id": "t2245",
+            "attempt_id": receipt["execution_attempt"]["attempt_id"],
+            "source_hash": receipt["capability_evidence_bundle"]["source_hash"],
+        },
+    }
+
+
+def test_workforce_e2e_refused_local_not_in_online_stdin_and_not_credited():
+    exports = build_runtime_exports()
+    runtime, receipt, captured = _workforce_e2e(exports)
+    local = receipt["local"]
+    assert local["status"] == "FAILED" and local["gate_passed"] is False
+    assert "local_action_not_executor_bound" in local["reason"]
+    assert receipt["context_trace"]["local_model_invocation_authority"]["gate_passed"] is True
+    assert receipt["online"]["status"] == "SUCCEEDED", receipt["online"]
+    stdin = str(captured.get("input") or "")
+    assert stdin
+    assert "[LOCAL_ASSIST_CONTEXT]" not in stdin
+    assert SUMMARY not in stdin
+    assert not any("local_context_forwarded" in str(ref) for ref in receipt["online"].get("evidence_refs") or [])
+    finalized = runtime.finalize_receipt(
+        receipt, verifier=_authoritative_verifier(receipt),
+        learning={"task_id": "t2245", "invoked": True, "gate_passed": True, "evidence_refs": ["l"]},
+    )
+    assert finalized["local"]["outcome_contributed"] is False
+    assert finalized["local"]["substitution_trace"]["final_outcome_contributed"] is False
+
+
+def test_finalize_never_credits_refused_local_when_online_contributed():
+    exports = build_runtime_exports()
+    runtime, receipt, _captured = _workforce_e2e(exports)
+    contributing = dict(receipt)
+    contributing["online"] = {**receipt["online"], "outcome_contributed": True}
+    finalized = runtime.finalize_receipt(
+        contributing, verifier=_authoritative_verifier(receipt),
+        learning={"task_id": "t2245", "invoked": True, "gate_passed": True, "evidence_refs": ["l"]},
+    )
+    # The run-level claim may still credit Online; the refused Local stage may not.
+    assert finalized["claim_boundary"]["outcome_contributed"] is True
+    assert finalized["local"]["outcome_contributed"] is False
+    assert finalized["local"]["substitution_trace"]["final_outcome_contributed"] is False

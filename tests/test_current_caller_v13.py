@@ -33,7 +33,9 @@ def test_vap_binding_mismatch_blocks_before_online_invocation():
         "canonical_execution": {"task_id": "foreign"},
         "execution_attempt": {"attempt_id": "attempt"},
         "source_hash": "source",
-        "local": {"response": {"consume_verified_assist": True, "verified_assist_packet": {"task_id": "foreign"}}},
+        # Nexus-new#2245: the VAP pre-gate binds a succeeded, gate-passed Local stage.
+        "local": {"status": "SUCCEEDED", "gate_passed": True,
+                  "response": {"consume_verified_assist": True, "verified_assist_packet": {"task_id": "foreign"}}},
     }
     result = exports.UnifiedRuntime._run_online(request, lambda _context: calls.append(True), context)
     assert result["invoked"] is False

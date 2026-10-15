@@ -323,7 +323,7 @@ def _local_stage_forwardable(local_stage: Any) -> bool:
         return False
     if local_stage.get("online_context_withheld") is True:
         return False
-    if str(local_stage.get("status") or "") not in LOCAL_STAGE_SUCCESS_STATUSES:
+    if str(local_stage.get("status") or "").strip().upper() not in LOCAL_STAGE_SUCCESS_STATUSES:
         return False
     return local_stage.get("gate_passed") is True
 

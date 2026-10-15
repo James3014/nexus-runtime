@@ -2481,9 +2481,12 @@ class UnifiedRuntime:
         )
         if isinstance(finalized.get("local"), Mapping):
             finalized_local = dict(finalized["local"])
-            finalized_local["outcome_contributed"] = outcome_contributed
+            # Nexus-new#2245: a refused / failed / gate-failed Local stage never
+            # contributed to the outcome, whatever Online/capabilities did.
+            local_outcome_contributed = outcome_contributed and _local_stage_forwardable(finalized_local)
+            finalized_local["outcome_contributed"] = local_outcome_contributed
             trace = dict(finalized_local.get("substitution_trace") or {})
-            trace["final_outcome_contributed"] = outcome_contributed
+            trace["final_outcome_contributed"] = local_outcome_contributed
             finalized_local["substitution_trace"] = trace
             finalized["local"] = finalized_local
         bindings = finalized.get("effect_journal_bindings")
@@ -3054,7 +3057,11 @@ class UnifiedRuntime:
             if isinstance(local_response.get("verified_assist_packet"), Mapping)
             else None
         )
-        vap_declared = bool(
+        # Nexus-new#2245: a refused / failed / gate-failed Local stage cannot
+        # declare VAP consumption (its output is withheld from Online), so the
+        # VAP pre-gate binds only a forwardable stage.  The advisory gates
+        # above still read the full stage.
+        vap_declared = _local_stage_forwardable(local_stage) and bool(
             local_response.get("consume_verified_assist")
             or local_stage.get("consume_verified_assist")
             or local_stage.get("verified_assist_packet_expected_hash")
