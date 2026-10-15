@@ -610,18 +610,69 @@ def prompt_visible_entries(bundle: Mapping[str, Any] | None) -> list[Mapping[str
     return [e for e in entries if isinstance(e, Mapping) and entry_prompt_visible(e)]
 
 
-def receipt_only_evidence_ids(bundle: Mapping[str, Any] | None) -> set[str]:
-    """Evidence ids carried by hidden entries (to filter top-level id lists)."""
-    hidden: set[str] = set()
+def prompt_visible_evidence_ids(bundle: Mapping[str, Any] | None) -> set[str] | None:
+    """Ids a prompt-facing / consumption view may carry, or ``None`` when nothing is hidden.
+
+    When the bundle has receipt-only entries, the allowed ids are the union of the
+    *visible* entries' ``evidence_ids`` / ``evidence_refs`` (never "all ids minus hidden
+    ids": an id a visible entry shares with a hidden one must not appear or vanish
+    depending on the hidden gate's outcome).  ``None`` (no hidden entry) keeps today's
+    behaviour unchanged.
+    """
     entries = bundle.get("entries") if isinstance(bundle, Mapping) else None
-    for entry in entries if isinstance(entries, (list, tuple)) else ():
-        if isinstance(entry, Mapping) and not entry_prompt_visible(entry):
-            for key in ("evidence_ids", "evidence_refs", "runtime_evidence_ids"):
+    if not isinstance(entries, (list, tuple)):
+        return None
+    if all(entry_prompt_visible(e) for e in entries if isinstance(e, Mapping)):
+        return None
+    allowed: set[str] = set()
+    for entry in entries:
+        if isinstance(entry, Mapping) and entry_prompt_visible(entry):
+            for key in ("evidence_ids", "evidence_refs"):
                 for item in entry.get(key) or []:
                     text = str(item).strip()
                     if text:
-                        hidden.add(text)
-    return hidden
+                        allowed.add(text)
+    return allowed
+
+
+def receipt_only_capability_names(context: Mapping[str, Any] | None) -> set[str]:
+    """Capabilities a prompt builder must treat as receipt-only for this context.
+
+    Union of: the runtime's declared list (``context["receipt_only_capabilities"]``), the
+    bundle entries that are not prompt-visible (``capability_evidence_bundle`` or the
+    planner snapshot), and records that opt in (``consumer_visibility="receipt_only"``).
+    """
+    ctx = context if isinstance(context, Mapping) else {}
+    names: set[str] = set()
+    declared = ctx.get(RECEIPT_ONLY_ROUTE_KEY)
+    if isinstance(declared, (list, tuple, set, frozenset)):
+        names.update(str(n) for n in declared if isinstance(n, str) and n.strip())
+    bundle = ctx.get("capability_evidence_bundle")
+    if not isinstance(bundle, Mapping):
+        planner = ctx.get("planner") if isinstance(ctx.get("planner"), Mapping) else {}
+        snapshot = planner.get("signal_snapshot") if isinstance(planner.get("signal_snapshot"), Mapping) else {}
+        bundle = planner.get("capability_evidence_bundle") or snapshot.get("capability_evidence_bundle")
+    entries = bundle.get("entries") if isinstance(bundle, Mapping) else None
+    for entry in entries if isinstance(entries, (list, tuple)) else ():
+        if isinstance(entry, Mapping) and not entry_prompt_visible(entry):
+            names.add(str(entry.get("name") or ""))
+    results = ctx.get("capability_results")
+    if isinstance(results, Mapping):
+        for name, record in results.items():
+            if record_requests_receipt_only(record):
+                names.add(str(name))
+    names.discard("")
+    return names
+
+
+def prompt_visible_capability_results(context: Mapping[str, Any] | None) -> dict[str, Any]:
+    """``context["capability_results"]`` without any receipt-only capability's record."""
+    ctx = context if isinstance(context, Mapping) else {}
+    results = ctx.get("capability_results")
+    if not isinstance(results, Mapping):
+        return {}
+    hidden = receipt_only_capability_names(ctx)
+    return {name: value for name, value in results.items() if str(name) not in hidden}
 
 
 def _receipt_only_set(receipt_only_capabilities: Any) -> frozenset[str]:
@@ -1408,7 +1459,7 @@ def record_consumption(
     entry_id_set: set[str] = set()
     entry_payload_by_cap: dict[str, Mapping[str, Any]] = {}
     entries = bundle.get("entries") if isinstance(bundle, Mapping) else None
-    hidden_ids = receipt_only_evidence_ids(bundle)
+    visible_ids = prompt_visible_evidence_ids(bundle)
     if isinstance(entries, list):
         for ent in prompt_visible_entries(bundle):
             if not bool(ent.get("success") or ent.get("invoked_real")):
@@ -1423,11 +1474,12 @@ def record_consumption(
                 entry_payload_by_cap[ename] = cp
         for eid in bundle.get("evidence_ids") or []:
             s = str(eid).strip()
-            if s and s not in hidden_ids:
+            if s and (visible_ids is None or s in visible_ids):
                 entry_id_set.add(s)
         if entry_id_set:
             ids = [i for i in ids if i in entry_id_set]
-        ids = [i for i in ids if i not in hidden_ids]
+        if visible_ids is not None:
+            ids = [i for i in ids if i in visible_ids]
 
     raw_payloads = list(consumed_capability_payloads or [])
     payloads: list[dict[str, Any]] = []

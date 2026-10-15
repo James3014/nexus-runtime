@@ -366,15 +366,19 @@ def _refs_only_gate(name: str, outcome: str):
         else:
             detail.update(semantic_status="FAILED", blockers=[f"{name}_{outcome}_verdict"])
         status = "SUCCEEDED" if passed else "FAILED"
+        # Outcome-bearing evidence (the codeintel summary path merges response.evidence).
+        evidence = {"scan_report_present": passed, "impact_report_present": passed,
+                    "risk_score": {"passed": 99, "stub": 77}.get(outcome, 3),
+                    "risk_reason": [f"{name}:{outcome}"], "impacted_files_count": len(outcome)}
         return {"task_id": task_id, "invoked": True, "status": status, "gate_passed": passed,
-                "evidence_refs": [ref], "stub": outcome == "stub",
+                "evidence_refs": [ref], "stub": outcome == "stub", "evidence": evidence,
                 "physical_callable": f"capability_executor_registry:{name}:{outcome}",
                 "response": {"status": status, "capability": name, "outcome": detail}}
 
     return invoke
 
 
-def _prompt_for(tmp_path: Path, name: str, outcome: str) -> tuple[dict[str, Any], str]:
+def _prompt_for(tmp_path: Path, name: str, outcome: str, extra: tuple[str, ...] = ()) -> tuple[dict[str, Any], str]:
     exports = build_runtime_exports()
     prompts: list[str] = []
 
@@ -389,7 +393,7 @@ def _prompt_for(tmp_path: Path, name: str, outcome: str) -> tuple[dict[str, Any]
     class ForcedPlanner(exports.CapabilityPlanner):
         def plan(self, **kwargs):
             plan = super().plan(**kwargs)
-            return replace(plan, selected_capabilities=type(plan.selected_capabilities)((name,)))
+            return replace(plan, selected_capabilities=type(plan.selected_capabilities)((name, *extra)))
 
     request = exports.UnifiedRuntimeRequest(
         task_id="ro-neutral", workspace_revision=seal.REV, task_statement=seal.STATEMENT,
@@ -397,7 +401,7 @@ def _prompt_for(tmp_path: Path, name: str, outcome: str) -> tuple[dict[str, Any]
         route={"recommended_flow": "direct", "receipt_only_capabilities": [name]},
         online_enabled=True, online_prompt="hi",
     )
-    root = tmp_path / f"{name}-{outcome}"
+    root = tmp_path / f"{name}-{outcome}-{'-'.join(extra) or 'solo'}"
     root.mkdir()
     receipt = exports.UnifiedRuntime(planner=ForcedPlanner(), project_root=root).run(
         request, online_invoker=online,
@@ -419,13 +423,17 @@ def _mask_three_hashes(prompt: str, receipt: dict[str, Any]) -> str:
 _OUTCOMES = ("passed", "blocked", "rejected", "stub", "notrun")
 
 
-@pytest.mark.parametrize("name", ["memory", "pregate"])
-def test_receipt_only_gate_outcome_never_changes_the_online_prompt(tmp_path, name):
+_SIX = ("pregate", "harness_preflight_sensor", "plan_quality_gate", "mempalace_gate", "memory", "codeintel")
+
+
+@pytest.mark.parametrize("extra", [(), ("prompt_compression",)], ids=["plain", "with_compression"])
+@pytest.mark.parametrize("name", _SIX)
+def test_receipt_only_gate_outcome_never_changes_the_online_prompt(tmp_path, name, extra):
     """G3 / L2: passing vs blocked vs rejected vs stub vs not run of a receipt-only gate whose
     refs and callable encode the outcome: the whole strict Online prompt
     (``[NEXUS CAPABILITY EVIDENCE]`` + ``[NEXUS MODEL CONTEXT]``) and the compact view are
     byte-identical after masking exactly the three opaque hashes; nothing else may differ."""
-    runs = {o: _prompt_for(tmp_path, name, o) for o in _OUTCOMES}
+    runs = {o: _prompt_for(tmp_path, name, o, extra) for o in _OUTCOMES}
     statuses = {o: seal._entry(r, name)["status"] for o, (r, _) in runs.items()}
     assert statuses["passed"] == "REAL_INVOKED"
     assert statuses["blocked"] == "INVOKED_NOT_SUCCESS"
@@ -444,6 +452,9 @@ def test_receipt_only_gate_outcome_never_changes_the_online_prompt(tmp_path, nam
     assert len(set(compact.values())) == 1
     for outcome, (receipt, prompt) in runs.items():
         assert "[NEXUS CAPABILITY EVIDENCE]" in prompt and "[NEXUS MODEL CONTEXT]" in prompt
+        assert "[NEXUS CODEINTEL SUMMARY]" in prompt
+        assert '"risk_score":99' not in prompt.replace(" ", "") and '"risk_score":77' not in prompt.replace(" ", "")
+        assert f"{name}:{outcome}" not in prompt
         assert f"ev_{name}_" not in prompt and f"host.{name}." not in prompt
         assert f"{name}:{outcome}" not in prompt and f"capability_executor_registry:{name}" not in prompt
         assert not any(i.startswith(f"ev_{name}_") for i in receipt["consumed_evidence_ids"])
@@ -570,3 +581,66 @@ def test_non_mapping_route_is_rejected_before_any_prompt():
     with pytest.raises(ValueError, match="route_must_be_object"):
         exports.UnifiedRuntime(project_root=tempfile.mkdtemp()).run(request, online_invoker=online)
     assert calls == []
+
+
+# --- round 3 ---------------------------------------------------------------------------
+
+
+def test_top_level_ids_come_from_visible_entries_only():
+    """G2: an id shared by a visible entry and a receipt-only one stays in the prompt-facing
+    top-level list whatever the receipt-only gate did (pass / blocked / not run)."""
+    shared = "git:rev:123456"
+
+    def bundle_for(outcome):
+        records = {"pregate": {"status": "SUCCEEDED", "invoked": True, "physical_callable": "pkg.pregate",
+                               "evidence_refs": [shared, "ev:pregate"]}}
+        if outcome == "passed":
+            records["memory"] = {"status": "SUCCEEDED", "invoked": True, "physical_callable": "pkg.memory",
+                                 "evidence_refs": [shared, "ev:memory:passed"]}
+        elif outcome == "blocked":
+            records["memory"] = {"status": "FAILED", "invoked": True, "physical_callable": "pkg.memory",
+                                 "evidence_refs": ["ev:memory:blocked"]}
+        return build_capability_evidence_bundle(
+            task_id="online-1", workspace_revision=REV, task_statement=STATEMENT,
+            plan_payload={"selected_capabilities": ["pregate", "memory"]}, plan_hash=P,
+            planner_decision_id=D, capability_results=records,
+            selected_capabilities=["pregate", "memory"], receipt_only_capabilities=["memory"],
+        )
+
+    views = {}
+    consumed = {}
+    for outcome in ("passed", "blocked", "notrun"):
+        bundle = bundle_for(outcome)
+        view = compact_capability_evidence_for_prompt(bundle)
+        views[outcome] = (view["evidence_ids"], view["entries"])
+        consumed[outcome] = record_consumption(
+            bundle=bundle, consumer="online",
+            consumed_evidence_ids=[shared, "ev:pregate", "ev:memory:passed", "ev:memory:blocked"],
+        )["consumed_evidence_ids"]
+    assert views["passed"] == views["blocked"] == views["notrun"]
+    assert views["passed"][0] == [shared, "ev:pregate"]
+    assert consumed["passed"] == consumed["blocked"] == consumed["notrun"] == [shared, "ev:pregate"]
+
+
+def test_prompt_builders_drop_receipt_only_records():
+    """G1: the transport [CAPABILITY_CONTEXT], the compression invoker and the codeintel
+    summary all read prompt_visible_capability_results."""
+    from nexus_runtime.kernel.capabilities import build_prompt_compression_capability_invoker
+    from nexus_runtime.planning.services.capability_evidence_bundle import (
+        prompt_visible_capability_results,
+    )
+    from nexus_runtime.support.services.online_nexus_context import compact_codeintel_for_prompt
+
+    record = _capability_stage("codeintel", "t-1", _refs_only_gate("codeintel", "passed")({"task_id": "t-1"}))
+    for context in (
+        {"receipt_only_capabilities": ["codeintel"], "capability_results": {"codeintel": record}},
+        {"capability_results": {"codeintel": {**record, "consumer_visibility": "receipt_only"}}},
+        {"capability_results": {"codeintel": record},
+         "capability_evidence_bundle": {"entries": [{"name": "codeintel", "consumer_visibility": "receipt_only"}]}},
+    ):
+        assert prompt_visible_capability_results(context) == {}
+        compressed = build_prompt_compression_capability_invoker()({"task_id": "t-1", "task_statement": "x", **context})
+        empty = build_prompt_compression_capability_invoker()({"task_id": "t-1", "task_statement": "x", "capability_results": {}})
+        assert compressed["response"]["compressed_context"] == empty["response"]["compressed_context"]
+    assert prompt_visible_capability_results({"capability_results": {"codeintel": record}}) == {"codeintel": record}
+    assert compact_codeintel_for_prompt({})["risk_score"] == 0

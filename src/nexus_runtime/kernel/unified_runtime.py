@@ -19,7 +19,7 @@ from .capabilities import (
 from nexus_runtime.planning.services.capability_evidence_bundle import (
     compute_bundle_hash as _compute_bundle_hash,
     prompt_visible_entries,
-    receipt_only_evidence_ids,
+    prompt_visible_evidence_ids,
     resolve_receipt_only_capabilities,
     seal_postflight_capability_evidence,
 )
@@ -983,6 +983,9 @@ class UnifiedRuntime:
         receipt_only_capabilities, receipt_only_invalid = resolve_receipt_only_capabilities(
             request.route
         )
+        if receipt_only_capabilities:
+            # Prompt builders (compression, codeintel summary, transport) consult this list.
+            capability_context["receipt_only_capabilities"] = sorted(receipt_only_capabilities)
         try:
             capability_results, evidence_bundle = materialize_selected_capability_evidence(
                 self._ctx,
@@ -1339,6 +1342,7 @@ class UnifiedRuntime:
             "pillars": dict(request.pillars) if isinstance(request.pillars, Mapping) else {},
             "local": local_stage,
             "capability_results": capability_results,
+            **({"receipt_only_capabilities": sorted(receipt_only_capabilities)} if receipt_only_capabilities else {}),
             "capability_context_compressed": capability_context_compressed,
             # P2: same immutable baseline for Online as Local saw after preflight.
             "capability_evidence_bundle": evidence_bundle,
@@ -1729,7 +1733,7 @@ class UnifiedRuntime:
         # Traceability: keep only IDs that exist on successful bundle entries.
         bundle_success_ids: set[str] = set()
         # receipt_only entries were never in a prompt, so their ids are never "consumed".
-        hidden_bundle_ids = receipt_only_evidence_ids(preflight_bundle_snapshot)
+        visible_bundle_ids = prompt_visible_evidence_ids(preflight_bundle_snapshot)
         for ent in prompt_visible_entries(preflight_bundle_snapshot):
             if not bool(ent.get("success") or ent.get("invoked_real")):
                 continue
@@ -1739,11 +1743,12 @@ class UnifiedRuntime:
                     bundle_success_ids.add(s)
         for eid in preflight_bundle_snapshot.get("evidence_ids") or []:
             s = str(eid).strip()
-            if s and s not in hidden_bundle_ids:
+            if s and (visible_bundle_ids is None or s in visible_bundle_ids):
                 bundle_success_ids.add(s)
         if bundle_success_ids:
             consumed_evidence_ids = [i for i in consumed_evidence_ids if i in bundle_success_ids]
-        consumed_evidence_ids = [i for i in consumed_evidence_ids if i not in hidden_bundle_ids]
+        if visible_bundle_ids is not None:
+            consumed_evidence_ids = [i for i in consumed_evidence_ids if i in visible_bundle_ids]
         evidence_refs = list(request.evidence_refs)
         for stage in stages.values():
             evidence_refs.extend(stage.get("evidence_refs", []))

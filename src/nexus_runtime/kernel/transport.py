@@ -811,7 +811,12 @@ def build_subprocess_online_invoker(
                     local_context_forwarded = True
                 if vap_injection and vap_injection not in prompt:
                     prompt = f"{prompt}\n{vap_injection}"
-            capability_results = context.get("capability_results", {})
+            # Receipt-only capabilities never reach the prompt (#216).
+            from nexus_runtime.planning.services.capability_evidence_bundle import (
+                prompt_visible_capability_results,
+            )
+
+            capability_results = prompt_visible_capability_results(context)
             if capability_results and not canonical_context:
                 compressed = bool(context.get("capability_context_compressed"))
                 # Compressed path: evidence summary only. Uncompressed: capability

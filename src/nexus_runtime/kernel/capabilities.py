@@ -648,8 +648,12 @@ def build_prompt_compression_capability_invoker(
         task_id = str(context.get("task_id", ""))
         prompt = _text(context.get("online_prompt") or context.get("task_statement"))
         payload = _text(context.get("online_payload"))
-        capability_results = context.get("capability_results", {})
-        capability_results = capability_results if isinstance(capability_results, Mapping) else {}
+        # Receipt-only capabilities never reach the compressed prompt context (#216).
+        from nexus_runtime.planning.services.capability_evidence_bundle import (
+            prompt_visible_capability_results,
+        )
+
+        capability_results = prompt_visible_capability_results(context)
         raw_context = _compact(
             {
                 "prompt": prompt,
