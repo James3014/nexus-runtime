@@ -264,7 +264,7 @@ def test_withheld_view_drops_invocation_refs_and_vap_bindings_for_both_shapes():
 
 
 def test_run_online_still_runs_without_local_block_for_both_refused_shapes(monkeypatch):
-    import nexus_runtime.support.composition as composition
+    from nexus_runtime.support import composition
 
     # The pre-provider VAP gate is not under test here; let a well-formed
     # declared packet bind so Online actually reaches the invoker.
@@ -313,8 +313,8 @@ def test_with_nexus_builder_forwards_nothing_from_raw_refused_stage():
 
 
 def test_refused_stage_gets_no_post_online_vap_credit(monkeypatch):
-    import nexus_runtime.support.composition as composition
     from nexus_runtime.planning.engine.capability_contracts import CapabilityPlan
+    from nexus_runtime.support import composition
 
     attach_calls: list = []
 
