@@ -1,6 +1,6 @@
 # HANDOFF
 
-更新：2026-10-15 · by Claude · HEAD `2231488`（分支 feat/seal-gate-evidence：#212）
+更新：2026-10-15 · by Claude · HEAD `3e52ce8`（分支 feat/seal-gate-evidence：#212）
 <!-- 規則見 AGENTS.md「Handoff」。上限 150 行；過期內容移到 docs/archive/HANDOFF-YYYY-MM.md。 -->
 
 ## ▶ 下一步（只放一件，必須帶 #Issue）
