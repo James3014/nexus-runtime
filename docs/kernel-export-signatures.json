@@ -275,7 +275,7 @@
     },
     "materialize_selected_capability_evidence": {
       "kind": "callable",
-      "signature": "(*, planner_output: 'Mapping[str, Any]', selected_capabilities: 'list[str]', task_id: 'str', task_statement: 'str', workspace_revision: 'str', plan_hash: 'str', planner_decision_id: 'str', capability_invokers: 'Mapping[str, Any] | None', capability_context: 'Mapping[str, Any] | None' = None, codeintel: 'Mapping[str, Any] | None' = None, invocation_executed: 'Callable[[str], bool] | None' = None) -> 'tuple[dict[str, dict[str, Any]], dict[str, Any]]'"
+      "signature": "(*, planner_output: 'Mapping[str, Any]', selected_capabilities: 'list[str]', task_id: 'str', task_statement: 'str', workspace_revision: 'str', plan_hash: 'str', planner_decision_id: 'str', capability_invokers: 'Mapping[str, Any] | None', capability_context: 'Mapping[str, Any] | None' = None, codeintel: 'Mapping[str, Any] | None' = None, invocation_executed: 'Callable[[str], bool] | None' = None, receipt_only_capabilities: 'Any' = None) -> 'tuple[dict[str, dict[str, Any]], dict[str, Any]]'"
     },
     "next_execution_depth_after_failure": {
       "kind": "callable",

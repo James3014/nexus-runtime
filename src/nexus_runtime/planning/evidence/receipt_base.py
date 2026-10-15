@@ -188,8 +188,13 @@ def resolve_consumer_payload_hash(
         entries = verified_bundle.get("entries")
         payloads: list[Mapping[str, Any]] = []
         if isinstance(entries, list):
+            from nexus_runtime.planning.services.capability_evidence_bundle import (
+                entry_prompt_visible,
+            )
+
             for e in entries:
-                if not isinstance(e, Mapping):
+                # receipt_only payloads were never serialized for a consumer.
+                if not isinstance(e, Mapping) or not entry_prompt_visible(e):
                     continue
                 cp = e.get("consumer_payload")
                 if isinstance(cp, Mapping) and cp:

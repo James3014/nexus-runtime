@@ -215,6 +215,12 @@ def compact_executor_flags_for_prompt(flags: Mapping[str, Any] | None) -> dict[s
     }
 
 
+# Placeholder for receipt_only entries in the compact prompt view (CONTRACT_B item 4; same
+# as Nexus-new ``withhold_fed_gate_verdicts``).
+_WITHHELD_GATE_STATUS = "INVOKED_NOT_SUCCESS"
+_INVOKED_ENTRY_STATUSES = frozenset({"REAL_INVOKED", "INVOKED_NOT_SUCCESS", "EVALUATED_REJECTED"})
+
+
 def compact_capability_evidence_for_prompt(
     bundle: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
@@ -229,14 +235,27 @@ def compact_capability_evidence_for_prompt(
     from nexus_runtime.planning.services.capability_evidence_bundle import (
         consumer_payload_markers,
         hash_consumer_payloads,
+        entry_prompt_visible,
     )
 
     entries_out: list[dict[str, Any]] = []
     payloads: list[dict[str, Any]] = []
     payload_markers: list[str] = []
-    for entry in b.get("entries") or []:
-        if not isinstance(entry, Mapping):
+    for raw_entry in b.get("entries") or []:
+        if not isinstance(raw_entry, Mapping):
             continue
+        entry = raw_entry
+        if not entry_prompt_visible(raw_entry) and str(raw_entry.get("status") or "") in _INVOKED_ENTRY_STATUSES:
+            # receipt_only (CONTRACT_B): render the pre-PR-4 placeholder so the prompt does
+            # not depend on the gate's verdict; the sealed entry keeps the real one.
+            entry = {
+                **raw_entry,
+                "status": _WITHHELD_GATE_STATUS,
+                "success": False,
+                "invoked_real": False,
+                "consumer_payload": {},
+                "has_consumer_payload": False,
+            }
         # Failed / non-success entries never forward payload.
         success = bool(entry.get("success") or entry.get("invoked_real"))
         cp = entry.get("consumer_payload") if success else None

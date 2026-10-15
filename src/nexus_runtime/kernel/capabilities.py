@@ -124,6 +124,8 @@ def _capability_stage(
         skipped=skipped,
         skip_reason=skip_reason if skipped else "",
         simulated=simulated,
+        # Consumer visibility (CONTRACT_B): only the exact "receipt_only" is carried.
+        **({"consumer_visibility": "receipt_only"} if data.get("consumer_visibility") == "receipt_only" else {}),
     )
 
 
@@ -300,8 +302,14 @@ def materialize_selected_capability_evidence(
     capability_context: Mapping[str, Any] | None = None,
     codeintel: Mapping[str, Any] | None = None,
     invocation_executed: Callable[[str], bool] | None = None,
+    receipt_only_capabilities: Any = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     """Execute selected preflight capabilities and seal their evidence.
+
+    ``receipt_only_capabilities`` (default: none) names capabilities whose sealed entries
+    carry ``consumer_visibility="receipt_only"`` (kept in the bundle / receipts /
+    attestation, never rendered into a model context); a record may also opt in itself with
+    ``consumer_visibility="receipt_only"``.
 
     Runtime-owned record store: every executor receives a deep copy of the records so far
     (never the store itself); after each invocation the runtime stores a deep-copy snapshot
@@ -362,6 +370,7 @@ def materialize_selected_capability_evidence(
         selected_capabilities=selected,
         source_hash=hashlib.sha256(f"{workspace_revision}:{task_statement}".encode()).hexdigest(),
         runtime_evidence_ids=runtime_ids,
+        receipt_only_capabilities=receipt_only_capabilities,
     )
     return results, bundle
 
