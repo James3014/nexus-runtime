@@ -344,6 +344,9 @@ def test_registered_agy_input_carries_exact_vap_fragment_for_live_consumption_pr
         "local": {
             "task_id": task_id,
             "invoked": True,
+            # Nexus-new#2245: only a succeeded, gate-passed Local stage forwards.
+            "status": "SUCCEEDED",
+            "gate_passed": True,
             "response": {
                 "task_id": task_id,
                 "action": "verified-subtask",
