@@ -166,7 +166,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/capabilities.py",
-      "sha256": "a7461581be85b879b6e97232b7a85f32ba55d38d162aab1257f0d14669a8965f"
+      "sha256": "eee46a66451cbe2e493e7dca45ee16c95b4dc4a7dcdd709daae3d24b5205d3c0"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "8d7e6a139e2b79b0d725bb1f4b931e084eccd7f7",
-  "source_tree": "72f8da715ca4ec06749f91ee065be2f7cc94843e",
+  "source_head": "037ce2d37964bb8c4b84320dbc8620fd7c2e65f8",
+  "source_tree": "54b891670059e616366fa8c40bfd07ff1aeda24d",
   "unknown_lineage": []
 }
