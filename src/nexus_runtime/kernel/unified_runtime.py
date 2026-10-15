@@ -22,7 +22,7 @@ from nexus_runtime.planning.services.capability_evidence_bundle import (
 )
 from .constants import GATEWAY_INVOCATION_AUTHORITY_SCHEMA, LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA, ONLINE_DECISION_CONTEXT_KEY, RECEIPT_SCHEMA, REQUEST_SCHEMA, UNTRUSTED_ROUTE_AUTHORIZATION_KEYS
 from .identity import _hash_json, _mapping
-from .local_stage import _formal_local_advisor_lineage, _formal_local_runtime_lineage, _local_action_from_request, _local_executor_invoked_proven, _physical_local_service, _repair_loop_result_from_local_stage
+from .local_stage import _formal_local_advisor_lineage, _formal_local_runtime_lineage, _local_action_from_request, _local_executor_invoked_proven, _local_stage_forwardable, _online_local_context_view, _physical_local_service, _repair_loop_result_from_local_stage
 from .receipts import _assert_runtime_context_active, _assert_runtime_receipt_owner, _runtime_write_context, _validate_runtime_effect_owner, _validate_runtime_owner_context, _validate_runtime_writer_entry, _write_receipt_atomic
 from .replan import build_execution_replan_request, execution_replan_request_authority_projection
 from .request import build_canonical_runtime_context, canonical_execution_identity
@@ -1991,7 +1991,12 @@ class UnifiedRuntime:
         )
         online_safe_forward: dict[str, Any] = {}
         verified_assist_block: dict[str, Any] = {}
-        if request.local_enabled and local_stage.get("invoked") and vap_packet:
+        if (
+            request.local_enabled
+            and local_stage.get("invoked")
+            and vap_packet
+            and _local_stage_forwardable(local_stage)
+        ):
             try:
                 build_online_safe_local_forward = self._ctx.build_online_safe_local_forward
 
@@ -3146,8 +3151,15 @@ class UnifiedRuntime:
                 task_id=str(context.get("task_id", "")),
             )
 
+        # Nexus-new#2245: pre-provider gates above see the full Local stage, but
+        # the Online invoker only receives Local output from a succeeded,
+        # gate-passed stage; a refused stage is handed over withheld.
+        invoker_context = context
+        if "local" in context:
+            invoker_context = dict(context)
+            invoker_context["local"] = _online_local_context_view(context.get("local"))
         try:
-            payload = _mapping(invoker(context))
+            payload = _mapping(invoker(invoker_context))
         except Exception as exc:
             return _stage("online", status="FAILED", reason=f"online_exception:{exc}")
         response_provider_failure = ""

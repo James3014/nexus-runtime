@@ -18,6 +18,7 @@ from .context import KernelContext
 from .capabilities import _capability_evidence_summary
 from .constants import LOCAL_ONLY_PROVIDERS, ONLINE_CLI_SPEC_REGISTRY, REGISTERED_CLI_MODEL_BINDING_FLAGS, REGISTERED_CLI_MODEL_BINDING_UNSUPPORTED_PROVIDERS, REQUEST_SCHEMA, SELECTION_COMPATIBILITY_DEFAULT, SELECTION_ENVIRONMENT_DEFAULT, SELECTION_EXPLICIT_REQUEST, SELECTION_INJECTED_TRANSPORT, TRANSPORT_GATEWAY_COMPATIBILITY, TRANSPORT_REGISTERED_CLI, TRANSPORT_STRUCTURED_CALLABLE, TRANSPORT_UNRESOLVED
 from .identity import _mapping, _optional_identity
+from .local_stage import _local_stage_forwardable
 from .services.online_payload_contract import (
     online_text_indicates_headless_permission_denial,
 )
@@ -773,7 +774,9 @@ def build_subprocess_online_invoker(
             local_stage = context.get("local", {})
             # P2: never dump raw local_outputs (patch/CoT/private reasoning) into Online.
             # Only structure-preserving online-safe concise evidence may be forwarded.
-            if isinstance(local_stage, Mapping) and (
+            # Nexus-new#2245: fail closed at the point of use — a refused /
+            # failed / gate-failed Local stage contributes nothing to Online.
+            if _local_stage_forwardable(local_stage) and (
                 local_stage.get("response") or local_stage.get("invoked") or local_stage.get("local_outputs")
             ):
                 build_online_safe_local_forward = ctx.build_online_safe_local_forward

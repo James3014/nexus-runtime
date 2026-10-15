@@ -599,7 +599,13 @@ def build_online_nexus_context_from_runtime(
     local_forward: dict[str, Any] = {}
     vap_injection = ""
     local_stage = ctx.get("local")
-    if isinstance(local_stage, Mapping) and local_stage.get("invoked"):
+    # Nexus-new#2245: a Local stage the runtime withheld from Online (refused,
+    # failed or gate-failed) contributes no forward and no VAP injection.
+    if (
+        isinstance(local_stage, Mapping)
+        and local_stage.get("invoked")
+        and local_stage.get("online_context_withheld") is not True
+    ):
         declared = False
         expected_packet_hash = ""
         packet: dict[str, Any] | None = None

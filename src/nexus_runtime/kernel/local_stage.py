@@ -295,3 +295,45 @@ def _formal_local_advisor_lineage(payload: Mapping[str, Any]) -> dict[str, Any]:
         "verifier_status": "not_applicable",
         "receipt_path": receipt_path,
     }
+
+
+# Nexus-new#2245: statuses under which a Local stage may contribute to Online.
+LOCAL_STAGE_SUCCESS_STATUSES = frozenset({"SUCCEEDED", "PASS", "COMPLETED"})
+LOCAL_CONTEXT_WITHHELD_REASON = "local_stage_not_succeeded_or_gate_failed"
+
+
+def _local_stage_forwardable(local_stage: Any) -> bool:
+    """True only when a Local stage may feed context into the Online prompt.
+
+    Fail closed: the stage must be a mapping, report a success status, have
+    ``gate_passed`` exactly ``True`` and not be flagged as withheld from Online.
+    A refused / failed / blocked stage contributes nothing to the Online prompt
+    even when it still carries the raw model response for evidence.
+    """
+    if not isinstance(local_stage, Mapping):
+        return False
+    if local_stage.get("online_context_withheld") is True:
+        return False
+    if str(local_stage.get("status") or "") not in LOCAL_STAGE_SUCCESS_STATUSES:
+        return False
+    return local_stage.get("gate_passed") is True
+
+
+def _online_local_context_view(local_stage: Any) -> Any:
+    """Return the Local stage view handed to an Online invoker.
+
+    A forwardable stage is passed through unchanged.  Any other stage keeps its
+    status/reason/identity fields (so Online pre-provider gates still see the
+    refusal) but drops the raw model output and is flagged, so no transport can
+    forward it.  The full stage record (with response) stays in the receipt.
+    """
+    if not isinstance(local_stage, Mapping) or _local_stage_forwardable(local_stage):
+        return local_stage
+    view = dict(local_stage)
+    had_output = bool(view.get("response") or view.get("local_outputs"))
+    view["response"] = {}
+    view.pop("local_outputs", None)
+    view["online_context_withheld"] = True
+    if had_output:
+        view["online_context_withheld_reason"] = LOCAL_CONTEXT_WITHHELD_REASON
+    return view
