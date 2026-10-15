@@ -16,14 +16,15 @@ re-seals the bundle after postflight (``preflight_bundle_hash`` keeps the lineag
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
 
-import _ucp_contract_vendor as ucp
 from nexus_runtime import build_runtime_exports
 from nexus_runtime.kernel.capabilities import (
     _capability_stage,
@@ -42,6 +43,28 @@ from nexus_runtime.support.services.online_nexus_context import (
     build_plan_gated_postflight_invokers,
     classify_postflight_blockers,
 )
+
+
+
+def _support_dir() -> Path:
+    """Directory holding the vendored contract + replay fixture.
+
+    The standalone-wheel job copies only ``tests/test_*.py`` out of the checkout, so fall
+    back to the checkout (``GITHUB_WORKSPACE``) when the helpers are not next to this file.
+    """
+    here = Path(__file__).resolve().parent
+    if (here / "_ucp_contract_vendor.py").is_file():
+        return here
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    if workspace and (Path(workspace) / "tests" / "_ucp_contract_vendor.py").is_file():
+        return Path(workspace) / "tests"
+    raise RuntimeError("seal test support files (_ucp_contract_vendor.py, fixtures/) not found")
+
+
+_SUPPORT = _support_dir()
+_spec = importlib.util.spec_from_file_location("_ucp_contract_vendor", _SUPPORT / "_ucp_contract_vendor.py")
+ucp = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ucp)
 
 REV = "rev-seal-1"
 STATEMENT = "seal gate and postflight evidence into the capability evidence bundle"
@@ -400,7 +423,7 @@ def test_invoked_failure_disposition(outcome, expected):
 
 # --- replay over receipts recorded by the 2026-10-14 online A/B ------------------------
 
-_FIXTURE = Path(__file__).with_name("fixtures") / "seal_replay_receipts.json"
+_FIXTURE = _SUPPORT / "fixtures" / "seal_replay_receipts.json"
 _REPLAY = json.loads(_FIXTURE.read_text(encoding="utf-8"))
 
 
