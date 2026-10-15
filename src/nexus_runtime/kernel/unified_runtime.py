@@ -10,12 +10,14 @@ from .admission import _build_gateway_invocation_authority, _build_local_model_i
 from .capabilities import (
     _capability_stage,
     _runtime_digest,
+    _runtime_snapshot,
     _stage,
-    attach_runtime_invocation_evidence,
     build_prompt_compression_capability_invoker,
     materialize_selected_capability_evidence,
+    runtime_invocation_evidence_ids,
 )
 from nexus_runtime.planning.services.capability_evidence_bundle import (
+    compute_bundle_hash as _compute_bundle_hash,
     seal_postflight_capability_evidence,
 )
 from .constants import GATEWAY_INVOCATION_AUTHORITY_SCHEMA, LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA, ONLINE_DECISION_CONTEXT_KEY, RECEIPT_SCHEMA, REQUEST_SCHEMA, UNTRUSTED_ROUTE_AUTHORIZATION_KEYS
@@ -834,11 +836,19 @@ class UnifiedRuntime:
             if name in postflight_names and name in plan.selected_capabilities
         ]
 
+        # Names whose callable really executed in this run (an effect-journal replay
+        # returns a cached / reconciled result without calling it).
+        executed_capabilities_this_run: set[str] = set()
+
         def _guarded_capability_invoker(
             capability_name: str,
             invoker: Any,
             capability_context: dict[str, Any],
         ) -> Any:
+            def _call() -> Any:
+                executed_capabilities_this_run.add(capability_name)
+                return invoker(capability_context)
+
             if fenced and getattr(invoker, "effectful", False) is not True and getattr(invoker, "pure", False) is not True:
                 raise ValueError("unclassified_selected_capability")
             if effect_journal is not None and getattr(invoker, "effectful", False) is True:
@@ -865,13 +875,24 @@ class UnifiedRuntime:
                         identity=identity,
                         subject=request.task_id,
                         request_digest=request_digest,
-                        dispatch=lambda: effect_dispatch.dispatch(lambda: invoker(capability_context)),
+                        dispatch=lambda: effect_dispatch.dispatch(_call),
                         reconcile=lambda record: effect_reconcile.reconcile(record),
                     )
                 saved = effect_journal.get(deterministic_effect_id(identity)) or {}
                 effect_journal_bindings[-1].update({"generation": saved.get("generation"), "state": saved.get("state"), "result_digest": saved.get("result_digest", ""), "project_root": str(effect_journal.project_root)})
                 return result
-            return invoker(capability_context)
+            return _call()
+
+        # Runtime-owned record store: deep-copy snapshots keyed by the capability the
+        # runtime itself invoked; bundle entries are built only from it, and the
+        # runtime_evidence_ids map is held here (never read back from a record).
+        record_store: dict[str, dict[str, Any]] = {}
+        runtime_id_map: dict[str, list[str]] = {}
+        postflight_invoked: list[str] = []
+
+        def _store_record(name: str, stage: dict[str, Any]) -> None:
+            record_store[name] = _runtime_snapshot(stage)
+            capability_results[name] = _runtime_snapshot(stage)
 
         def _invoke_capability(
             capability_name: str,
@@ -880,6 +901,14 @@ class UnifiedRuntime:
         ) -> None:
             if capability_name not in plan.selected_capabilities:
                 return
+            # Executors get deep copies of the records and of the bundle, never the
+            # runtime's own objects.
+            call_context = dict(capability_context)
+            call_context["capability_results"] = _runtime_snapshot(record_store)
+            if "capability_evidence_bundle" in call_context:
+                call_context["capability_evidence_bundle"] = _runtime_snapshot(
+                    call_context["capability_evidence_bundle"]
+                )
             input_digest = ""
             if not callable(invoker):
                 result: Any = {
@@ -889,9 +918,10 @@ class UnifiedRuntime:
                     "evidence_refs": [f"capability:{capability_name}:{request.task_id}:not_callable"],
                 }
             else:
-                input_digest = _runtime_digest(capability_context)
+                input_digest = _runtime_digest(call_context)
+                executed_capabilities_this_run.discard(capability_name)
                 try:
-                    result = _guarded_capability_invoker(capability_name, invoker, capability_context)
+                    result = _guarded_capability_invoker(capability_name, invoker, call_context)
                 except Exception as exc:  # fail closed in the shared receipt
                     input_digest = ""
                     result = {
@@ -901,16 +931,16 @@ class UnifiedRuntime:
                         "evidence_refs": [f"capability:{capability_name}:{request.task_id}:exception"],
                         "error": f"{exc.__class__.__name__}:{exc}",
                     }
-            capability_results[capability_name] = attach_runtime_invocation_evidence(
-                _capability_stage(
-                    capability_name,
-                    request.task_id,
-                    result,
-                ),
-                capability_name,
-                input_digest=input_digest,
-                result=result,
+                if capability_name not in executed_capabilities_this_run:
+                    input_digest = ""  # replayed / reconciled, not executed in this run
+            stage = _capability_stage(capability_name, request.task_id, result)
+            ids = runtime_invocation_evidence_ids(
+                stage, capability_name, input_digest=input_digest, result=result
             )
+            if ids:
+                stage["runtime_evidence_ids"] = list(ids)
+                runtime_id_map[capability_name] = list(ids)
+            _store_record(capability_name, stage)
 
         # Empty local placeholder until after shared preflight.
         local_stage = _stage("local", status="NOT_REQUESTED", reason="pending_shared_preflight")
@@ -957,7 +987,14 @@ class UnifiedRuntime:
             capability_invokers=preflight_invokers,
             capability_context=capability_context,
             codeintel=dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {},
+            invocation_executed=lambda name: name in executed_capabilities_this_run,
         )
+        for _name, _record in capability_results.items():
+            record_store[str(_name)] = _runtime_snapshot(_record)
+        # Runtime-held copy of the sealed preflight bundle: the re-seal starts from it,
+        # never from the object handed to Local / Online / verifier callbacks.
+        preflight_bundle_snapshot = _runtime_snapshot(evidence_bundle)
+        preflight_bundle_hash = str(evidence_bundle.get("bundle_hash") or "")
         capability_context["capability_results"] = capability_results
         plan_payload = dict(plan_payload)
         _evidence_consumer_view = self._ctx._evidence_consumer_view
@@ -1194,11 +1231,14 @@ class UnifiedRuntime:
                 task_id=request.task_id,
                 local_stage=local_stage,
             )
-            capability_results["repair_loop"] = _capability_stage(
+            _store_record(
                 "repair_loop",
-                request.task_id,
-                repair_result,
-                delegated_to="Local",
+                _capability_stage(
+                    "repair_loop",
+                    request.task_id,
+                    repair_result,
+                    delegated_to="Local",
+                ),
             )
 
         effective_online_prompt = request.online_prompt
@@ -1369,31 +1409,66 @@ class UnifiedRuntime:
         postflight_context = dict(context)
         postflight_context["route"] = dict(route_map)
         postflight_context["capability_results"] = capability_results
-        postflight_context["capability_evidence_bundle"] = evidence_bundle
+        postflight_context["capability_evidence_bundle"] = _runtime_snapshot(preflight_bundle_snapshot)
         postflight_context["source_hash"] = str(evidence_bundle.get("source_hash") or "")
         postflight_context["task_statement"] = request.task_statement
         for capability_name, invoker in postflight_items:
+            if capability_name in plan.selected_capabilities:
+                postflight_invoked.append(capability_name)
             _invoke_capability(capability_name, invoker, postflight_context)
             # Keep context capability_results live for subsequent stages.
             context["capability_results"] = capability_results
-        # Seal the postflight records into the evidence bundle the receipt carries.  The
-        # preflight bundle Local/Online consumed stays the lineage anchor
-        # (``preflight_bundle_hash``); a re-seal that does not verify is dropped and the
-        # postflight entries stay PENDING_OR_STAGE_OWNED (fail closed, never attested).
-        receipt_evidence_bundle = evidence_bundle
-        postflight_sealed = seal_postflight_capability_evidence(
-            evidence_bundle,
-            capability_results,
-            postflight_capabilities=[name for name, _ in postflight_items],
-        )
-        if postflight_sealed is not evidence_bundle and _verify_evidence_bundle(
-            postflight_sealed, source_hash_subject=source_hash_subject
-        ).get("ok"):
-            receipt_evidence_bundle = postflight_sealed
+        # Seal the postflight records into the evidence bundle the receipt carries, from
+        # runtime-held state only: the preflight snapshot, the record store, the names the
+        # postflight phase invoked, and the runtime id map.  Dropped (fail closed: postflight
+        # entries stay PENDING_OR_STAGE_OWNED, never attested) when the bundle handed to
+        # callbacks was tampered with, the seal raises, or the result does not verify.
+        receipt_evidence_bundle = preflight_bundle_snapshot
+        postflight_sealed = False
+        postflight_seal_dropped = ""
+        if postflight_invoked:
+            try:
+                if (
+                    str(evidence_bundle.get("bundle_hash") or "") != preflight_bundle_hash
+                    or _compute_bundle_hash(evidence_bundle) != preflight_bundle_hash
+                ):
+                    postflight_seal_dropped = "bundle_tampered"
+                else:
+                    candidate = seal_postflight_capability_evidence(
+                        _runtime_snapshot(preflight_bundle_snapshot),
+                        _runtime_snapshot(
+                            {name: record_store[name] for name in postflight_invoked if name in record_store}
+                        ),
+                        postflight_capabilities=list(postflight_invoked),
+                        runtime_evidence_ids={
+                            name: list(runtime_id_map[name])
+                            for name in postflight_invoked
+                            if name in runtime_id_map
+                        },
+                    )
+                    verdict = _verify_evidence_bundle(
+                        candidate,
+                        source_hash_subject=source_hash_subject,
+                        preflight_bundle=preflight_bundle_snapshot,
+                        expected_preflight_bundle_hash=preflight_bundle_hash,
+                    )
+                    if verdict.get("ok") and candidate.get("seal_phase") == "postflight":
+                        receipt_evidence_bundle = candidate
+                        postflight_sealed = True
+                    elif not verdict.get("ok"):
+                        postflight_seal_dropped = "reseal_not_verified"
+            except Exception as exc:  # noqa: BLE001 - never crash the run on a seal failure
+                postflight_seal_dropped = type(exc).__name__
+                receipt_evidence_bundle = preflight_bundle_snapshot
+                postflight_sealed = False
 
         learning_stage = self._run_callback("learning", learning, context, required=True)
         stages["learning"] = learning_stage
         context["learning"] = learning_stage
+        # Callbacks received the live receipt dict; the receipt reports the runtime-owned
+        # records only (same dict object, rebuilt from the store).
+        capability_results.clear()
+        capability_results.update({name: _runtime_snapshot(rec) for name, rec in record_store.items()})
 
         required_stage_names = ["planner"]
         if request.local_enabled:
@@ -2043,7 +2118,12 @@ class UnifiedRuntime:
             "evidence_bundle_hash": evidence_bundle["bundle_hash"],
             **(
                 {"postflight_evidence_bundle_hash": receipt_evidence_bundle["bundle_hash"]}
-                if receipt_evidence_bundle is not evidence_bundle
+                if postflight_sealed
+                else {}
+            ),
+            **(
+                {"postflight_seal_dropped": f"postflight_seal_dropped:{postflight_seal_dropped}"}
+                if postflight_seal_dropped
                 else {}
             ),
             "capability_context_compressed": capability_context_compressed,

@@ -3,7 +3,8 @@
 Verbatim copy of ``nexus/research/flow/unified_capability_projection.py`` from
 James3014/Nexus-new main ae355c20a (contract merged in #2212), from the imports through
 ``runtime_attestation``; only the two Nexus-new imports are replaced by their constant
-values.  The runtime seal tests use it to prove that what the runtime emits is what the
+values.  Named ``test_*`` only so the standalone-wheel job copies it next to the tests (it
+defines no tests).  The runtime seal tests use it to prove that what the runtime emits is what the
 consumer accepts (``real``) or refuses.  Not imported by the package; not an authority.
 """
 

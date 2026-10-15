@@ -1043,7 +1043,11 @@ def build_plan_gated_postflight_invokers() -> dict[str, Callable[[Mapping[str, A
                 "public_claim_allowed": False,
             }
             if semantic_status == "BLOCKED":
+                # Refusal: verdict lists carry only the normalized missing_* codes; the
+                # gate's raw blocker names stay in ``gate_blockers`` and the evidence refs.
                 response["error"] = POSTFLIGHT_MISSING_INPUT_CODE
+                response["gate_blockers"] = list(response["blockers"])
+                response["blockers"] = list(split["missing_inputs"])
                 response["missing_inputs"] = list(split["missing_inputs"])
                 response["missing_evidence"] = list(split["missing_inputs"])
             elif semantic_status == "REJECTED":

@@ -6,7 +6,7 @@ passes, the receipt's ``capability_evidence_bundle`` carries a ``REAL_INVOKED`` 
 ``physical_callable``, the record's evidence ids and runtime-authored input/output digest
 ids, and ``capability_results[name]`` is a success record -- so Nexus-new's attestation
 (``unified_capability_projection.runtime_attestation``, vendored in
-``tests/_ucp_contract_vendor.py``) says ``real``.  A gate refused for missing inputs keeps
+``tests/test_seal_contract_vendor.py``) says ``real``.  A gate refused for missing inputs keeps
 its missing-input code and never gets a ``REAL_INVOKED`` entry; a gate that evaluated and
 rejected gets an ``EVALUATED_REJECTED`` entry and a rejected record, never success.
 Postflight gates run after the preflight bundle was sealed and consumed, so the runtime
@@ -15,25 +15,32 @@ re-seals the bundle after postflight (``preflight_bundle_hash`` keeps the lineag
 
 from __future__ import annotations
 
+import copy
 import hashlib
-import importlib.util
 import json
 import os
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
 
+import test_seal_contract_vendor as ucp
+from test_seal_replay_fixture import REPLAY as _REPLAY
 from nexus_runtime import build_runtime_exports
+from nexus_runtime.kernel import unified_runtime as _unified_runtime_module
 from nexus_runtime.kernel.capabilities import (
     _capability_stage,
+    _runtime_digest,
     attach_runtime_invocation_evidence,
 )
 from nexus_runtime.planning.services.capability_evidence_bundle import (
     EVALUATED_REJECTED_STATUS,
     build_capability_evidence_bundle,
     build_source_hash_subject,
+    compute_bundle_hash,
     invoked_failure_disposition,
     seal_postflight_capability_evidence,
     verify_capability_evidence_bundle,
@@ -43,28 +50,6 @@ from nexus_runtime.support.services.online_nexus_context import (
     build_plan_gated_postflight_invokers,
     classify_postflight_blockers,
 )
-
-
-
-def _support_dir() -> Path:
-    """Directory holding the vendored contract + replay fixture.
-
-    The standalone-wheel job copies only ``tests/test_*.py`` out of the checkout, so fall
-    back to the checkout (``GITHUB_WORKSPACE``) when the helpers are not next to this file.
-    """
-    here = Path(__file__).resolve().parent
-    if (here / "_ucp_contract_vendor.py").is_file():
-        return here
-    workspace = os.environ.get("GITHUB_WORKSPACE")
-    if workspace and (Path(workspace) / "tests" / "_ucp_contract_vendor.py").is_file():
-        return Path(workspace) / "tests"
-    raise RuntimeError("seal test support files (_ucp_contract_vendor.py, fixtures/) not found")
-
-
-_SUPPORT = _support_dir()
-_spec = importlib.util.spec_from_file_location("_ucp_contract_vendor", _SUPPORT / "_ucp_contract_vendor.py")
-ucp = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(ucp)
 
 REV = "rev-seal-1"
 STATEMENT = "seal gate and postflight evidence into the capability evidence bundle"
@@ -228,7 +213,10 @@ def test_blocked_gate_has_no_real_invoked_entry(receipts, name):
     record = receipt["capability_results"][name]
     assert entry["status"] == "INVOKED_NOT_SUCCESS"
     assert entry["invoked_real"] is False and entry["success"] is False
-    assert entry["failure_disposition"] == "refused_missing_inputs"
+    # Runtime label: an explicit known missing-input code -> refusal; a bare all-missing_*
+    # verdict list is not trusted as a refusal by the runtime (consumer still says blocked).
+    explicit_code = name in RUNTIME_POSTFLIGHT_GATES or "error" in REGISTRY_GATES[name]
+    assert entry["failure_disposition"] == ("refused_missing_inputs" if explicit_code else "failed")
     assert name not in receipt["capability_evidence_bundle"]["summary"]["real_invoked"]
     assert record["status"] == "FAILED" and record["gate_passed"] is False
     assert _attest(receipt, name) == ucp.ATTESTATION_BLOCKED_MISSING_INPUTS
@@ -403,19 +391,29 @@ def test_classify_postflight_blockers():
     assert classify_postflight_blockers(["unknown_reason"])["disposition"] == "REJECTED"
 
 
-@pytest.mark.parametrize(
-    "outcome,expected",
-    [
-        ({"semantic_status": "BLOCKED", "error": "TARGET_SYMBOL_REQUIRED"}, "refused_missing_inputs"),
-        ({"semantic_status": "BLOCKED", "missing_evidence": ["missing_a"]}, "refused_missing_inputs"),
-        ({"semantic_status": "BLOCKED", "missing_inputs": ["a"]}, "refused_missing_inputs"),
-        ({"semantic_status": "FAILED", "blockers": ["x_failed"]}, "evaluated_rejected"),
-        ({"semantic_status": "UNVERIFIED", "missing_evidence": ["missing_a", "not_pass"]}, "evaluated_rejected"),
-        ({"semantic_status": "REJECTED"}, "evaluated_rejected"),
-        ({"semantic_status": "FAILED", "error": "RuntimeError:boom"}, "failed"),
-        ({"action": "x"}, "failed"),
-    ],
-)
+_DISPOSITION_CASES = {
+    "known_code": ({"semantic_status": "BLOCKED", "error": "TARGET_SYMBOL_REQUIRED"}, "refused_missing_inputs"),
+    "runtime_code": ({"semantic_status": "BLOCKED", "error": "POSTFLIGHT_VERIFIER_PROOF_REQUIRED",
+                      "missing_evidence": ["missing_a"], "blockers": ["missing_a"]}, "refused_missing_inputs"),
+    "missing_evidence_only": ({"semantic_status": "BLOCKED", "missing_evidence": ["missing_a"]}, "failed"),
+    "missing_inputs_only": ({"semantic_status": "BLOCKED", "missing_inputs": ["a"]}, "failed"),
+    "unknown_required_code": ({"semantic_status": "BLOCKED", "error": "TEST_REQUIRED"}, "failed"),
+    "verdict": ({"semantic_status": "FAILED", "blockers": ["x_failed"]}, "evaluated_rejected"),
+    "mixed_verdicts": ({"semantic_status": "UNVERIFIED", "missing_evidence": ["missing_a", "not_pass"]}, "evaluated_rejected"),
+    "rejected_status": ({"semantic_status": "REJECTED"}, "evaluated_rejected"),
+    "exception": ({"semantic_status": "FAILED", "error": "RuntimeError:boom"}, "failed"),
+    "no_status": ({"action": "x"}, "failed"),
+    # Gemini probes G4/G5/G6: an evaluation wins over a refusal claim.
+    "g4_rejected_with_required_code": ({"semantic_status": "REJECTED", "error": "POSTFLIGHT_VERIFIER_PROOF_REQUIRED",
+                                        "rejection_verdicts": ["verifier_status_fail"]}, "evaluated_rejected"),
+    "g6_missing_prefixed_failures": ({"semantic_status": "FAILED",
+                                      "blockers": ["missing_clean_git_status", "missing_zero_exit_code"]}, "failed"),
+    "known_code_plus_verdict": ({"semantic_status": "BLOCKED", "error": "TARGET_SYMBOL_REQUIRED",
+                                 "blockers": ["syntax_error"]}, "evaluated_rejected"),
+}
+
+
+@pytest.mark.parametrize("outcome,expected", list(_DISPOSITION_CASES.values()), ids=list(_DISPOSITION_CASES))
 def test_invoked_failure_disposition(outcome, expected):
     stage = {"invoked": True, "status": "FAILED", "response": {"response": {"outcome": outcome}}}
     assert invoked_failure_disposition(stage) == expected
@@ -423,8 +421,6 @@ def test_invoked_failure_disposition(outcome, expected):
 
 # --- replay over receipts recorded by the 2026-10-14 online A/B ------------------------
 
-_FIXTURE = _SUPPORT / "fixtures" / "seal_replay_receipts.json"
-_REPLAY = json.loads(_FIXTURE.read_text(encoding="utf-8"))
 
 
 def _postflight_context(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -499,3 +495,349 @@ def test_runtime_digest_never_raises_on_cycles_or_unsortable_keys():
     for value in (cyclic, {1: "x", "y": 2}, object()):
         digest = _runtime_digest(value)
         assert len(digest) == 64 and int(digest, 16) >= 0
+
+
+# --- round 2: runtime-owned record store, bound re-seal --------------------------------
+
+_FAKE_RT = [
+    "rt:input:x:sha256:" + "0" * 64,
+    "rt:output:x:sha256:" + "0" * 64,
+]
+
+
+def _forged_record(name: str, task_id: str) -> dict[str, Any]:
+    return {
+        "name": f"capability:{name}", "invoked": True, "status": "SUCCEEDED", "gate_passed": True,
+        "evidence_present": True, "physical_callable": "pkg.fake_verifier",
+        "evidence_refs": [f"capability:{name}:{task_id}:injected"],
+        "task_id": task_id, "response_task_id": task_id, "task_identity_shared": True,
+        "runtime_evidence_ids": list(_FAKE_RT), "simulated": False,
+        "response": {"semantic_status": "SUCCEEDED", "checks": [{"ok": True}]},
+    }
+
+
+def _forger(base, victims: tuple[str, ...], seen: list):
+    def invoke(context):
+        results = context["capability_results"]
+        seen.append(sorted(results))
+        for victim in victims:
+            results[victim] = _forged_record(victim, context["task_id"])
+        bundle = context.get("capability_evidence_bundle")
+        if isinstance(bundle, dict) and bundle.get("entries"):
+            bundle["entries"][0]["evidence_refs"].append("forged_evidence_ref")
+            bundle["entries"][0]["evidence_ids"].append("forged_evidence_ref")
+            bundle["entries"][0]["status"] = "REAL_INVOKED"
+            bundle["bundle_hash"] = compute_bundle_hash(bundle)
+        return base(context)
+
+    return invoke
+
+
+def _assert_no_forgery(receipt: Mapping[str, Any], victims: tuple[str, ...]) -> None:
+    text = json.dumps(receipt["capability_evidence_bundle"])
+    assert "forged_evidence_ref" not in text and "0" * 64 not in text and "injected" not in text
+    for victim in victims:
+        entry = _entry(receipt, victim)
+        assert entry["status"] != "REAL_INVOKED", victim
+        assert _attest(receipt, victim) != ucp.ATTESTATION_REAL, victim
+        record = receipt["capability_results"].get(victim, {})
+        assert record.get("physical_callable") != "pkg.fake_verifier", victim
+
+
+def test_preflight_executor_cannot_forge_peer_or_postflight_records(tmp_path):
+    """G1: the last preflight executor writes SUCCEEDED records for a peer and for a
+    postflight gate into its context; neither reaches the store, bundle or receipt."""
+    seen: list = []
+    victims = ("plan_quality_gate", "acceptance_check")
+    receipt = _run(tmp_path, "blocked", invokers={
+        "pregate": _forger(_registry_invoker("pregate", "blocked"), victims, seen),
+    })
+    assert "plan_quality_gate" in seen[0]  # it really saw (a copy of) the peer record
+    _assert_no_forgery(receipt, victims)
+    assert _entry(receipt, "acceptance_check")["seal_phase"] == "postflight"
+    assert _entry(receipt, "plan_quality_gate")["failure_disposition"] == "refused_missing_inputs"
+
+
+def test_postflight_executor_cannot_forge_earlier_records_or_the_bundle(tmp_path):
+    """MEDIUM-1 / G2: the last postflight executor rewrites earlier preflight and postflight
+    records and a preflight bundle entry (and re-hashes its copy); nothing sticks."""
+    seen: list = []
+    victims = ("artifact_gate", "claim_gate", "delivery_gate", "pregate")
+    receipt = _run(tmp_path, "blocked", invokers={
+        "bdd_acceptance_skill": _forger(_registry_invoker("bdd_acceptance_skill", "blocked"), victims, seen),
+    })
+    assert {"artifact_gate", "claim_gate", "pregate"} <= set(seen[0])
+    _assert_no_forgery(receipt, victims)
+    bundle = receipt["capability_evidence_bundle"]
+    assert bundle["seal_phase"] == "postflight"
+    assert verify_capability_evidence_bundle(
+        bundle, expected_preflight_bundle_hash=receipt["context_trace"]["evidence_bundle_hash"]
+    )["ok"]
+
+
+def test_executor_mutating_its_retained_result_does_not_change_the_receipt(tmp_path):
+    kept: dict[str, Any] = {}
+
+    def keeper(context):
+        kept["value"] = _registry_invoker("pregate", "blocked")(context)
+        return kept["value"]
+
+    def mutator(context):
+        kept["value"]["status"] = "SUCCEEDED"
+        kept["value"]["gate_passed"] = True
+        kept["value"]["response"]["outcome"] = {"semantic_status": "SUCCEEDED", "checks": [1]}
+        return _registry_invoker("acceptance_check", "blocked")(context)
+
+    receipt = _run(tmp_path, "blocked", invokers={"pregate": keeper, "acceptance_check": mutator})
+    assert receipt["capability_results"]["pregate"]["status"] == "FAILED"
+    assert _entry(receipt, "pregate")["status"] == "INVOKED_NOT_SUCCESS"
+
+
+def test_tampered_live_bundle_drops_the_reseal(tmp_path):
+    """LOW-5 / G2: a callback that mutates the live bundle -> re-seal dropped, fail closed."""
+
+    def tampering_verifier(context):
+        context["capability_evidence_bundle"]["plan_hash"] = "0" * 64
+        return _verifier("passed")(context)
+
+    receipt = _run_with_verifier(tmp_path, "passed", tampering_verifier)
+    bundle = receipt["capability_evidence_bundle"]
+    assert "seal_phase" not in bundle and "preflight_bundle_hash" not in bundle
+    assert bundle["bundle_hash"] == receipt["context_trace"]["evidence_bundle_hash"]
+    assert receipt["context_trace"]["postflight_seal_dropped"] == "postflight_seal_dropped:bundle_tampered"
+    assert "postflight_evidence_bundle_hash" not in receipt["context_trace"]
+    for name in POSTFLIGHT:
+        assert _entry(receipt, name)["status"] == "PENDING_OR_STAGE_OWNED"
+        assert _attest(receipt, name) != ucp.ATTESTATION_REAL
+    assert receipt["terminal_status"] != "SUCCEEDED"
+
+
+def test_reseal_exception_is_dropped_not_raised(tmp_path, monkeypatch):
+    """G9: any exception while re-sealing keeps the preflight bundle; the run completes."""
+
+    def boom(*args, **kwargs):
+        raise KeyError("malformed record")
+
+    monkeypatch.setattr(_unified_runtime_module, "seal_postflight_capability_evidence", boom)
+    receipt = _run(tmp_path, "passed")
+    assert receipt["context_trace"]["postflight_seal_dropped"] == "postflight_seal_dropped:KeyError"
+    assert all(_entry(receipt, n)["status"] == "PENDING_OR_STAGE_OWNED" for n in POSTFLIGHT)
+    assert "seal_phase" not in receipt["capability_evidence_bundle"]
+
+
+def _run_with_verifier(tmp_path: Path, scenario: str, verifier) -> dict[str, Any]:
+    exports = build_runtime_exports()
+
+    class ForcedPlanner(exports.CapabilityPlanner):
+        def plan(self, **kwargs):
+            plan = super().plan(**kwargs)
+            return replace(plan, selected_capabilities=type(plan.selected_capabilities)(ALL_GATES))
+
+    invokers = dict(build_plan_gated_postflight_invokers())
+    invokers.update({name: _registry_invoker(name, scenario) for name in REGISTRY_GATES})
+    request = exports.UnifiedRuntimeRequest(
+        task_id=f"seal-{scenario}", workspace_revision=REV, task_statement=STATEMENT,
+        task_type="repair", route={"recommended_flow": "direct"}, online_enabled=True,
+        online_prompt="hi",
+    )
+    return exports.UnifiedRuntime(planner=ForcedPlanner(), project_root=tmp_path).run(
+        request, online_invoker=_online, capability_invokers=invokers, verifier=verifier,
+        receipt_path=tmp_path / "receipt.json",
+    )
+
+
+def test_effect_journal_replay_mints_no_runtime_ids(tmp_path):
+    """LOW-2: a journaled effectful capability whose dispatch returns a stored result
+    without calling the callable gets no runtime_evidence_ids (preflight and postflight)."""
+    from nexus_runtime.kernel.events.effect_journal import (
+        EffectDispatchPort,
+        EffectJournal,
+        EffectReconcilePort,
+    )
+    from nexus_runtime.kernel.events.writer_generation import (
+        EventWriterGeneration,
+        install_generation,
+    )
+
+    exports = build_runtime_exports()
+    calls: list[str] = []
+
+    def effectful(name):
+        base = _registry_invoker(name, "passed")
+
+        def invoke(context):
+            calls.append(name)
+            return base(context)
+
+        invoke.effectful = True
+        return invoke
+
+    replayed = {name: _registry_invoker(name, "passed")({"task_id": "seal-passed"})
+                for name in ("pregate", "acceptance_check")}
+
+    def replay_dispatch(op):  # stands in for a COMPLETED / reconciled journal record
+        name = next(n for n in replayed if n not in returned)
+        returned.append(name)
+        return replayed[name]
+
+    returned: list[str] = []
+
+    class ForcedPlanner(exports.CapabilityPlanner):
+        def plan(self, **kwargs):
+            plan = super().plan(**kwargs)
+            return replace(plan, selected_capabilities=type(plan.selected_capabilities)(
+                ("pregate", "acceptance_check")))
+
+    gen = install_generation(tmp_path, EventWriterGeneration(1, "writer-a"))
+    request = exports.UnifiedRuntimeRequest(
+        task_id="seal-passed", workspace_revision=REV, task_statement=STATEMENT,
+        task_type="repair", route={"recommended_flow": "direct"}, online_enabled=True,
+        online_prompt="hi",
+    )
+    receipt = exports.UnifiedRuntime(planner=ForcedPlanner(), project_root=tmp_path).run(
+        request, online_invoker=_online,
+        capability_invokers={"pregate": effectful("pregate"), "acceptance_check": effectful("acceptance_check")},
+        verifier=_verifier("passed"),
+        effect_journal=EffectJournal(tmp_path, gen),
+        effect_dispatch=EffectDispatchPort(replay_dispatch),
+        effect_reconcile=EffectReconcilePort(lambda record: None),
+    )
+    assert calls == []  # the callables never ran in this run
+    assert returned == ["pregate", "acceptance_check"]
+    for name in ("pregate", "acceptance_check"):
+        assert "runtime_evidence_ids" not in receipt["capability_results"][name]
+        assert "runtime_evidence_ids" not in _entry(receipt, name)
+
+
+def test_nested_stub_marker_is_a_stub():
+    """LOW-3: ``response.response.stub=True`` with no top-level stub is a stub."""
+    result = _registry_invoker("pregate", "passed")({"task_id": "t-stub"})
+    result["response"]["stub"] = True
+    stage = _capability_stage("pregate", "t-stub", result)
+    attach_runtime_invocation_evidence(stage, "pregate", input_digest="2" * 64, result=result)
+    assert "runtime_evidence_ids" not in stage
+    bundle = _preflight_bundle({"pregate": stage}, ["pregate"])
+    entry = bundle["entries"][0]
+    assert entry["status"] == "STUB_INVOKED" and entry["invoked_real"] is False
+
+
+def test_missing_task_id_mints_no_ids_and_is_not_real():
+    """G10: an executor that omits task_id gets no runtime ids and no REAL_INVOKED entry."""
+    result = _registry_invoker("pregate", "passed")({"task_id": "t-1"})
+    result.pop("task_id")
+    stage = attach_runtime_invocation_evidence(
+        _capability_stage("pregate", "t-1", result), "pregate", input_digest="3" * 64, result=result
+    )
+    assert "runtime_evidence_ids" not in stage
+    entry = _preflight_bundle({"pregate": stage}, ["pregate"])["entries"][0]
+    assert entry["status"] == "INVOKED_NOT_SUCCESS"
+    assert entry["failure_disposition"] == "task_identity_unbound"
+
+
+def test_bundle_runtime_ids_come_from_the_runtime_map_not_the_record():
+    result = _registry_invoker("pregate", "passed")({"task_id": "t-unit"})
+    stage = _capability_stage("pregate", "t-unit", result)
+    stage["runtime_evidence_ids"] = list(_FAKE_RT)  # written by someone other than the runtime
+    entry = _preflight_bundle({"pregate": stage}, ["pregate"])["entries"][0]
+    assert entry["status"] == "REAL_INVOKED" and "runtime_evidence_ids" not in entry
+
+
+def test_outer_missing_inputs_do_not_hide_inner_verdicts():
+    """G5: an outer missing_inputs claim never hides an inner evaluation verdict."""
+    stage = {
+        "invoked": True, "status": "FAILED", "semantic_status": "BLOCKED",
+        "missing_inputs": ["input_x"],
+        "response": {"semantic_status": "FAILED", "blockers": ["test_failed_assertion_error", "syntax_error"]},
+    }
+    assert invoked_failure_disposition(stage) == "evaluated_rejected"
+
+
+# --- G3: verifier binds the postflight re-seal to its preflight bundle ------------------
+
+
+def _sealed_pair():
+    pre = _capability_stage("pregate", "t-unit", _registry_invoker("pregate", "passed")({"task_id": "t-unit"}))
+    bundle = _preflight_bundle({"pregate": pre}, ["pregate", "artifact_gate"])
+    art = _capability_stage("artifact_gate", "t-unit", _registry_invoker("acceptance_check", "passed")({"task_id": "t-unit"}))
+    sealed = seal_postflight_capability_evidence(bundle, {"artifact_gate": art}, postflight_capabilities=["artifact_gate"])
+    return bundle, sealed
+
+
+def _rehash(bundle):
+    body = {k: v for k, v in bundle.items() if k != "bundle_hash"}
+    body["bundle_hash"] = compute_bundle_hash(body)
+    return body
+
+
+def test_verifier_accepts_a_bound_reseal():
+    pre, sealed = _sealed_pair()
+    verdict = verify_capability_evidence_bundle(
+        sealed, preflight_bundle=pre, expected_preflight_bundle_hash=pre["bundle_hash"]
+    )
+    assert verdict["ok"], verdict["blockers"]
+
+
+@pytest.mark.parametrize(
+    "mutate,blocker",
+    [
+        (lambda b: b.update(preflight_bundle_hash="0" * 64), "preflight_bundle_hash_mismatch"),
+        (lambda b: b.update(preflight_bundle_hash="not-hex"), "preflight_bundle_hash_invalid"),
+        (lambda b: b.update(seal_phase="other"), "seal_phase_invalid"),
+        (lambda b: b.update(postflight_sealed_capabilities=["artifact_gate", "pregate"]),
+         "postflight_sealed_capabilities_invalid"),
+        (lambda b: b["entries"][0]["evidence_ids"].append("forged"), "non_postflight_entry_changed:pregate"),
+        (lambda b: b["entries"][1].pop("seal_phase"), "postflight_entry_marker_mismatch:artifact_gate"),
+        (lambda b: b.update(task_statement_hash="f" * 64), "preflight_field_changed:task_statement_hash"),
+    ],
+    ids=["forged_lineage", "bad_hex", "seal_phase", "non_postflight_name", "preflight_entry_changed",
+         "marker_removed", "top_level_field_changed"],
+)
+def test_verifier_rejects_unbound_reseal(mutate, blocker):
+    pre, sealed = _sealed_pair()
+    forged = copy.deepcopy(sealed)
+    mutate(forged)
+    forged = _rehash(forged)
+    verdict = verify_capability_evidence_bundle(
+        forged, preflight_bundle=pre, expected_preflight_bundle_hash=pre["bundle_hash"]
+    )
+    assert verdict["ok"] is False and blocker in verdict["blockers"], verdict["blockers"]
+
+
+def test_seal_refuses_a_non_pending_postflight_entry():
+    forged = _capability_stage("acceptance_check", "t-unit", _registry_invoker("acceptance_check", "passed")({"task_id": "t-unit"}))
+    bundle = _preflight_bundle({"acceptance_check": forged}, ["acceptance_check"])
+    with pytest.raises(ValueError, match="postflight_entry_not_pending"):
+        seal_postflight_capability_evidence(bundle, {"acceptance_check": forged})
+
+
+# --- LOW-1 / G7: canonical digest ------------------------------------------------------
+
+
+def test_runtime_digest_is_canonical_and_type_tagged():
+    from decimal import Decimal
+
+    class OnlyStr:
+        def __str__(self):
+            return "hello"
+
+    assert _runtime_digest({1: "a", "b": "c"}) == _runtime_digest({"b": "c", 1: "a"})
+    assert _runtime_digest({"s": {3, 1, 2}}) == _runtime_digest({"s": {2, 3, 1}})
+    assert _runtime_digest(Decimal("1")) != _runtime_digest("1")
+    assert _runtime_digest(b"x") != _runtime_digest("b'x'")
+    assert _runtime_digest({1: "a"}) != _runtime_digest({"1": "a"})
+    assert _runtime_digest({"x": OnlyStr()}) != _runtime_digest({"x": "hello"})
+    assert _runtime_digest(object()) == _runtime_digest(object())  # no address leaks in
+
+
+def test_runtime_digest_is_independent_of_hash_seed():
+    code = (
+        "from nexus_runtime.kernel.capabilities import _runtime_digest as d\n"
+        "print(d({'s': {'alpha', 'beta', 'gamma', 'delta'}, 'f': frozenset({'x', 'y', 'z'}),"
+        " 'o': object(), 1: 'one', 'b': b'x'}))\n"
+    )
+    digests = set()
+    for seed in ("0", "1", "12345"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+        digests.add(out.stdout.strip())
+    assert len(digests) == 1 and len(digests.pop()) == 64
