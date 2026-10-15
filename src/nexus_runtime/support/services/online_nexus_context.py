@@ -959,6 +959,57 @@ def evaluate_postflight_gate(
     }
 
 
+# Postflight blockers that mean "a proof input was not supplied" (the gate refused to
+# evaluate), mapped to a ``missing_*`` code.  Every other blocker is an evaluation verdict
+# (the gate ran over supplied proof and rejected it).
+POSTFLIGHT_MISSING_INPUT_CODE = "POSTFLIGHT_VERIFIER_PROOF_REQUIRED"
+_POSTFLIGHT_MISSING_INPUT_BLOCKERS = {
+    "verifier_not_invoked": "missing_verifier_invocation",
+    "missing_verifier_status": "missing_verifier_status",
+    "missing_verifier_task_id": "missing_verifier_task_id",
+    "missing_source_hash": "missing_source_hash",
+    "missing_verifier_source_hash": "missing_verifier_source_hash",
+    "missing_verifier_artifact": "missing_verifier_artifact",
+    "missing_artifact_or_candidate_hash": "missing_artifact_or_candidate_hash",
+    "online_not_invoked": "missing_online_or_local_invocation",
+    "claim_missing_source_or_verifier": "missing_claim_source_or_verifier",
+    "claim_missing_verifier_artifact": "missing_verifier_artifact",
+    "delivery_missing_applied_or_candidate": "missing_applied_or_candidate_hash",
+    "delivery_bundle_hash_not_artifact": "missing_delivery_artifact",
+    "delivery_missing_verifier": "missing_verifier_status",
+    "delivery_missing_verifier_artifact": "missing_verifier_artifact",
+}
+
+
+def classify_postflight_blockers(blockers: list[str] | tuple[str, ...]) -> dict[str, Any]:
+    """Split postflight blockers into missing proof inputs and evaluation verdicts.
+
+    ``verifier_gate_passed_false`` is a verdict only when the verifier was invoked; next to
+    ``verifier_not_invoked`` it only restates the missing invocation.  Unknown blockers
+    are verdicts (fail closed: never success, never "just missing").
+    """
+    items = [str(b) for b in blockers or ()]
+    not_invoked = "verifier_not_invoked" in items
+    missing: list[str] = []
+    verdicts: list[str] = []
+    for item in items:
+        if item in _POSTFLIGHT_MISSING_INPUT_BLOCKERS:
+            code = _POSTFLIGHT_MISSING_INPUT_BLOCKERS[item]
+            if code not in missing:
+                missing.append(code)
+        elif item == "verifier_gate_passed_false" and not_invoked:
+            continue
+        elif item not in verdicts:
+            verdicts.append(item)
+    if verdicts:
+        disposition = "REJECTED"
+    elif missing:
+        disposition = "BLOCKED"
+    else:
+        disposition = "VERIFIED"
+    return {"disposition": disposition, "missing_inputs": missing, "verdicts": verdicts}
+
+
 def build_plan_gated_postflight_invokers() -> dict[str, Callable[[Mapping[str, Any]], dict[str, Any]]]:
     """Deterministic artifact/claim/delivery invokers — only run if plan selects them.
 
@@ -973,15 +1024,34 @@ def build_plan_gated_postflight_invokers() -> dict[str, Callable[[Mapping[str, A
             gate_passed = bool(verdict.get("gate_passed"))
             from nexus_runtime.planning.services.capability_evidence_bundle import extract_bounded_consumer_payload
 
+            split = classify_postflight_blockers(list(verdict.get("blockers") or []))
+            # VERIFIED: passed.  REJECTED: evaluated supplied proof and rejected it
+            # (verdict blockers).  BLOCKED: refused, a proof input was not supplied
+            # (explicit missing-input code + ``missing_evidence``).
+            semantic_status = "VERIFIED" if gate_passed else (
+                "REJECTED" if split["disposition"] == "REJECTED" else "BLOCKED"
+            )
             response = {
-                "status": "PASS" if gate_passed else "BLOCK",
+                "status": "PASS" if gate_passed else (
+                    "REJECT" if semantic_status == "REJECTED" else "BLOCK"
+                ),
                 "action": "evaluate_postflight_gate",
-                "semantic_status": "VERIFIED" if gate_passed else "BLOCKED",
+                "semantic_status": semantic_status,
                 "gate": name,
                 "blockers": list(verdict.get("blockers") or []),
                 "proof": dict(verdict.get("proof") or {}),
                 "public_claim_allowed": False,
             }
+            if semantic_status == "BLOCKED":
+                # Refusal: verdict lists carry only the normalized missing_* codes; the
+                # gate's raw blocker names stay in ``gate_blockers`` and the evidence refs.
+                response["error"] = POSTFLIGHT_MISSING_INPUT_CODE
+                response["gate_blockers"] = list(response["blockers"])
+                response["blockers"] = list(split["missing_inputs"])
+                response["missing_inputs"] = list(split["missing_inputs"])
+                response["missing_evidence"] = list(split["missing_inputs"])
+            elif semantic_status == "REJECTED":
+                response["rejection_verdicts"] = list(split["verdicts"])
             consumer_payload = extract_bounded_consumer_payload(
                 capability=name,
                 response=response,
@@ -993,7 +1063,7 @@ def build_plan_gated_postflight_invokers() -> dict[str, Callable[[Mapping[str, A
                 "gate_passed": gate_passed,
                 "outcome_contributed": gate_passed,
                 "status": "SUCCEEDED" if gate_passed else "FAILED",
-                "semantic_status": "VERIFIED" if gate_passed else "BLOCKED",
+                "semantic_status": semantic_status,
                 "evidence_refs": [
                     f"capability:{name}:{task_id}:postflight",
                     *(

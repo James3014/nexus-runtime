@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import copy
+import dataclasses as _dataclasses
+import datetime as _dt
+import decimal as _decimal
+import enum as _enum
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePath as _PurePath
 from typing import Any, Callable, Mapping
 
 from .context import KernelContext
@@ -122,6 +127,170 @@ def _capability_stage(
     )
 
 
+RUNTIME_INPUT_EVIDENCE_PREFIX = "rt:input"
+RUNTIME_OUTPUT_EVIDENCE_PREFIX = "rt:output"
+POSTFLIGHT_CAPABILITY_NAMES = frozenset(
+    {"acceptance_check", "artifact_gate", "bdd_acceptance_skill", "claim_gate", "delivery_gate"}
+)
+_CANONICAL_MAX_DEPTH = 64
+
+
+def _canonical_key(key: Any) -> str:
+    if isinstance(key, str):
+        return key
+    # Non-string keys are tagged with their type so ``1`` and ``"1"`` never collide.
+    return f"\x00{type(key).__name__}:" + json.dumps(
+        _canonical(key, 0, set()), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+
+
+def _canonical(value: Any, depth: int, stack: set[int]) -> Any:
+    """Deterministic, type-tagged JSON form (determinism over fidelity; never a repr)."""
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, int):
+        return value if type(value) is int else {"__int__": type(value).__name__, "value": int(value)}
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return {"__float__": repr(value)}
+        return value
+    if depth > _CANONICAL_MAX_DEPTH:
+        return {"__depth_exceeded__": True}
+    if isinstance(value, (bytes, bytearray)):
+        return {"__bytes__": bytes(value).hex()}
+    if isinstance(value, _decimal.Decimal):
+        return {"__decimal__": str(value)}
+    if isinstance(value, _enum.Enum):
+        return {"__enum__": f"{type(value).__name__}.{value.name}"}
+    if isinstance(value, _PurePath):
+        return {"__path__": value.as_posix()}
+    if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
+        return {"__datetime__": value.isoformat()}
+    marker = id(value)
+    if marker in stack:
+        return {"__cycle__": True}
+    stack.add(marker)
+    try:
+        if isinstance(value, Mapping):
+            items = [(_canonical_key(k), _canonical(v, depth + 1, stack)) for k, v in value.items()]
+            items.sort(key=lambda kv: kv[0])
+            out: dict[str, Any] = {}
+            for key, item in items:
+                out[key] = item
+            return out
+        if isinstance(value, (list, tuple)):
+            return [_canonical(item, depth + 1, stack) for item in value]
+        if isinstance(value, (set, frozenset)):
+            members = [_canonical(item, depth + 1, stack) for item in value]
+            members.sort(key=lambda m: json.dumps(m, sort_keys=True, ensure_ascii=False))
+            return {"__set__": members}
+        if _dataclasses.is_dataclass(value) and not isinstance(value, type):
+            return {
+                "__dataclass__": type(value).__name__,
+                "fields": {
+                    f.name: _canonical(getattr(value, f.name, None), depth + 1, stack)
+                    for f in _dataclasses.fields(value)
+                },
+            }
+        return {"__unstable__": type(value).__name__}
+    finally:
+        stack.discard(marker)
+
+
+def _runtime_digest(value: Any) -> str:
+    """sha256 over a deterministic, type-tagged canonical JSON form; never raises.
+
+    Sets are sorted, non-string keys are type-tagged and sorted, bytes / Decimal / enums /
+    paths / datetimes / dataclasses are tagged, cycles and over-deep nesting are marked,
+    and any other object becomes ``{"__unstable__": <type name>}`` (never its repr, which
+    can embed memory addresses).  Independent of ``PYTHONHASHSEED`` and insertion order.
+    """
+    try:
+        text = json.dumps(
+            _canonical(value, 0, set()), sort_keys=True, ensure_ascii=False,
+            separators=(",", ":"), allow_nan=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - must never raise
+        text = json.dumps({"__digest_error__": type(exc).__name__, "type": type(value).__name__})
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+
+def _runtime_snapshot(value: Any) -> Any:
+    """Runtime-owned deep copy (canonical JSON round trip when deepcopy fails)."""
+    try:
+        return copy.deepcopy(value)
+    except Exception:  # noqa: BLE001 - non-copyable members
+        try:
+            return json.loads(json.dumps(_canonical(value, 0, set()), allow_nan=True))
+        except Exception:  # noqa: BLE001 - never raise; never share the original
+            return {"__unsnapshotable__": type(value).__name__}
+
+
+def _stub_marked(stage: Mapping[str, Any]) -> bool:
+    """A stub marker at any ``response`` / ``outcome`` nesting level (bounded)."""
+    frontier: list[Any] = [stage]
+    for _ in range(_CANONICAL_MAX_DEPTH):
+        nxt: list[Any] = []
+        for item in frontier:
+            if isinstance(item, Mapping):
+                if item.get("stub") is True or str(item.get("stub") or "").strip().lower() in {"true", "1", "yes"}:
+                    return True
+                nxt.extend(item.get(key) for key in ("response", "outcome"))
+        if not nxt:
+            return False
+        frontier = nxt
+    return True  # unexplored nesting: fail closed
+
+
+def runtime_invocation_evidence_ids(
+    stage: Mapping[str, Any],
+    name: str,
+    *,
+    input_digest: str,
+    result: Any,
+) -> list[str]:
+    """Runtime-authored evidence ids for a stage whose callable physically ran (else [])."""
+    task_id = str(stage.get("task_id") or "")
+    response_task_id = str(stage.get("response_task_id") or "")
+    if (
+        not stage.get("invoked")
+        or stage.get("skipped")
+        or _stub_marked(stage)
+        or not str(stage.get("physical_callable") or "").strip()
+        or not task_id
+        or response_task_id != task_id  # explicit, matching task_id required
+        or not input_digest
+    ):
+        return []
+    return [
+        f"{RUNTIME_INPUT_EVIDENCE_PREFIX}:{name}:sha256:{input_digest}",
+        f"{RUNTIME_OUTPUT_EVIDENCE_PREFIX}:{name}:sha256:{_runtime_digest(result)}",
+    ]
+
+
+def attach_runtime_invocation_evidence(
+    stage: dict[str, Any],
+    name: str,
+    *,
+    input_digest: str,
+    result: Any,
+) -> dict[str, Any]:
+    """Stamp runtime-authored evidence ids on a stage whose callable physically ran.
+
+    ``runtime_evidence_ids`` = [``rt:input:<name>:sha256:<digest of the context the
+    callable consumed>``, ``rt:output:<name>:sha256:<digest of its raw result>``].  Only
+    stamped when the stage is invoked, not skipped, carries no stub marker at any nesting
+    level, names a ``physical_callable``, declares an explicit ``task_id`` equal to the
+    runtime's and an input digest exists (the callable executed in this run); otherwise
+    the stage is returned unchanged.  The record copy is informational: bundle entries take
+    the ids from the runtime-held map, never from the record.
+    """
+    ids = runtime_invocation_evidence_ids(stage, name, input_digest=input_digest, result=result)
+    if ids:
+        stage["runtime_evidence_ids"] = ids
+    return stage
+
+
 def materialize_selected_capability_evidence(
     ctx: KernelContext,
     *, planner_output: Mapping[str, Any], selected_capabilities: list[str],
@@ -130,40 +299,69 @@ def materialize_selected_capability_evidence(
     capability_invokers: Mapping[str, Any] | None,
     capability_context: Mapping[str, Any] | None = None,
     codeintel: Mapping[str, Any] | None = None,
+    invocation_executed: Callable[[str], bool] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-    """Execute selected preflight capabilities and seal their evidence."""
+    """Execute selected preflight capabilities and seal their evidence.
+
+    Runtime-owned record store: every executor receives a deep copy of the records so far
+    (never the store itself); after each invocation the runtime stores a deep-copy snapshot
+    of the stage keyed by the capability it actually invoked (anything an executor adds
+    under other keys is ignored).  The bundle is built only from that store, and
+    ``runtime_evidence_ids`` come from the runtime-held map.  ``invocation_executed(name)``
+    (optional) says whether the callable really executed in this run (e.g. not an
+    effect-journal replay); without it, a callable that returned counts as executed.
+    """
     selected = [str(name) for name in selected_capabilities]
-    postflight_names = {
-        "acceptance_check", "artifact_gate", "bdd_acceptance_skill", "claim_gate", "delivery_gate",
-    }
+    postflight_names = POSTFLIGHT_CAPABILITY_NAMES
     local_stage_capabilities = ctx.LOCAL_STAGE_CAPABILITIES
     ensure = ctx.ensure_selected_coverage_invokers
     invokers = ensure(selected, capability_invokers, codeintel=dict(codeintel or {}))
     results: dict[str, dict[str, Any]] = {}
+    runtime_ids: dict[str, list[str]] = {}
     context = dict(capability_context or {})
     context.update({"schema": REQUEST_SCHEMA, "task_id": task_id,
                     "workspace_revision": workspace_revision, "task_statement": task_statement,
-                    "planner": dict(planner_output), "capability_results": results})
+                    "planner": dict(planner_output)})
     for name, invoker in invokers.items():
         if name in local_stage_capabilities or name in postflight_names or name not in set(selected):
             continue
+        call_context = dict(context)
+        call_context["capability_results"] = _runtime_snapshot(results)
+        if "capability_evidence_bundle" in call_context:
+            call_context["capability_evidence_bundle"] = _runtime_snapshot(
+                call_context["capability_evidence_bundle"]
+            )
+        input_digest = ""
         if not callable(invoker):
             value: Any = {"task_id": task_id, "invoked": False, "gate_passed": False,
                           "evidence_refs": [f"capability:{name}:{task_id}:not_callable"]}
         else:
+            input_digest = _runtime_digest(call_context)
             try:
-                value = invoker(context)
+                value = invoker(call_context)
             except Exception as exc:
+                input_digest = ""
                 value = {"task_id": task_id, "invoked": True, "gate_passed": False,
                          "evidence_refs": [f"capability:{name}:{task_id}:exception"],
                          "error": f"{exc.__class__.__name__}:{exc}"}
-        results[name] = _capability_stage(name, task_id, value)
+            if input_digest and invocation_executed is not None and not invocation_executed(name):
+                input_digest = ""
+        stage = _capability_stage(name, task_id, value)
+        ids = runtime_invocation_evidence_ids(stage, name, input_digest=input_digest, result=value)
+        if ids:
+            stage["runtime_evidence_ids"] = list(ids)
+            runtime_ids[name] = list(ids)
+        results[name] = _runtime_snapshot(stage)
+    # Postflight capabilities never have a record before the postflight phase runs.
+    for name in postflight_names:
+        results.pop(name, None)
     bundle = ctx.build_capability_evidence_bundle(
         task_id=task_id, workspace_revision=workspace_revision,
         task_statement=task_statement, plan_payload=dict(planner_output), plan_hash=plan_hash,
-        planner_decision_id=planner_decision_id, capability_results=results,
+        planner_decision_id=planner_decision_id, capability_results=_runtime_snapshot(results),
         selected_capabilities=selected,
         source_hash=hashlib.sha256(f"{workspace_revision}:{task_statement}".encode()).hexdigest(),
+        runtime_evidence_ids=runtime_ids,
     )
     return results, bundle
 

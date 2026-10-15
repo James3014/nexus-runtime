@@ -1,13 +1,13 @@
 # HANDOFF
 
-更新：2026-10-13 · by Claude · HEAD `23df307`（分支 claude/workforce-default-agy-38：#191 / Nexus-new#1932）
+更新：2026-10-15 · by Claude · HEAD `f72e0f7`（分支 feat/seal-gate-evidence：#212）
 <!-- 規則見 AGENTS.md「Handoff」。上限 150 行；過期內容移到 docs/archive/HANDOFF-YYYY-MM.md。 -->
 
 ## ▶ 下一步（只放一件，必須帶 #Issue）
-#191 合併 Workforce 預設切換：fast_bounded_implementation 改用 agy_flash_38；3.6、3.7 標為 UNAVAILABLE，原因是 Agy 1.3.4 不再提供；fallback 明確設為 null，失敗即 fail closed，validator 已允許。合併後，Nexus-new 要先把 runtime pin 升到這個 commit，再同步 yaml。
+#212 合併「gate/postflight 證據封進 capability evidence bundle」：postflight 跑完後重新封存 bundle（保留 preflight_bundle_hash），閘門真的跑過且通過才給 REAL_INVOKED，評估後拒絕給 EVALUATED_REJECTED，缺輸入維持缺輸入代碼。第二輪（審查後）：執行器只拿到紀錄與 bundle 的複本，runtime 自己保存紀錄並只從中封存，重新封存綁定 preflight bundle（被竄改或失敗就放棄、保持 PENDING）。注意：Online 證據區塊現在會出現 EVALUATED_REJECTED，且每個實際執行過的 entry 都帶 runtime_evidence_ids（bundle_hash 會變），Nexus-new PR-4 的 strict-lane 凍結要處理。合併後 Nexus-new 要把 runtime pin 升到這個 commit（依 nexus-dependency-anchor 流程），Nexus-new #2212 的 attestation 才會把這些 gate 標成 real。
 
 ## 進行中
-- #179、#180、#181 已合併（f9adb20，PR #182）。Nexus-new 有兩處會 fail closed，尚待處理：canary helper 沒有帶模型，gateway 的 online_command 帶了多個參數。
+- #191 已合併（6782e38，PR #192）。#179、#180、#181 已合併（f9adb20，PR #182）。Nexus-new 有兩處會 fail closed，尚待處理：canary helper 沒有帶模型，gateway 的 online_command 帶了多個參數。
 - Nexus-new#1996：自動更新模型版本的機制建置中。
 
 ## 待確認（沒有 Issue 號）
