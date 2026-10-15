@@ -531,6 +531,197 @@ POSTFLIGHT_CAPABILITIES = (
 POSTFLIGHT_SEAL_PHASE = "postflight"
 
 
+# --- consumer visibility (Nexus-new #2273 follow-up, CONTRACT_B) --------------------------
+# Per-entry flag inside the sealed (hash-covered) entry.  The entry carries
+# ``consumer_visibility="receipt_only"`` or no key at all (absent = today's behaviour,
+# "prompt").  A ``receipt_only`` entry stays in the bundle, receipts, summary and
+# attestation unchanged, but never reaches the model context (``_evidence_projection``) or a
+# consumption proof; the compact ``[NEXUS CAPABILITY EVIDENCE]`` view renders it as the
+# pre-PR-4 placeholder.  Readers treat any other value on an entry as ``receipt_only``
+# (fail closed).  Sources: the capability record's own ``consumer_visibility`` (exactly
+# ``"receipt_only"``; anything else on a record is ignored) or the host-declared
+# receipt-only capability names.
+CONSUMER_VISIBILITY_FIELD = "consumer_visibility"
+CONSUMER_VISIBILITY_PROMPT = "prompt"
+CONSUMER_VISIBILITY_RECEIPT_ONLY = "receipt_only"
+# Governance gates/sensors whose evidence is for receipts, not for the model (wiring PR-4
+# fed capabilities): planner names plus executor-registry aliases.  The declaration a host
+# passes (route ``receipt_only_capabilities``) when it wants them receipt-only; the runtime
+# also falls back to it when that route value is unreadable (fail closed).
+RECEIPT_ONLY_CAPABILITIES = frozenset({
+    "pregate",
+    "harness_preflight_sensor",
+    "plan_quality_gate",
+    "mempalace_gate",
+    "mempalace",
+    "memory",
+    "codeintel",
+})
+# Request ``route`` key through which the host names receipt-only capabilities (a list of
+# capability names).  Absent -> none by declaration (records may still opt in).
+RECEIPT_ONLY_ROUTE_KEY = "receipt_only_capabilities"
+
+
+
+def resolve_receipt_only_capabilities(route: Any) -> tuple[frozenset[str], dict[str, Any] | None]:
+    """The receipt-only capability names a host request declares, failing closed.
+
+    Returns ``(names, invalid)``:
+    * route not a mapping -> ``RECEIPT_ONLY_CAPABILITIES`` + ``route_not_a_mapping``;
+    * key absent / None -> no names (records may still opt in themselves);
+    * list / tuple of non-blank strings -> exactly those names;
+    * list / tuple with invalid items -> its valid names UNION ``RECEIPT_ONLY_CAPABILITIES``
+      + ``invalid_items``;
+    * any other value -> ``RECEIPT_ONLY_CAPABILITIES`` + ``not_a_list``.
+    Unreadable input never widens prompt visibility.
+    """
+    if not isinstance(route, Mapping):
+        return RECEIPT_ONLY_CAPABILITIES, {"reason": "route_not_a_mapping", "type": type(route).__name__}
+    value = route.get(RECEIPT_ONLY_ROUTE_KEY)
+    if value is None:
+        return frozenset(), None
+    if isinstance(value, (list, tuple)):
+        valid = frozenset(item.strip() for item in value if isinstance(item, str) and item.strip())
+        bad = [repr(item) for item in value if not (isinstance(item, str) and item.strip())]
+        if bad:
+            return valid | RECEIPT_ONLY_CAPABILITIES, {"reason": "invalid_items", "items": bad[:16]}
+        return valid, None
+    return RECEIPT_ONLY_CAPABILITIES, {"reason": "not_a_list", "type": type(value).__name__}
+
+
+def entry_prompt_visible(entry: Mapping[str, Any]) -> bool:
+    """True only when an entry may reach a prompt-facing view.
+
+    Absent flag -> visible (pre-flag bundles); ``"prompt"`` -> visible; ``"receipt_only"``
+    or any other value / type -> hidden (fail closed).
+    """
+    if not isinstance(entry, Mapping):
+        return False
+    if CONSUMER_VISIBILITY_FIELD not in entry:
+        return True
+    return entry.get(CONSUMER_VISIBILITY_FIELD) == CONSUMER_VISIBILITY_PROMPT
+
+
+def prompt_visible_entries(bundle: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
+    """Bundle entries a prompt-facing view may render."""
+    entries = bundle.get("entries") if isinstance(bundle, Mapping) else None
+    if not isinstance(entries, (list, tuple)):
+        return []
+    return [e for e in entries if isinstance(e, Mapping) and entry_prompt_visible(e)]
+
+
+def prompt_visible_evidence_ids(bundle: Mapping[str, Any] | None) -> set[str] | None:
+    """Ids a prompt-facing / consumption view may carry, or ``None`` when nothing is hidden.
+
+    When the bundle has receipt-only entries, the allowed ids are the union of the
+    *visible* entries' ``evidence_ids`` / ``evidence_refs`` (never "all ids minus hidden
+    ids": an id a visible entry shares with a hidden one must not appear or vanish
+    depending on the hidden gate's outcome).  ``None`` (no hidden entry) keeps today's
+    behaviour unchanged.
+    """
+    entries = bundle.get("entries") if isinstance(bundle, Mapping) else None
+    if not isinstance(entries, (list, tuple)):
+        return None
+    if all(entry_prompt_visible(e) for e in entries if isinstance(e, Mapping)):
+        return None
+    allowed: set[str] = set()
+    for entry in entries:
+        if isinstance(entry, Mapping) and entry_prompt_visible(entry):
+            for key in ("evidence_ids", "evidence_refs"):
+                for item in entry.get(key) or []:
+                    text = str(item).strip()
+                    if text:
+                        allowed.add(text)
+    return allowed
+
+
+def receipt_only_capability_names(
+    context: Mapping[str, Any] | None,
+    *,
+    declared: frozenset[str] | tuple[str, ...] | None = None,
+) -> set[str]:
+    """Capabilities a prompt builder must treat as receipt-only for this context.
+
+    Union of: the runtime-held declared set (``declared``; when given, the context's
+    ``receipt_only_capabilities`` value is ignored, since executors can touch the context),
+    else the context's declared value (a tuple placed by the runtime for builders it does
+    not construct itself); the bundle entries that are not prompt-visible
+    (``capability_evidence_bundle`` or the planner snapshot); and records that opt in
+    (``consumer_visibility="receipt_only"``).
+    """
+    ctx = context if isinstance(context, Mapping) else {}
+    names: set[str] = set()
+    source = declared if declared is not None else ctx.get(RECEIPT_ONLY_ROUTE_KEY)
+    if isinstance(source, (list, tuple, set, frozenset)):
+        names.update(str(n) for n in source if isinstance(n, str) and n.strip())
+    bundle = ctx.get("capability_evidence_bundle")
+    if not isinstance(bundle, Mapping):
+        planner = ctx.get("planner") if isinstance(ctx.get("planner"), Mapping) else {}
+        snapshot = planner.get("signal_snapshot") if isinstance(planner.get("signal_snapshot"), Mapping) else {}
+        bundle = planner.get("capability_evidence_bundle") or snapshot.get("capability_evidence_bundle")
+    entries = bundle.get("entries") if isinstance(bundle, Mapping) else None
+    for entry in entries if isinstance(entries, (list, tuple)) else ():
+        if isinstance(entry, Mapping) and not entry_prompt_visible(entry):
+            names.add(str(entry.get("name") or ""))
+    results = ctx.get("capability_results")
+    if isinstance(results, Mapping):
+        for name, record in results.items():
+            if record_requests_receipt_only(record):
+                names.add(str(name))
+    names.discard("")
+    return names
+
+
+def prompt_visible_capability_results(
+    context: Mapping[str, Any] | None,
+    *,
+    declared: frozenset[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """``context["capability_results"]`` without any receipt-only capability's record."""
+    ctx = context if isinstance(context, Mapping) else {}
+    results = ctx.get("capability_results")
+    if not isinstance(results, Mapping):
+        return {}
+    hidden = receipt_only_capability_names(ctx, declared=declared)
+    return {name: value for name, value in results.items() if str(name) not in hidden}
+
+
+def _receipt_only_set(receipt_only_capabilities: Any) -> frozenset[str]:
+    # Nothing is declared receipt-only unless the caller names it: neither this builder
+    # nor ``materialize_selected_capability_evidence`` applies RECEIPT_ONLY_CAPABILITIES by
+    # default.  UnifiedRuntime passes the host's route declaration (and falls back to
+    # RECEIPT_ONLY_CAPABILITIES only when that declaration is unreadable).
+    if receipt_only_capabilities is None:
+        return frozenset()
+    if isinstance(receipt_only_capabilities, str) or not isinstance(
+        receipt_only_capabilities, (list, tuple, set, frozenset)
+    ):
+        raise ValueError("receipt_only_capabilities_invalid")
+    return frozenset(str(name) for name in receipt_only_capabilities)
+
+
+def record_requests_receipt_only(stage: Any) -> bool:
+    """A record opts in only with exactly ``"receipt_only"`` (top level or its response)."""
+    if not isinstance(stage, Mapping):
+        return False
+    if stage.get(CONSUMER_VISIBILITY_FIELD) == CONSUMER_VISIBILITY_RECEIPT_ONLY:
+        return True
+    response = stage.get("response")
+    return isinstance(response, Mapping) and (
+        response.get(CONSUMER_VISIBILITY_FIELD) == CONSUMER_VISIBILITY_RECEIPT_ONLY
+    )
+
+
+def _apply_visibility(
+    entry: dict[str, Any], key: str, receipt_only: frozenset[str], stage: Any = None
+) -> dict[str, Any]:
+    # Only the non-default value is written, so bundles without receipt-only entries are
+    # byte-identical to bundles built before the flag existed.
+    if key in receipt_only or record_requests_receipt_only(stage):
+        entry[CONSUMER_VISIBILITY_FIELD] = CONSUMER_VISIBILITY_RECEIPT_ONLY
+    return entry
+
+
 def _pending_entry(key: str) -> dict[str, Any]:
     return {
         "name": key,
@@ -711,6 +902,7 @@ def seal_postflight_capability_evidence(
     *,
     postflight_capabilities: list[str] | tuple[str, ...] | None = None,
     runtime_evidence_ids: Mapping[str, Any] | None = None,
+    receipt_only_capabilities: Any = None,
 ) -> dict[str, Any]:
     """Re-seal the shared bundle with the postflight capability records.
 
@@ -765,6 +957,9 @@ def seal_postflight_capability_evidence(
     for index in targets:
         key = str(new_entries[index].get("name") or "")
         entry, bucket = _bundle_entry(key, capability_results.get(key), runtime_id_map.get(key))
+        _apply_visibility(
+            entry, key, _receipt_only_set(receipt_only_capabilities), capability_results.get(key)
+        )
         entry["seal_phase"] = POSTFLIGHT_SEAL_PHASE
         new_entries[index] = entry
         sealed_names.append(key)
@@ -813,14 +1008,20 @@ def build_capability_evidence_bundle(
     source_hash: str = "",
     source_hash_kind: str = SOURCE_HASH_KIND,
     runtime_evidence_ids: Mapping[str, Any] | None = None,
+    receipt_only_capabilities: Any = None,
 ) -> dict[str, Any]:
     """Build hash-sealed shared evidence bundle for Local and Online consumers.
+
+    ``receipt_only_capabilities`` names the capabilities whose entries are sealed with
+    ``consumer_visibility="receipt_only"`` (default: none; the host declares them via
+    the request route, records may opt in themselves).
 
     ``runtime_evidence_ids`` (name -> ids) is the runtime-held map of input/output digest
     ids for capabilities whose callable physically ran; it is the only source of the
     entries' ``runtime_evidence_ids``.
     """
     runtime_id_map = dict(runtime_evidence_ids or {})
+    receipt_only = _receipt_only_set(receipt_only_capabilities)
     task_hash = hashlib.sha256(str(task_statement or "").encode("utf-8")).hexdigest()
     if source_hash_kind != SOURCE_HASH_KIND:
         raise ValueError("source_hash_kind_mismatch")
@@ -849,6 +1050,7 @@ def build_capability_evidence_bundle(
         entry, bucket = _bundle_entry(
             key, capability_results.get(key), runtime_id_map.get(key)
         )
+        _apply_visibility(entry, key, receipt_only, capability_results.get(key))
         entries.append(entry)
         _bucket_into(
             bucket,
@@ -1268,10 +1470,9 @@ def record_consumption(
     entry_id_set: set[str] = set()
     entry_payload_by_cap: dict[str, Mapping[str, Any]] = {}
     entries = bundle.get("entries") if isinstance(bundle, Mapping) else None
+    visible_ids = prompt_visible_evidence_ids(bundle)
     if isinstance(entries, list):
-        for ent in entries:
-            if not isinstance(ent, Mapping):
-                continue
+        for ent in prompt_visible_entries(bundle):
             if not bool(ent.get("success") or ent.get("invoked_real")):
                 continue
             for eid in list(ent.get("evidence_ids") or []) + list(ent.get("evidence_refs") or []):
@@ -1284,10 +1485,12 @@ def record_consumption(
                 entry_payload_by_cap[ename] = cp
         for eid in bundle.get("evidence_ids") or []:
             s = str(eid).strip()
-            if s:
+            if s and (visible_ids is None or s in visible_ids):
                 entry_id_set.add(s)
         if entry_id_set:
             ids = [i for i in ids if i in entry_id_set]
+        if visible_ids is not None:
+            ids = [i for i in ids if i in visible_ids]
 
     raw_payloads = list(consumed_capability_payloads or [])
     payloads: list[dict[str, Any]] = []

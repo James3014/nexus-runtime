@@ -18,6 +18,10 @@ from .capabilities import (
 )
 from nexus_runtime.planning.services.capability_evidence_bundle import (
     compute_bundle_hash as _compute_bundle_hash,
+    prompt_visible_entries,
+    prompt_visible_evidence_ids,
+    record_requests_receipt_only,
+    resolve_receipt_only_capabilities,
     seal_postflight_capability_evidence,
 )
 from .constants import GATEWAY_INVOCATION_AUTHORITY_SCHEMA, LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA, ONLINE_DECISION_CONTEXT_KEY, RECEIPT_SCHEMA, REQUEST_SCHEMA, UNTRUSTED_ROUTE_AUTHORIZATION_KEYS
@@ -815,11 +819,18 @@ class UnifiedRuntime:
         LOCAL_STAGE_CAPABILITIES = self._ctx.LOCAL_STAGE_CAPABILITIES
         ensure_selected_coverage_invokers = self._ctx.ensure_selected_coverage_invokers
 
+        # Consumer visibility (#216): the receipt-only set is resolved once and held by the
+        # runtime as a frozenset; prompt builders never trust a value an executor could edit.
+        receipt_only_capabilities, receipt_only_invalid = resolve_receipt_only_capabilities(
+            request.route
+        )
         invoker_map = ensure_selected_coverage_invokers(
             list(plan.selected_capabilities),
             capability_invokers,
             codeintel=dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {},
-            prompt_compression_invoker=build_prompt_compression_capability_invoker(),
+            prompt_compression_invoker=build_prompt_compression_capability_invoker(
+                receipt_only_capabilities=receipt_only_capabilities
+            ),
         )
         # P2: preflight BEFORE Local/Online so both stages share one evidence baseline.
         # Local-owned capabilities are not preflight-invoked here.
@@ -904,7 +915,11 @@ class UnifiedRuntime:
             # Executors get deep copies of the records and of the bundle, never the
             # runtime's own objects.
             call_context = dict(capability_context)
-            call_context["capability_results"] = _runtime_snapshot(record_store)
+            # Executors never see a receipt-only capability's record (#216).
+            call_context["capability_results"] = _runtime_snapshot({
+                n: r for n, r in record_store.items()
+                if n not in receipt_only_capabilities and not record_requests_receipt_only(r)
+            })
             if "capability_evidence_bundle" in call_context:
                 call_context["capability_evidence_bundle"] = _runtime_snapshot(
                     call_context["capability_evidence_bundle"]
@@ -975,6 +990,12 @@ class UnifiedRuntime:
             )
             for name, invoker in preflight_items
         }
+        # Consumer visibility: the capabilities the host request declares receipt-only
+        # (fail closed on unreadable input; see resolve_receipt_only_capabilities).
+        if receipt_only_capabilities:
+            # Immutable copy for builders the runtime does not construct (transport,
+            # codeintel summary); the runtime's own builders use the bound frozenset.
+            capability_context["receipt_only_capabilities"] = tuple(sorted(receipt_only_capabilities))
         try:
             capability_results, evidence_bundle = materialize_selected_capability_evidence(
                 self._ctx,
@@ -989,6 +1010,7 @@ class UnifiedRuntime:
                 capability_context=capability_context,
                 codeintel=dict(request.codeintel) if isinstance(request.codeintel, Mapping) else {},
                 invocation_executed=lambda name: name in executed_capabilities_this_run,
+                receipt_only_capabilities=receipt_only_capabilities,
             )
         except Exception as exc:  # noqa: BLE001 - same fail-closed rule as the postflight seal
             # The preflight seal failed: no records are trusted and the empty bundle fails
@@ -1330,6 +1352,7 @@ class UnifiedRuntime:
             "pillars": dict(request.pillars) if isinstance(request.pillars, Mapping) else {},
             "local": local_stage,
             "capability_results": capability_results,
+            **({"receipt_only_capabilities": tuple(sorted(receipt_only_capabilities))} if receipt_only_capabilities else {}),
             "capability_context_compressed": capability_context_compressed,
             # P2: same immutable baseline for Online as Local saw after preflight.
             "capability_evidence_bundle": evidence_bundle,
@@ -1451,6 +1474,7 @@ class UnifiedRuntime:
                             for name in postflight_invoked
                             if name in runtime_id_map
                         },
+                        receipt_only_capabilities=receipt_only_capabilities,
                     )
                     verdict = _verify_evidence_bundle(
                         candidate,
@@ -1718,9 +1742,9 @@ class UnifiedRuntime:
 
         # Traceability: keep only IDs that exist on successful bundle entries.
         bundle_success_ids: set[str] = set()
-        for ent in preflight_bundle_snapshot.get("entries") or []:
-            if not isinstance(ent, Mapping):
-                continue
+        # receipt_only entries were never in a prompt, so their ids are never "consumed".
+        visible_bundle_ids = prompt_visible_evidence_ids(preflight_bundle_snapshot)
+        for ent in prompt_visible_entries(preflight_bundle_snapshot):
             if not bool(ent.get("success") or ent.get("invoked_real")):
                 continue
             for eid in list(ent.get("evidence_ids") or []) + list(ent.get("evidence_refs") or []):
@@ -1729,10 +1753,12 @@ class UnifiedRuntime:
                     bundle_success_ids.add(s)
         for eid in preflight_bundle_snapshot.get("evidence_ids") or []:
             s = str(eid).strip()
-            if s:
+            if s and (visible_bundle_ids is None or s in visible_bundle_ids):
                 bundle_success_ids.add(s)
         if bundle_success_ids:
             consumed_evidence_ids = [i for i in consumed_evidence_ids if i in bundle_success_ids]
+        if visible_bundle_ids is not None:
+            consumed_evidence_ids = [i for i in consumed_evidence_ids if i in visible_bundle_ids]
         evidence_refs = list(request.evidence_refs)
         for stage in stages.values():
             evidence_refs.extend(stage.get("evidence_refs", []))
@@ -2137,6 +2163,8 @@ class UnifiedRuntime:
                 if postflight_seal_dropped
                 else {}
             ),
+            "receipt_only_capabilities": sorted(receipt_only_capabilities),
+            **({"receipt_only_override_invalid": receipt_only_invalid} if receipt_only_invalid else {}),
             "capability_context_compressed": capability_context_compressed,
             "codeintel_hash": codeintel_hash,
             "route": {

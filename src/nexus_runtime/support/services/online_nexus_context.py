@@ -215,6 +215,23 @@ def compact_executor_flags_for_prompt(flags: Mapping[str, Any] | None) -> dict[s
     }
 
 
+# Placeholder for receipt_only entries in the compact prompt view (CONTRACT_B item 4, made
+# fully neutral: unlike Nexus-new ``withhold_fed_gate_verdicts`` it keeps no entry ids).
+_WITHHELD_GATE_STATUS = "INVOKED_NOT_SUCCESS"
+_RECEIPT_ONLY_PLACEHOLDER: dict[str, Any] = {
+    "status": _WITHHELD_GATE_STATUS,
+    "success": False,
+    "invoked_real": False,
+    "invoked_stub": False,
+    "skipped": False,
+    "evidence_ids": [],
+    "evidence_refs": [],
+    "physical_callable": "",
+    "consumer_payload": {},
+    "has_consumer_payload": False,
+}
+
+
 def compact_capability_evidence_for_prompt(
     bundle: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
@@ -229,14 +246,24 @@ def compact_capability_evidence_for_prompt(
     from nexus_runtime.planning.services.capability_evidence_bundle import (
         consumer_payload_markers,
         hash_consumer_payloads,
+        entry_prompt_visible,
+        prompt_visible_evidence_ids,
     )
 
+    visible_ids = prompt_visible_evidence_ids(b)
     entries_out: list[dict[str, Any]] = []
     payloads: list[dict[str, Any]] = []
     payload_markers: list[str] = []
-    for entry in b.get("entries") or []:
-        if not isinstance(entry, Mapping):
+    for raw_entry in b.get("entries") or []:
+        if not isinstance(raw_entry, Mapping):
             continue
+        entry = raw_entry
+        if not entry_prompt_visible(raw_entry):
+            # receipt_only: one fixed opaque placeholder for every status (passing, blocked,
+            # rejected, stub, skipped, not run): no entry-derived ids, refs, callable or
+            # payload, so the prompt never depends on whether / how the gate evaluated.
+            # The sealed entry keeps the real verdict.
+            entry = {"name": raw_entry.get("name"), **_RECEIPT_ONLY_PLACEHOLDER}
         # Failed / non-success entries never forward payload.
         success = bool(entry.get("success") or entry.get("invoked_real"))
         cp = entry.get("consumer_payload") if success else None
@@ -268,7 +295,10 @@ def compact_capability_evidence_for_prompt(
         "source_hash": str(b.get("source_hash") or ""),
         "plan_hash": str(b.get("plan_hash") or ""),
         "selected_capabilities": list(b.get("selected_capabilities") or [])[:16],
-        "evidence_ids": list(b.get("evidence_ids") or [])[:32],
+        "evidence_ids": [
+            eid for eid in (b.get("evidence_ids") or [])
+            if visible_ids is None or str(eid).strip() in visible_ids
+        ][:32],
         "entries": entries_out[:24],
         "consumer_payloads": payloads[:16],
         "payload_markers": payload_markers[:32],
@@ -442,6 +472,15 @@ def build_online_nexus_context(
             if isinstance(cp, Mapping) and cp:
                 consumed_capability_payloads.append(dict(cp))
         consumed_evidence_ids = entry_ids or [i for i in raw_ids if not i.startswith("bundle:")]
+        # receipt_only ids are never consumed by Online (defence in depth: the compact view
+        # already carries none of them).
+        from nexus_runtime.planning.services.capability_evidence_bundle import (
+            prompt_visible_evidence_ids as _visible_ids,
+        )
+
+        _allowed = _visible_ids(evidence_bundle if isinstance(evidence_bundle, Mapping) else {})
+        if _allowed is not None:
+            consumed_evidence_ids = [i for i in consumed_evidence_ids if i in _allowed]
         # Payload markers only count when actually present in the serialized prompt.
         for m in evidence_compact.get("payload_markers") or []:
             ms = str(m)
@@ -588,7 +627,13 @@ def build_online_nexus_context_from_runtime(
         route = {}
     codeintel = _mapping(ctx.get("codeintel"))
     # Prefer preflight capability evidence when codeintel invoker already ran.
-    cap_results = ctx.get("capability_results")
+    # Receipt-only capabilities (declared, flagged in the bundle or by their record) never
+    # feed a prompt block: a receipt-only codeintel renders only the request codeintel.
+    from nexus_runtime.planning.services.capability_evidence_bundle import (
+        prompt_visible_capability_results,
+    )
+
+    cap_results = prompt_visible_capability_results(ctx)
     if isinstance(cap_results, Mapping) and "codeintel" in cap_results:
         stage = cap_results.get("codeintel")
         stage_map = stage if isinstance(stage, Mapping) else {}

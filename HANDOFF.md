@@ -1,13 +1,13 @@
 # HANDOFF
 
-更新：2026-10-15 · by Claude · HEAD `f72e0f7`（分支 feat/seal-gate-evidence：#212）
+更新：2026-10-16 · by Claude · HEAD `674931d`（分支 feat/receipt-only-consumer-visibility：#216）
 <!-- 規則見 AGENTS.md「Handoff」。上限 150 行；過期內容移到 docs/archive/HANDOFF-YYYY-MM.md。 -->
 
 ## ▶ 下一步（只放一件，必須帶 #Issue）
-#212 合併「gate/postflight 證據封進 capability evidence bundle」：postflight 跑完後重新封存 bundle（保留 preflight_bundle_hash），閘門真的跑過且通過才給 REAL_INVOKED，評估後拒絕給 EVALUATED_REJECTED，缺輸入維持缺輸入代碼。第二輪（審查後）：執行器只拿到紀錄與 bundle 的複本，runtime 自己保存紀錄並只從中封存，重新封存綁定 preflight bundle（被竄改或失敗就放棄、保持 PENDING）。注意：Online 證據區塊現在會出現 EVALUATED_REJECTED，且每個實際執行過的 entry 都帶 runtime_evidence_ids（bundle_hash 會變），Nexus-new PR-4 的 strict-lane 凍結要處理。合併後 Nexus-new 要把 runtime pin 升到這個 commit（依 nexus-dependency-anchor 流程），Nexus-new #2212 的 attestation 才會把這些 gate 標成 real。
+#216 合併「governance gate 證據只進收據、不進 prompt」：bundle entry 可帶 consumer_visibility="receipt_only"（在封存內、受 hash 保護），來源是 capability 紀錄自己標記（Nexus-new strict lane）或 request route 的 receipt_only_capabilities；這種 entry 不進 [NEXUS MODEL CONTEXT]、在 [NEXUS CAPABILITY EVIDENCE] 顯示成 PR-4 前的佔位，收據與 attestation 不變。合併後 Nexus-new #2278 改指新 runtime sha，再寫 anchor。
 
 ## 進行中
-- #191 已合併（6782e38，PR #192）。#179、#180、#181 已合併（f9adb20，PR #182）。Nexus-new 有兩處會 fail closed，尚待處理：canary helper 沒有帶模型，gateway 的 online_command 帶了多個參數。
+- #212 已合併（0cedab1，PR #213）。#191 已合併（6782e38，PR #192）。#179、#180、#181 已合併（f9adb20，PR #182）。Nexus-new 有兩處會 fail closed，尚待處理：canary helper 沒有帶模型，gateway 的 online_command 帶了多個參數。
 - Nexus-new#1996：自動更新模型版本的機制建置中。
 
 ## 待確認（沒有 Issue 號）

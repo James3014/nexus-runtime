@@ -12,6 +12,7 @@ from nexus_runtime.planning.services.capability_evidence_bundle import (
     MAX_CONSUMER_PAYLOAD_CHARS,
     assert_consumer_bundle_intact,
     build_source_hash_subject,
+    entry_prompt_visible,
 )
 
 from .assembly import build_context_assembly_contract
@@ -271,6 +272,8 @@ def _evidence_projection(
     for entry in entries:
         if not isinstance(entry, Mapping):
             raise ValueError("consumer_evidence_bundle_entry_invalid")
+        if not entry_prompt_visible(entry):
+            continue  # receipt_only: never in the model context (no status, ids, payload)
         if not bool(entry.get("success") is True and entry.get("invoked_real") is True):
             continue
         name = str(entry.get("name") or "").strip()
