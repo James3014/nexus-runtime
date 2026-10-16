@@ -552,10 +552,70 @@ def test_replan_fails_closed_when_durable_receipt_differs_from_supplied(tmp_path
     stored = dict(first)
     stored["effect_journal_bindings"] = []
     durable.write_text(json.dumps(stored), encoding="utf-8")
+    first = dict(first, receipt_path=str(durable))  # receipt_path is outside the hash lineage
     before = list(dispatches)
     with pytest.raises(ValueError, match="replan_effect_binding_mismatch"):
-        exports.UnifiedRuntime().run_replan(first, request, receipt_path=durable, **kw)
+        exports.UnifiedRuntime().run_replan(first, request, **kw)
     assert dispatches == before
     durable.write_text(json.dumps(first), encoding="utf-8")
-    second = exports.UnifiedRuntime().run_replan(first, request, receipt_path=durable, **kw)
+    second = exports.UnifiedRuntime().run_replan(first, request, **kw)
     assert second["execution_attempt"]["attempt_number"] == 2
+
+
+def test_stale_file_at_output_receipt_path_does_not_reject_honest_replan(tmp_path: Path, monkeypatch) -> None:
+    import nexus_runtime.kernel.unified_runtime as unified_runtime
+
+    monkeypatch.setattr(unified_runtime, "_validate_runtime_writer_entry", lambda *a, **k: None)
+    exports, request, kw, first, _, _ = _effect_replan_fixture(tmp_path, first_dispatch_unknown=False)
+    (tmp_path / "out").mkdir()
+    stale = tmp_path / "out" / "stale.json"
+    stale.write_text(json.dumps({"receipt_hash": "x", "effect_journal_bindings": []}), encoding="utf-8")
+    second = exports.UnifiedRuntime().run_replan(first, request, receipt_path=stale, **kw)
+    assert second["execution_attempt"]["attempt_number"] == 2
+
+
+def _legacy_shaped(first):
+    from nexus_runtime.planning.evidence import receipt_base as rb
+
+    legacy = json.loads(json.dumps(first))
+    base = legacy["receipt_base"]
+    base.pop("effect_journal_bindings_hash")
+    h = rb.compute_receipt_hash(
+        run_anchor_hash=base["run_anchor_hash"],
+        ordered_child_hashes=base["ordered_child_hashes"],
+        claim_boundary=rb.claim_boundary_projection(base.get("claim_boundary")),
+        shared_bundle_hash=base.get("shared_bundle_hash") or "",
+        consumer_payload_hash=base.get("consumer_payload_hash") or "",
+        artifact_hash=base.get("artifact_hash") or "",
+        source_candidate_hash=base.get("source_candidate_hash") or "",
+        applied_candidate_hash=base.get("applied_candidate_hash") or "",
+        structured_evidence_refs=base.get("structured_evidence_refs") or (),
+        consumption_chain=base.get("consumption_chain") or (),
+        execution_attempt_hash=base.get("execution_attempt_hash") or "",
+        execution_replan_request_hash=base.get("execution_replan_request_hash") or "",
+    )
+    base["receipt_hash"] = h
+    legacy["receipt_hash"] = h
+    return legacy
+
+
+def test_legacy_receipt_with_completed_bindings_validates_and_replans(tmp_path: Path) -> None:
+    from nexus_runtime.planning.evidence.receipt_base import validate_receipt_base
+
+    exports, request, kw, first, _, _ = _effect_replan_fixture(tmp_path, first_dispatch_unknown=False)
+    assert first["effect_journal_bindings"]
+    legacy = _legacy_shaped(first)
+    assert validate_receipt_base(legacy, mode="strict")["ok"] is True
+    second = exports.UnifiedRuntime().run_replan(legacy, request, **kw)
+    assert second["execution_attempt"]["attempt_number"] == 2
+
+
+def test_new_receipt_with_bindings_and_base_field_stripped_is_rejected(tmp_path: Path) -> None:
+    from nexus_runtime.planning.evidence.receipt_base import validate_receipt_base
+
+    _, _, _, first, _, _ = _effect_replan_fixture(tmp_path, first_dispatch_unknown=True)
+    forged = json.loads(json.dumps(first))
+    forged.pop("effect_journal_bindings")
+    forged["receipt_base"].pop("effect_journal_bindings_hash")
+    res = validate_receipt_base(forged, mode="strict")
+    assert res["ok"] is False and "receipt_hash_tamper" in res["blockers"]

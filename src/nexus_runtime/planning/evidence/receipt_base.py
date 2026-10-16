@@ -1616,9 +1616,16 @@ def validate_receipt_base(
             if base is not payload:
                 # Envelope: bindings live on the envelope, so recompute from them. A stripped
                 # or edited list no longer matches the hashed lineage.
-                bindings_h = effect_journal_bindings_hash(payload.get("effect_journal_bindings"))
-                if bindings_h != str(base.get("effect_journal_bindings_hash") or ""):
-                    blockers.append("effect_journal_bindings_hash_mismatch")
+                # Legacy receipts (no base field) were hashed without bindings: validate them
+                # that way; run_replan still checks their bindings against the journal. A NEW
+                # receipt with the field stripped fails because its stored receipt_hash
+                # included the field.
+                if "effect_journal_bindings_hash" in base:
+                    bindings_h = effect_journal_bindings_hash(payload.get("effect_journal_bindings"))
+                    if bindings_h != str(base.get("effect_journal_bindings_hash") or ""):
+                        blockers.append("effect_journal_bindings_hash_mismatch")
+                else:
+                    bindings_h = ""
             else:
                 bindings_h = str(base.get("effect_journal_bindings_hash") or "")
             expected_receipt = compute_receipt_hash(

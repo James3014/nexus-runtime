@@ -245,10 +245,10 @@ class UnifiedRuntime:
         if effect_journal is not None and effect_journal.unresolved_for_subject(str(request.task_id)):
             raise ValueError("replan_effect_binding_incomplete")
         # If a runtime-owned durable copy of the PRIOR receipt exists, it is the stored truth:
-        # the caller-supplied receipt must carry the same bindings and receipt_hash. Prefer the
-        # prior receipt's own path; ``receipt_path`` is the output path of this replan and is
-        # only a fallback when the prior receipt does not name where it was written.
-        durable_target = previous_receipt.get("receipt_path") or receipt_path
+        # the caller-supplied receipt must carry the same bindings and receipt_hash. Only the
+        # prior receipt's own path counts; ``receipt_path`` is this replan's OUTPUT path and may
+        # hold an unrelated stale receipt, so it is never used for the comparison.
+        durable_target = previous_receipt.get("receipt_path")
         if durable_target is not None and Path(durable_target).is_file():
             try:
                 durable = json.loads(Path(durable_target).read_text(encoding="utf-8"))
