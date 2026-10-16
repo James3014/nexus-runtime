@@ -205,6 +205,8 @@ def test_cline_evidence_records_permission_mode():
             "",
         ),
         (_stream({"type": "tool-approval-response", "approved": False}, _OK), ""),
+        (_stream({"type": "tool-approval-response", "approved": "false"}, _OK), ""),
+        (_stream({"is_error": True, "output": "Execution denied by user."}, _OK), ""),
         (_stream(_OK), "Error: Tool execution denied by user."),
         (_stream(_OK), "execution-denied"),
     ],
@@ -245,6 +247,30 @@ def test_cline_missing_run_result_or_error_finish_is_non_delivery(stdout, error)
     assert result["output_delivered"] is False
     assert result["gate_passed"] is False
     assert result["error"] == error
+
+
+@pytest.mark.parametrize(
+    "tokens, bypass",
+    [
+        (["--auto-approve", "false"], False),
+        ([], True),
+        (["--yolo"], True),
+        (["--yolo=true"], True),
+        (["-y=1"], True),
+        (["-y"], True),
+        (["--auto-approve=true"], True),
+        (["--auto-approve", "true"], True),
+        (["--auto-approve", "false", "--auto-approve", "true"], True),
+        (["--auto-approve"], True),
+    ],
+)
+def test_cline_permission_bypass_predicate(tokens, bypass):
+    from nexus_runtime.kernel.transport import cline_permission_bypass
+
+    assert (
+        cline_permission_bypass(["cline", "--json", *tokens, "--model", MODEL, "hi"])
+        is bypass
+    )
 
 
 def test_cline_nonzero_exit_with_clean_run_result_is_non_delivery():

@@ -88,11 +88,16 @@ CLINE_PERMISSION_MODE = "auto_approve_false"
 # Text markers are trusted on stderr only; stdout is parsed as JSON events and
 # only structural keys are inspected (model text quoting a marker is not a denial).
 _CLINE_DENIAL_MARKERS = ("execution-denied", "execution denied", "denied by user")
-_CLINE_NON_SUCCESS_FINISH_REASONS = frozenset(
-    {"error", "cancelled", "canceled", "aborted", "interrupted", "timeout", "timed_out", "length", "content-filter"}
-)
+# Allowlist: any finish reason not listed here is non-delivery (fail closed).
+_CLINE_SUCCESS_FINISH_REASONS = frozenset({"stop", "end_turn", "complete", "completed"})
 _CLINE_DENIED_TYPES = frozenset({"execution-denied"})
-_CLINE_DENIED_DEFAULT_REASONS = ("tool execution denied", "tool call execution denied")
+_CLINE_DENIED_DEFAULT_REASONS = (
+    "tool execution denied",
+    "tool call execution denied",
+    "execution denied",
+    "denied by user",
+)
+_CLINE_RESULT_TEXT_KEYS = ("result", "output", "content", "error", "reason", "message")
 # Model-authored tool arguments are never read as structure.
 _CLINE_MODEL_ARGUMENT_KEYS = frozenset({"input", "args", "arguments", "params", "parameters"})
 
@@ -101,7 +106,9 @@ def cline_permission_bypass(argv: tuple[str, ...] | list[str]) -> bool:
     """True unless a Cline argv has exactly one ``--auto-approve false`` and no yolo flag."""
     options = [str(token) for token in argv[1:]]
     if any(
-        token in CLINE_YOLO_FLAGS or token.startswith(CLINE_AUTO_APPROVE_FLAG + "=")
+        token in CLINE_YOLO_FLAGS
+        or token.partition("=")[0] in CLINE_YOLO_FLAGS
+        or token.startswith(CLINE_AUTO_APPROVE_FLAG + "=")
         for token in options
     ):
         return True
@@ -121,15 +128,13 @@ def _cline_structured_denial(value: Any) -> bool:
     kind = value.get("type")
     if kind in _CLINE_DENIED_TYPES:
         return True
-    if kind == "tool-approval-response" and value.get("approved") is False:
+    if kind == "tool-approval-response" and value.get("approved") in (False, 0, "false", "False"):
         return True
-    result = value.get("result")
-    if (
-        value.get("is_error") is True
-        and isinstance(result, str)
-        and result.strip().lower().startswith(_CLINE_DENIED_DEFAULT_REASONS)
-    ):
-        return True
+    if value.get("is_error") is True or value.get("isError") is True:
+        for key in _CLINE_RESULT_TEXT_KEYS:
+            text = value.get(key)
+            if isinstance(text, str) and text.strip().lower().startswith(_CLINE_DENIED_DEFAULT_REASONS):
+                return True
     return any(
         _cline_structured_denial(item)
         for key, item in value.items()
@@ -164,7 +169,7 @@ def cline_delivery_failure(stdout: str, stderr: str) -> str | None:
     # Every run_result must be a clean finish, not only the last one.
     for result in results:
         finish = str(result.get("finishReason") or "").strip().lower()
-        if not finish or finish in _CLINE_NON_SUCCESS_FINISH_REASONS:
+        if finish not in _CLINE_SUCCESS_FINISH_REASONS:
             return "cline_status_not_success"
     return None
 
