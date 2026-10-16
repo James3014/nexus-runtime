@@ -86,6 +86,6 @@ def test_validation_rejects_unknown_consumer_target(tmp_path: Path) -> None:
 
 
 def test_validation_rejects_target_not_advertising_role(tmp_path: Path) -> None:
-    path = _policy_with_consumer_target(tmp_path, "grok_review")
+    path = _policy_with_consumer_target(tmp_path, "agy_flash_38_high")
     with pytest.raises(WorkforcePolicyValidationError, match="does not advertise role"):
         WorkforcePolicyLoader(path).load()

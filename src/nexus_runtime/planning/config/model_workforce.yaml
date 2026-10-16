@@ -357,6 +357,27 @@ workers:
       since 2026-10-13 by Owner decision (switch without requalification because
       Agy 1.3.4 no longer serves gemini-3.7-flash-medium). Autonomy L3 is the
       2026-10-12 registration; no 3.8 calibration ceiling is recorded.
+  agy_flash_38_high:
+    provider: agy
+    model: gemini-3.8-flash-high
+    state: REGISTERED_CONDITIONAL
+    availability: AVAILABLE
+    autonomy: L2+
+    roles: [independent_review, evidence_audit, hidden_defect_hunting]
+    preferred_context: nexus_bounded
+    default_route: true
+    requires: [bounded_scope, schema_validation, independent_verification]
+    forbidden_actions: [route_authority, approval, merge, integration, push, release, production_claim, public_claim]
+    forbidden_claims: [sole_production_ready_adjudication, unverified_implementation]
+    model_id_note: >-
+      Model id gemini-3.8-flash-high: Agy 1.3.4 lists Gemini 3.8 Flash (High)
+      as available, and Nexus-new PR reviews have used it as the cross-model
+      reviewer since 2026-10-14 (Owner-approved substitution for Codex while
+      Codex is out of credits). It replaces grok_review as the
+      independent_review default because the Grok line has no usage record and
+      Grok left the frontier priority (Claude, Gemini, Codex) on 2026-10-15.
+      Review verdicts are advisory evidence only; this worker has no approval
+      or merge authority. No 3.8 calibration ceiling is recorded.
   opencli_chatgpt_balanced_web:
     provider: opencli_chatgpt
     model: opencli_chatgpt/balanced
@@ -411,7 +432,9 @@ workers:
     provider: grok
     model: grok-4.5
     state: PROVEN_MAINCHAIN
-    availability: AVAILABLE
+    availability: UNAVAILABLE
+    reason: retired_from_frontier_priority_2026-10-15
+    default_route: false
     autonomy: L2+
     roles: [independent_review, hidden_defect_hunting, evidence_audit, bounded_engineering_candidate]
     benchmark_ref: grok_45
@@ -883,6 +906,13 @@ routing:
           fast_bounded_implementation worker (Gemini 3.6 and 3.7 tiers are not
           listed), and no other registered worker advertises this role. A failed
           default-routed request is not redirected or substituted.
+      independent_review:
+        current_default: agy_flash_38_high
+        fallback: null
+        fallback_note: >-
+          No fallback, fail closed. Codex (codex_luna) may be selected only by
+          an explicit route change when it has credits; a failed
+          default-routed request is not redirected or substituted.
     campaign_routing:
       CAMPAIGN-NEXUS-LEARNING-CANONICAL-WIRING-01:
         fast_bounded_implementation: agy_flash_38
@@ -894,7 +924,8 @@ routing:
       external_intelligence:
         bounded_candidate_generation: opencli_chatgpt_advanced_web
     main_engineering: codex_luna
-    independent_review: grok_review
+    independent_review: agy_flash_38_high
+    independent_review_fallback: null
     complex_milestone: codex_luna_when_available
     free_remote_candidate_pool: [opencode_mimo_free, opencode_ling_free]
     free_remote_shadow_candidate: opencode_deepseek_v4_flash
