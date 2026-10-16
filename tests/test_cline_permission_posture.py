@@ -257,8 +257,8 @@ def test_cline_missing_run_result_or_error_finish_is_non_delivery(stdout, error)
         (["--yolo"], True),
         (["--yolo=true"], True),
         (["-y=1"], True),
-        (["-yp"], True),
-        (["-py"], True),
+        (["--auto-approve", "false", "-yp"], True),
+        (["--auto-approve", "false", "-py"], True),
         (["--auto-approve", "false", "-p"], False),
         (["-y"], True),
         (["--auto-approve=true"], True),
@@ -276,9 +276,22 @@ def test_cline_permission_bypass_predicate(tokens, bypass):
     )
 
 
-_REAL_FIXTURE = (
-    Path(__file__).parent / "fixtures" / "cline_3_0_69_denied_tool_real.jsonl"
-)
+_REAL_CLINE_3_0_69_DENIED_TOOL_CAPTURE = r"""
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"iteration_start","iteration":1}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"content_start","contentType":"tool","toolName":"editor","toolCallId":"call_7aa2e617892142ca8e63efd2","input":{"new_text":"hi","path":"/tmp/cline-run/hello.txt"}}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"content_end","contentType":"tool","toolName":"editor","toolCallId":"call_7aa2e617892142ca8e63efd2","output":{"error":"Tool \"editor\" requires approval in a TTY session -- NOT a tool or system failure. Clarify with user before proceeding."},"error":"{\"error\":\"Tool \\\"editor\\\" requires approval in a TTY session -- NOT a tool or system failure. Clarify with user before proceeding.\"}","durationMs":1}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"iteration_end","iteration":1,"hadToolCalls":true,"toolCallCount":1}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"error","error":{"name":"Error","message":"1 tool call(s) failed: [editor] {\"error\":\"Tool \\\"editor\\\" requires approval in a TTY session -- NOT a tool or system failure. Clarify with user before proceeding.\"}","stack":"Error: 1 tool call(s) failed: [editor] {\"error\":\"Tool \\\"editor\\\" requires approval in a TTY session -- NOT a tool or system failure. Clarify with user before proceeding.\"}\n    at record (/$bunfs/root/chunk-nbvb3st9.js:327:28949)\n    at <anonymous> (/$bunfs/root/chunk-nbvb3st9.js:333:16603)\n    at processTicksAndRejections (native:7:39)"},"recoverable":true,"iteration":1}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"iteration_start","iteration":2}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"content_start","contentType":"tool","toolName":"run_commands","toolCallId":"call_63e8d88a53d54276b2e82673","input":{"commands":["printf 'hi\\n' > /tmp/cline-run/hello.txt && cat /tmp/cline-run/hello.txt"]}}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"content_end","contentType":"tool","toolName":"run_commands","toolCallId":"call_63e8d88a53d54276b2e82673","output":{"error":"Tool \"run_commands\" requires approval in a TTY session -- NOT a tool or system failure. Clarify with user before proceeding."},"error":"{\"error\":\"Tool \\\"run_commands\\\" requires approval in a TTY session -- NOT a tool or system failure. Clarify with user before proceeding.\"}","durationMs":1}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"iteration_end","iteration":2,"hadToolCalls":true,"toolCallCount":1}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"error","error":{"name":"Error","message":"1 tool call(s) failed: [run_commands] {\"error\":\"Tool \\\"run_commands\\\" requires approval in a TTY session -- NOT a tool or system failure. Clarify with user before proceeding.\"}","stack":"Error: 1 tool call(s) failed: [run_commands] {\"error\":\"Tool \\\"run_commands\\\" requires approval in a TTY session -- NOT a tool or system failure. Clarify with user before proceeding.\"}\n    at record (/$bunfs/root/chunk-nbvb3st9.js:327:28949)\n    at <anonymous> (/$bunfs/root/chunk-nbvb3st9.js:333:16603)\n    at processTicksAndRejections (native:7:39)"},"recoverable":true,"iteration":2}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"iteration_start","iteration":3}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"iteration_end","iteration":3,"hadToolCalls":false,"toolCallCount":0}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"agent_event","event":{"type":"done","reason":"completed","text":"Both the editor and shell tools require approval in this TTY session, so I can't create the file directly right now.\n\nHere's the command that will do it once approved (or you can run it yourself):\n\n```bash\nprintf 'hi\\n' > hello.txt\n```\n\nThis creates `/tmp/cline-run/hello.txt` containing `hi`.\n\nIf you approve the tool permission prompt when it appears, I can retry and verify the file contents for you.","iterations":3,"usage":{"inputTokens":18293,"outputTokens":414,"cacheReadTokens":11904,"totalCost":0}}}
+{"ts":"2026-10-16T00:00:00.000Z","type":"run_result","finishReason":"completed","iterations":3,"text":"Both the editor and shell tools require approval in this TTY session, so I can't create the file directly right now.\n\nHe"}
+"""
 
 
 def test_real_cline_3_0_69_denied_tool_capture_is_non_delivery():
@@ -288,7 +301,7 @@ def test_real_cline_3_0_69_denied_tool_capture_is_non_delivery():
     or system failure."), yet the run ended finishReason ``completed``, exit 0,
     empty stderr.  The path/ts fields were redacted; events are otherwise verbatim.
     """
-    stdout = _REAL_FIXTURE.read_text(encoding="utf-8")
+    stdout = _REAL_CLINE_3_0_69_DENIED_TOOL_CAPTURE
     assert '"finishReason":"completed"' in stdout
     result, _ = _run(stdout)
     assert result["output_delivered"] is False
@@ -300,6 +313,7 @@ def test_real_cline_3_0_69_denied_tool_capture_is_non_delivery():
     "reason",
     [
         "Tool approval requires an interactive session, but this session is non-interactive.",
+        {"name": "Error", "message": "Tool approval requires an interactive session"},
         'Tool "editor" requires approval in a TTY session -- NOT a tool or system failure.',
         "Tool was not executed",
         "User rejected the tool call",

@@ -104,28 +104,32 @@ _CLINE_RESULT_TEXT_KEYS = ("result", "output", "content", "error", "reason", "me
 # "-- NOT a tool or system failure."); the run still ends ``completed``/``stop``
 # with exit 0 and nothing on stderr.  Only these tool error fields are read.
 _CLINE_TOOL_APPROVAL_REASONS = (
-    "requires approval",
-    "approval requires an interactive session",
-    "non-interactive",
+    "requires approval in a tty",
+    "requires an interactive session",
     "not a tool or system failure",
     "tool was not executed",
-    "user rejected",
+    "user rejected the tool",
     "denied by user",
     "tool execution denied",
 )
+# Model-authored tool arguments are never read as structure.
+_CLINE_MODEL_ARGUMENT_KEYS = frozenset({"input", "args", "arguments", "params", "parameters"})
+
+
+def _cline_error_texts(error: Any) -> list[str]:
+    if isinstance(error, str):
+        return [error]
+    if isinstance(error, dict):
+        return [item for key in ("message", "error", "reason") for item in _cline_error_texts(error.get(key))]
+    return []
 
 
 def _cline_tool_error_denied(event: dict[str, Any]) -> bool:
-    candidates = [event.get("error")]
+    texts = _cline_error_texts(event.get("error"))
     output = event.get("output")
     if isinstance(output, dict):
-        candidates.append(output.get("error"))
-    return any(
-        isinstance(item, str) and any(reason in item.lower() for reason in _CLINE_TOOL_APPROVAL_REASONS)
-        for item in candidates
-    )
-# Model-authored tool arguments are never read as structure.
-_CLINE_MODEL_ARGUMENT_KEYS = frozenset({"input", "args", "arguments", "params", "parameters"})
+        texts += _cline_error_texts(output.get("error"))
+    return any(reason in text.lower() for text in texts for reason in _CLINE_TOOL_APPROVAL_REASONS)
 
 
 def _cline_short_cluster_has_yolo(token: str) -> bool:
