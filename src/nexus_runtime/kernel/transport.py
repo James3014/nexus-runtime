@@ -280,11 +280,18 @@ def redact_private_log_file_argv(argv: list[str]) -> list[str]:
 
 
 def file_sha256_or_none(path: str) -> str | None:
-    """sha256 of the file's bytes (symlinks followed), or None when it cannot be read."""
+    """sha256 of a regular file's bytes (symlinks followed), or None when it cannot be read.
+
+    Only regular files are hashed, so a FIFO or a device such as /dev/zero can
+    neither block nor loop forever before the timed provider call starts.
+    """
 
     try:
+        resolved = os.path.realpath(path)
+        if not stat.S_ISREG(os.stat(resolved).st_mode):
+            return None
         digest = hashlib.sha256()
-        with open(os.path.realpath(path), "rb") as handle:
+        with open(resolved, "rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()

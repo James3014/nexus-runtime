@@ -157,3 +157,14 @@ def test_non_agy_provider_redacted_equals_raw():
     assert evidence["redacted_command_fingerprint"] == evidence["command_fingerprint"]
     assert evidence["executable_sha256"] == file_sha256_or_none(str(Path(sys.executable).resolve()))
     assert evidence["provider_print_timeout_sec"] is None
+
+
+def test_non_regular_files_are_not_hashed_and_never_block(tmp_path):
+    import os
+
+    fifo = tmp_path / "agy-fifo"
+    os.mkfifo(fifo)
+    # A FIFO with no writer would block open(); a device never reaches EOF.
+    assert file_sha256_or_none(str(fifo)) is None
+    assert file_sha256_or_none("/dev/zero") is None
+    assert file_sha256_or_none(str(tmp_path)) is None
