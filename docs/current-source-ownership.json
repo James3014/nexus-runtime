@@ -334,7 +334,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/unified_runtime.py",
-      "sha256": "8dd7b7bed4991713d056a9d905172414bcd0408c63e5699489f380eb047ac6c3"
+      "sha256": "60cc03ea28fd0b95e61c7ece67a737aeb5df3555cc8a1b77db8708ada06a2a3e"
     },
     {
       "canonical_owner": "memory adapter",
@@ -558,7 +558,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/evidence/receipt_base.py",
-      "sha256": "4529a3571ea4dd4633614f4c07dd3b87d309d0a51246e0e19a75c021e30c0623"
+      "sha256": "0cd4711655e36c04e85ddcb74689977df305329ebcd1b549b7cba6f565ae76fc"
     },
     {
       "canonical_owner": "runtime planning",
@@ -914,6 +914,6 @@
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
   "source_head": "674931d34e4bea34a56c1492b1b1da2d0ed740f8",
-  "source_tree": "ebd3d81c7c635dfb3420c1056d5c8eee39301160",
+  "source_tree": "2ba5700e749145521e9a79ca6652f440597b3178",
   "unknown_lineage": []
 }
