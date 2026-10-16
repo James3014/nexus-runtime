@@ -327,7 +327,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/transport.py",
-      "sha256": "2845c9dc4cee6ab7b90f86b552a6ac96a6db556b33dc06b58c07155f20d6e979"
+      "sha256": "68c412623493c8aee8d95027fd65f100ed60efe250afdfd5a61da5cf12b8cf0f"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "06497a385f1594de20b54d301fe09bcbb394b0a4",
-  "source_tree": "bcd2a2c1e1f6f77bfefe6c902696fd9d8f82d69f",
+  "source_head": "5e6e41d2b02fddf6939b6e0d83eb8bbca59eaa87",
+  "source_tree": "a62b3bd217b1391b211511f38c1520e38db9bb34",
   "unknown_lineage": []
 }
