@@ -230,6 +230,14 @@ def test_cline_denied_tool_with_finish_stop_is_non_delivery(stdout, stderr):
             "provider_cline_status_not_success",
         ),
         (_stream({"type": "run_result"}), "provider_cline_status_not_success"),
+        (
+            _stream({"type": "run_result", "finishReason": "cancelled"}),
+            "provider_cline_status_not_success",
+        ),
+        (
+            _stream({"type": "run_result", "finishReason": "error"}, _OK),
+            "provider_cline_status_not_success",
+        ),
     ],
 )
 def test_cline_missing_run_result_or_error_finish_is_non_delivery(stdout, error):
@@ -237,6 +245,13 @@ def test_cline_missing_run_result_or_error_finish_is_non_delivery(stdout, error)
     assert result["output_delivered"] is False
     assert result["gate_passed"] is False
     assert result["error"] == error
+
+
+def test_cline_nonzero_exit_with_clean_run_result_is_non_delivery():
+    result, _ = _run(_stream(_OK), returncode=1)
+    assert result["output_delivered"] is False
+    assert result["gate_passed"] is False
+    assert result["error"] == "provider_cline_process_failed"
 
 
 def test_cline_quoted_denial_text_in_model_output_is_not_a_denial():

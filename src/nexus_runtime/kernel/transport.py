@@ -88,6 +88,9 @@ CLINE_PERMISSION_MODE = "auto_approve_false"
 # Text markers are trusted on stderr only; stdout is parsed as JSON events and
 # only structural keys are inspected (model text quoting a marker is not a denial).
 _CLINE_DENIAL_MARKERS = ("execution-denied", "execution denied", "denied by user")
+_CLINE_NON_SUCCESS_FINISH_REASONS = frozenset(
+    {"error", "cancelled", "canceled", "aborted", "interrupted", "timeout", "timed_out", "length", "content-filter"}
+)
 _CLINE_DENIED_TYPES = frozenset({"execution-denied"})
 _CLINE_DENIED_DEFAULT_REASONS = ("tool execution denied", "tool call execution denied")
 # Model-authored tool arguments are never read as structure.
@@ -158,9 +161,11 @@ def cline_delivery_failure(stdout: str, stderr: str) -> str | None:
         return "cline_permission_denied"
     if not results:
         return "cline_output_unparseable"
-    finish = str(results[-1].get("finishReason") or "").lower()
-    if not finish or finish == "error":
-        return "cline_status_not_success"
+    # Every run_result must be a clean finish, not only the last one.
+    for result in results:
+        finish = str(result.get("finishReason") or "").strip().lower()
+        if not finish or finish in _CLINE_NON_SUCCESS_FINISH_REASONS:
+            return "cline_status_not_success"
     return None
 
 
@@ -1171,7 +1176,9 @@ def build_subprocess_online_invoker(
 
             permission_mode = "provider_default"
             if spec.provider == "cline":
-                if cline_permission_bypass(argv):
+                # The runtime owns every cline option: a caller command may supply
+                # only the executable (no extra --cwd/--model/other options).
+                if len(spec.command) != 1 or cline_permission_bypass(argv):
                     return _cline_fail_closed("cline_command_shape_unsupported")
                 permission_mode = CLINE_PERMISSION_MODE
             if spec.provider == "agy":
@@ -1381,6 +1388,9 @@ def build_subprocess_online_invoker(
                 response_text = ""
             delivered = bool(response_text.strip()) and not permission_denied
             cline_failure = cline_delivery_failure(stdout, stderr) if spec.provider == "cline" else None
+            if spec.provider == "cline" and not cline_failure and returncode != 0:
+                delivered = False
+                cline_failure = "cline_process_failed"
             if cline_failure:
                 delivered = False
                 failure_error = f"provider_{cline_failure}"
