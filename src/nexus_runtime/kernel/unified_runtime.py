@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Mapping, TYPE_CHECKING
@@ -243,6 +244,22 @@ class UnifiedRuntime:
         # stripped receipt cannot turn an UNKNOWN/unresolved effect into blind retry permission.
         if effect_journal is not None and effect_journal.unresolved_for_subject(str(request.task_id)):
             raise ValueError("replan_effect_binding_incomplete")
+        # If a runtime-owned durable copy of the PRIOR receipt exists, it is the stored truth:
+        # the caller-supplied receipt must carry the same bindings and receipt_hash. Only the
+        # prior receipt's own path counts; ``receipt_path`` is this replan's OUTPUT path and may
+        # hold an unrelated stale receipt, so it is never used for the comparison.
+        durable_target = previous_receipt.get("receipt_path")
+        if durable_target is not None and Path(durable_target).is_file():
+            try:
+                durable = json.loads(Path(durable_target).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raise ValueError("replan_effect_binding_mismatch") from None
+            if (
+                not isinstance(durable, Mapping)
+                or (durable.get("effect_journal_bindings") or []) != (previous_receipt.get("effect_journal_bindings") or [])
+                or durable.get("receipt_hash") != previous_receipt.get("receipt_hash")
+            ):
+                raise ValueError("replan_effect_binding_mismatch")
 
         if str(previous_receipt.get("task_id", "")) != str(request.task_id):
             raise ValueError("replan_task_id_mismatch")
@@ -2732,16 +2749,16 @@ class UnifiedRuntime:
                     if callable(self._local_service):
                         return self._local_service(local_request)
                     raise TypeError("local_service_not_callable")
-                with _runtime_write_context(self._ctx, runtime_writer_factory, task_id=request.task_id, role="effect_journal", path=effect_journal.path, owner_context=owner_context) as effect_context:
-                    _assert_runtime_context_active(runtime_writer_factory, effect_context)
-                    response = effect_journal.execute(identity=local_identity, subject=request.task_id, request_digest=request_digest, dispatch=lambda: effect_dispatch.dispatch(_local_dispatch), reconcile=lambda record: effect_reconcile.reconcile(record))
-                deterministic_effect_id = self._ctx.deterministic_effect_id
-                operation_digest = self._ctx.operation_digest
                 binding = {"effect_id": deterministic_effect_id(local_identity), "operation_id": operation_digest(local_identity), "action": local_identity["action"], "request_digest": request_digest}
-                saved = effect_journal.get(binding["effect_id"]) or {}
-                binding.update({"generation": saved.get("generation"), "state": saved.get("state"), "result_digest": saved.get("result_digest", ""), "project_root": str(effect_journal.project_root)})
                 if effect_journal_bindings is not None:
                     effect_journal_bindings.append(binding)
+                with _runtime_write_context(self._ctx, runtime_writer_factory, task_id=request.task_id, role="effect_journal", path=effect_journal.path, owner_context=owner_context) as effect_context:
+                    _assert_runtime_context_active(runtime_writer_factory, effect_context)
+                    try:
+                        response = effect_journal.execute(identity=local_identity, subject=request.task_id, request_digest=request_digest, dispatch=lambda: effect_dispatch.dispatch(_local_dispatch), reconcile=lambda record: effect_reconcile.reconcile(record))
+                    finally:
+                        saved = effect_journal.get(binding["effect_id"]) or {}
+                        binding.update({"generation": saved.get("generation"), "state": saved.get("state"), "result_digest": saved.get("result_digest", ""), "project_root": str(effect_journal.project_root)})
             elif hasattr(self._local_service, "handle"):
                 response = self._local_service.handle(local_request)
             elif callable(self._local_service):
