@@ -257,6 +257,9 @@ def test_cline_missing_run_result_or_error_finish_is_non_delivery(stdout, error)
         (["--yolo"], True),
         (["--yolo=true"], True),
         (["-y=1"], True),
+        (["-yp"], True),
+        (["-py"], True),
+        (["--auto-approve", "false", "-p"], False),
         (["-y"], True),
         (["--auto-approve=true"], True),
         (["--auto-approve", "true"], True),
@@ -271,6 +274,70 @@ def test_cline_permission_bypass_predicate(tokens, bypass):
         cline_permission_bypass(["cline", "--json", *tokens, "--model", MODEL, "hi"])
         is bypass
     )
+
+
+_REAL_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "cline_3_0_69_denied_tool_real.jsonl"
+)
+
+
+def test_real_cline_3_0_69_denied_tool_capture_is_non_delivery():
+    """A real cline 3.0.69 run (``--json --auto-approve false``, free model, temp cwd).
+
+    Both tool calls were refused ("requires approval in a TTY session -- NOT a tool
+    or system failure."), yet the run ended finishReason ``completed``, exit 0,
+    empty stderr.  The path/ts fields were redacted; events are otherwise verbatim.
+    """
+    stdout = _REAL_FIXTURE.read_text(encoding="utf-8")
+    assert '"finishReason":"completed"' in stdout
+    result, _ = _run(stdout)
+    assert result["output_delivered"] is False
+    assert result["gate_passed"] is False
+    assert result["error"] == "provider_cline_permission_denied"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Tool approval requires an interactive session, but this session is non-interactive.",
+        'Tool "editor" requires approval in a TTY session -- NOT a tool or system failure.',
+        "Tool was not executed",
+        "User rejected the tool call",
+    ],
+)
+def test_cline_tool_error_reasons_are_denials_only_in_tool_error_fields(reason):
+    denied = {
+        "type": "agent_event",
+        "event": {"type": "content_end", "contentType": "tool", "error": reason},
+    }
+    nested = {
+        "type": "agent_event",
+        "event": {
+            "type": "content_end",
+            "contentType": "tool",
+            "output": {"error": reason},
+        },
+    }
+    for event in (denied, nested):
+        result, _ = _run(_stream(event, _OK))
+        assert result["error"] == "provider_cline_permission_denied"
+    # the same text in model text, or in a successful tool result, is not a denial
+    quoted = [
+        {
+            "type": "agent_event",
+            "event": {"type": "content_end", "contentType": "text", "text": reason},
+        },
+        {
+            "type": "agent_event",
+            "event": {
+                "type": "content_end",
+                "contentType": "tool",
+                "output": {"result": reason},
+            },
+        },
+    ]
+    result, _ = _run(_stream(*quoted, _OK))
+    assert result["output_delivered"] is True
 
 
 def test_cline_nonzero_exit_with_clean_run_result_is_non_delivery():

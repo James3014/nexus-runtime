@@ -98,8 +98,40 @@ _CLINE_DENIED_DEFAULT_REASONS = (
     "denied by user",
 )
 _CLINE_RESULT_TEXT_KEYS = ("result", "output", "content", "error", "reason", "message")
+# Observed (cline 3.0.69, headless, ``--auto-approve false``): a refused tool is a
+# ``content_end`` event with ``contentType: "tool"`` whose ``error`` /
+# ``output.error`` carries one of these reasons (cline's fixed suffix is
+# "-- NOT a tool or system failure."); the run still ends ``completed``/``stop``
+# with exit 0 and nothing on stderr.  Only these tool error fields are read.
+_CLINE_TOOL_APPROVAL_REASONS = (
+    "requires approval",
+    "approval requires an interactive session",
+    "non-interactive",
+    "not a tool or system failure",
+    "tool was not executed",
+    "user rejected",
+    "denied by user",
+    "tool execution denied",
+)
+
+
+def _cline_tool_error_denied(event: dict[str, Any]) -> bool:
+    candidates = [event.get("error")]
+    output = event.get("output")
+    if isinstance(output, dict):
+        candidates.append(output.get("error"))
+    return any(
+        isinstance(item, str) and any(reason in item.lower() for reason in _CLINE_TOOL_APPROVAL_REASONS)
+        for item in candidates
+    )
 # Model-authored tool arguments are never read as structure.
 _CLINE_MODEL_ARGUMENT_KEYS = frozenset({"input", "args", "arguments", "params", "parameters"})
+
+
+def _cline_short_cluster_has_yolo(token: str) -> bool:
+    """Single-dash short-flag clusters (``-yp``, ``-py``) that expand to ``-y``."""
+    name = token.partition("=")[0]
+    return len(name) > 2 and name.startswith("-") and not name.startswith("--") and "y" in name[1:]
 
 
 def cline_permission_bypass(argv: tuple[str, ...] | list[str]) -> bool:
@@ -108,6 +140,7 @@ def cline_permission_bypass(argv: tuple[str, ...] | list[str]) -> bool:
     if any(
         token in CLINE_YOLO_FLAGS
         or token.partition("=")[0] in CLINE_YOLO_FLAGS
+        or _cline_short_cluster_has_yolo(token)
         or token.startswith(CLINE_AUTO_APPROVE_FLAG + "=")
         for token in options
     ):
@@ -127,6 +160,8 @@ def _cline_structured_denial(value: Any) -> bool:
         return False
     kind = value.get("type")
     if kind in _CLINE_DENIED_TYPES:
+        return True
+    if kind == "content_end" and value.get("contentType") == "tool" and _cline_tool_error_denied(value):
         return True
     if kind == "tool-approval-response" and value.get("approved") in (False, 0, "false", "False"):
         return True
