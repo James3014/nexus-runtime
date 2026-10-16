@@ -13,7 +13,7 @@ from nexus_runtime.task_context.retrieval_hints import (
     seal_retrieval_hint_report,
 )
 
-from .coordinator import ExecutionCoordinator as _BaseExecutionCoordinator
+from .coordinator import BaseExecutionCoordinator as _BaseExecutionCoordinator
 from .effect_authorization import EffectAuthorization
 
 

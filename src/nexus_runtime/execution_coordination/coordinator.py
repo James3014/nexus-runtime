@@ -159,7 +159,7 @@ class WorkerEscalationPolicy:
 
 
 @dataclass(frozen=True)
-class ExecutionCoordinator:
+class BaseExecutionCoordinator:
     state: ExecutionStatePort
     contract: ExecutionContractPort
     worker: WorkerAdapterPort

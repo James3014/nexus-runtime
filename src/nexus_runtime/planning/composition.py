@@ -1,4 +1,8 @@
-"""Explicit composition root for the noncanonical Planner/admission package.
+"""Explicit composition root for the Planner/admission package.
+
+nexus-runtime is the source owner of this package; route and capability
+decision authority stays with Nexus-new (``runtime_is_planner_authority`` is
+false).
 
 The policy path is explicit and package-owned. No legacy repository fallback is
 allowed; this module does not select routes or alter admission semantics.
