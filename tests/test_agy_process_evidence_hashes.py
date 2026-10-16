@@ -168,3 +168,15 @@ def test_non_regular_files_are_not_hashed_and_never_block(tmp_path):
     assert file_sha256_or_none(str(fifo)) is None
     assert file_sha256_or_none("/dev/zero") is None
     assert file_sha256_or_none(str(tmp_path)) is None
+
+
+def test_hash_type_check_is_on_the_opened_descriptor(tmp_path, monkeypatch):
+    import os
+
+    fifo = tmp_path / "swapped"
+    os.mkfifo(fifo)
+    real_stat = os.stat
+    # Simulate a path check that saw a regular file before a swap to a FIFO:
+    # the helper must not rely on os.stat of the path at all.
+    monkeypatch.setattr(os, "stat", lambda p, *a, **k: real_stat(__file__))
+    assert file_sha256_or_none(str(fifo)) is None

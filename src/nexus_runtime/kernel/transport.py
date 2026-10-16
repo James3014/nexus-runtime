@@ -287,16 +287,25 @@ def file_sha256_or_none(path: str) -> str | None:
     """
 
     try:
-        resolved = os.path.realpath(path)
-        if not stat.S_ISREG(os.stat(resolved).st_mode):
+        # O_NONBLOCK: opening a FIFO never waits for a writer; the type check is
+        # on the opened descriptor, so a swap after a path check cannot hang us.
+        fd = os.open(os.path.realpath(path), os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
             return None
         digest = hashlib.sha256()
-        with open(resolved, "rb") as handle:
+        with os.fdopen(fd, "rb", closefd=True) as handle:
+            fd = -1
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
     except OSError:
         return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def parse_agy_envelope(stdout: str) -> dict[str, Any] | None:
