@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Mapping, TYPE_CHECKING
@@ -243,6 +244,20 @@ class UnifiedRuntime:
         # stripped receipt cannot turn an UNKNOWN/unresolved effect into blind retry permission.
         if effect_journal is not None and effect_journal.unresolved_for_subject(str(request.task_id)):
             raise ValueError("replan_effect_binding_incomplete")
+        # If a runtime-owned durable receipt exists at receipt_path, it is the stored truth:
+        # the caller-supplied receipt must carry the same bindings and receipt_hash.
+        durable_target = receipt_path or previous_receipt.get("receipt_path")
+        if durable_target is not None and Path(durable_target).is_file():
+            try:
+                durable = json.loads(Path(durable_target).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raise ValueError("replan_effect_binding_mismatch") from None
+            if (
+                not isinstance(durable, Mapping)
+                or (durable.get("effect_journal_bindings") or []) != (previous_receipt.get("effect_journal_bindings") or [])
+                or durable.get("receipt_hash") != previous_receipt.get("receipt_hash")
+            ):
+                raise ValueError("replan_effect_binding_mismatch")
 
         if str(previous_receipt.get("task_id", "")) != str(request.task_id):
             raise ValueError("replan_task_id_mismatch")

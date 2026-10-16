@@ -410,6 +410,152 @@ def test_replan_with_stripped_bindings_cannot_redispatch_unknown_effect(tmp_path
 
     tampered = dict(first)
     tampered.pop("effect_journal_bindings", None)
-    with pytest.raises(ValueError, match="replan_effect_binding_incomplete"):
+    # Stripping now breaks the receipt_hash lineage first; the journal scan stays as defense in depth.
+    with pytest.raises(ValueError, match="prior_receipt_base_invalid|replan_effect_binding_incomplete"):
         exports.UnifiedRuntime().run_replan(tampered, request, **kw)
     assert dispatches == [1]
+
+
+def _effect_replan_fixture(tmp_path: Path, *, first_dispatch_unknown: bool):
+    from nexus_runtime.kernel.events.effect_journal import (
+        EffectDispatchPort,
+        EffectJournal,
+        EffectReconcilePort,
+    )
+    from nexus_runtime.kernel.events.writer_generation import (
+        EventWriterGeneration,
+        install_generation,
+    )
+
+    exports = build_runtime_exports()
+    request = exports.UnifiedRuntimeRequest(
+        task_id="unk-effect",
+        workspace_revision="rev-1",
+        task_statement="bounded failed verifier trace",
+        task_type="repair",
+        route={
+            "recommended_flow": "direct",
+            "online_policy": "deny",
+            "workforce_admission_enabled": True,
+            "workforce_bindings": {
+                "online": {
+                    "worker_id": "agy_flash_38",
+                    "provider": "agy",
+                    "model": "gemini-3.8-flash-medium",
+                    "controls": ["task_card", "allowed_files", "mandatory_commands", "parser", "verifier", "independent_verification"],
+                }
+            },
+        },
+        online_enabled=True,
+        local_enabled=False,
+    )
+    root = tmp_path / "root-a"
+    root.mkdir()
+    gen = install_generation(root, EventWriterGeneration(1, "writer-a"))
+    journal = EffectJournal(root, gen)
+    dispatches: list[int] = []
+
+    def dispatch(op):
+        dispatches.append(len(dispatches) + 1)
+        if first_dispatch_unknown and len(dispatches) == 1:
+            raise TimeoutError("connection lost after send: outcome unknown")
+        return op()
+
+    base = _failure_invokers(exports, request)
+    name = sorted(base)[0]
+
+    def effectful(ctx, _f=base[name]):
+        return _f(ctx)
+
+    effectful.effectful = True
+
+    def failed_verifier(ctx):
+        return {
+            "task_id": ctx["task_id"], "invoked": True, "status": "FAILED", "gate_passed": False,
+            "evidence_present": True, "evidence_refs": ["fixture:failed-verifier"],
+        }
+
+    kw = dict(
+        capability_invokers={**base, name: effectful},
+        verifier=failed_verifier,
+        effect_journal=journal,
+        effect_dispatch=EffectDispatchPort(dispatch),
+        effect_reconcile=EffectReconcilePort(lambda record: None),
+    )
+    first = exports.UnifiedRuntime().run(request, **kw)
+    return exports, request, kw, first, dispatches, (root, journal)
+
+
+def test_replan_with_stripped_bindings_and_fresh_journal_cannot_redispatch(tmp_path: Path) -> None:
+    from nexus_runtime.kernel.events.effect_journal import EffectJournal
+    from nexus_runtime.kernel.events.writer_generation import (
+        EventWriterGeneration,
+        install_generation,
+    )
+
+    exports, request, kw, first, dispatches, _ = _effect_replan_fixture(tmp_path, first_dispatch_unknown=True)
+    assert first["effect_journal_bindings"] and first["effect_journal_bindings"][0].get("state") != "COMPLETED"
+    tampered = dict(first)
+    tampered.pop("effect_journal_bindings")
+    fresh_root = tmp_path / "root-fresh"
+    fresh_root.mkdir()
+    fresh = EffectJournal(fresh_root, install_generation(fresh_root, EventWriterGeneration(1, "writer-b")))
+    kw2 = {**kw, "effect_journal": fresh}
+    with pytest.raises(ValueError, match="prior_receipt_base_invalid"):
+        exports.UnifiedRuntime().run_replan(tampered, request, **kw2)
+    assert dispatches == [1]
+
+
+def test_validate_receipt_base_strict_rejects_stripped_or_altered_bindings(tmp_path: Path) -> None:
+    from nexus_runtime.planning.evidence.receipt_base import validate_receipt_base
+
+    _, _, _, first, _, _ = _effect_replan_fixture(tmp_path, first_dispatch_unknown=True)
+    assert validate_receipt_base(first, mode="strict")["ok"] is True
+    stripped = dict(first)
+    stripped.pop("effect_journal_bindings")
+    res = validate_receipt_base(stripped, mode="strict")
+    assert res["ok"] is False and "receipt_hash_tamper" in res["blockers"]
+    altered = dict(first)
+    altered["effect_journal_bindings"] = [dict(b, state="COMPLETED") for b in first["effect_journal_bindings"]]
+    res = validate_receipt_base(altered, mode="strict")
+    assert res["ok"] is False and "receipt_hash_tamper" in res["blockers"]
+
+
+def test_honest_replan_with_completed_effects_still_accepted(tmp_path: Path) -> None:
+    exports, request, kw, first, dispatches, _ = _effect_replan_fixture(tmp_path, first_dispatch_unknown=False)
+    assert first["effect_journal_bindings"]
+    assert all(b["state"] == "COMPLETED" for b in first["effect_journal_bindings"])
+    second = exports.UnifiedRuntime().run_replan(first, request, **kw)
+    assert second["execution_attempt"]["attempt_number"] == 2
+
+
+def test_receipt_without_effects_still_validates_strict() -> None:
+    from nexus_runtime.planning.evidence.receipt_base import validate_receipt_base
+
+    exports = build_runtime_exports()
+    request = _request(exports)
+    receipt = exports.UnifiedRuntime().run(request)
+    assert not receipt.get("effect_journal_bindings")
+    assert "effect_journal_bindings_hash" not in receipt["receipt_base"]
+    assert validate_receipt_base(receipt, mode="strict")["ok"] is True
+
+
+def test_replan_fails_closed_when_durable_receipt_differs_from_supplied(tmp_path: Path, monkeypatch) -> None:
+    import nexus_runtime.kernel.unified_runtime as unified_runtime
+
+    # Writer-ownership entry checks are orthogonal here (they demand a runtime writer factory
+    # for any receipt_path under a journal root); isolate the durable-receipt comparison.
+    monkeypatch.setattr(unified_runtime, "_validate_runtime_writer_entry", lambda *a, **k: None)
+    exports, request, kw, first, dispatches, _ = _effect_replan_fixture(tmp_path, first_dispatch_unknown=False)
+    (tmp_path / "receipts").mkdir()
+    durable = tmp_path / "receipts" / "receipt.json"
+    stored = dict(first)
+    stored["effect_journal_bindings"] = []
+    durable.write_text(json.dumps(stored), encoding="utf-8")
+    before = list(dispatches)
+    with pytest.raises(ValueError, match="replan_effect_binding_mismatch"):
+        exports.UnifiedRuntime().run_replan(first, request, receipt_path=durable, **kw)
+    assert dispatches == before
+    durable.write_text(json.dumps(first), encoding="utf-8")
+    second = exports.UnifiedRuntime().run_replan(first, request, receipt_path=durable, **kw)
+    assert second["execution_attempt"]["attempt_number"] == 2
