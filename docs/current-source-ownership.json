@@ -334,7 +334,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/unified_runtime.py",
-      "sha256": "7404dcfa11192179c861cd8266b72bfe91f652c864bfd52df4f96dad69670499"
+      "sha256": "8dd7b7bed4991713d056a9d905172414bcd0408c63e5699489f380eb047ac6c3"
     },
     {
       "canonical_owner": "memory adapter",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "35edc109ff3a7df3cd272a162e29d3ee40117234",
-  "source_tree": "dde20998cdba4d637b3dbcfa199df532e5767c71",
+  "source_head": "674931d34e4bea34a56c1492b1b1da2d0ed740f8",
+  "source_tree": "ebd3d81c7c635dfb3420c1056d5c8eee39301160",
   "unknown_lineage": []
 }
