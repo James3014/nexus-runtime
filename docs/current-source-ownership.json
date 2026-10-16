@@ -96,14 +96,14 @@
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance",
       "path": "nexus_runtime/execution_coordination/context_aware.py",
-      "sha256": "bac287ad20d03ce8756d0cef00e895a3a034955eaacf602ba86f29e7e8824e3a"
+      "sha256": "2ed2fe7ad7aab804bbcd4e21ad1cfefe37d7b329e1c98a82a2621b849d06f377"
     },
     {
       "canonical_owner": "runtime execution coordination",
       "donor": "docs/execution-coordination-provenance.json",
       "lineage_status": "integrated_pending_acceptance",
       "path": "nexus_runtime/execution_coordination/coordinator.py",
-      "sha256": "b98001161cd6464921f90a6ae9a54750d9808f6b1de047cdf1644598296843fc"
+      "sha256": "699a2b307497701a2bc62560a37c3f6fa11620a79febba043bf19b1448419140"
     },
     {
       "canonical_owner": "runtime execution coordination",
@@ -390,14 +390,14 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/__init__.py",
-      "sha256": "6790b9cd92be36b2429e749ce5ba8f018755214bd648f5dbdbaf410df45f5f54"
+      "sha256": "8d2372dd17c1367d0367f76f9f397609d9b783b524547611dd524e49cb0e522e"
     },
     {
       "canonical_owner": "runtime planning",
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/composition.py",
-      "sha256": "bb78248821d6b7e09534159bcb96aaeb0f6a0bf2ba4d6c4a333d9f90a143b659"
+      "sha256": "d27fce24ddef54973a5eca22eee50688c9f46f7ffc8b3bff4388237846842d02"
     },
     {
       "canonical_owner": "runtime planning",
@@ -642,7 +642,7 @@
       "donor": "none (new runtime-authored compatibility alias, Phase 2)",
       "lineage_status": "known",
       "path": "nexus_runtime/support/__init__.py",
-      "sha256": "3c675e25983e147418fccd86b7cbc3eed37aae459160d3e6bc5b4e70f4d70ad1"
+      "sha256": "05486075a9d596f8bdb558b3e257e209d759fbf19743584b9f95c86dade0de0f"
     },
     {
       "canonical_owner": "runtime support",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "5e6e41d2b02fddf6939b6e0d83eb8bbca59eaa87",
-  "source_tree": "a62b3bd217b1391b211511f38c1520e38db9bb34",
+  "source_head": "ee63e990db39cdecbe61122a28e415568ebb70d2",
+  "source_tree": "66edebe4257a024ba06a3996f6ad3e7ce1025d21",
   "unknown_lineage": []
 }
