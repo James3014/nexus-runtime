@@ -628,7 +628,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/services/model_workforce_policy.py",
-      "sha256": "597311d96b8c32c73b4b4a8e9fdbb1dcb92f1cf318f442b97bb04a3a961d9a2c"
+      "sha256": "1eb774d6de513ca5a3ea49dfc16a7088c61a1ba44e03795031e582a5a2bbb4c4"
     },
     {
       "canonical_owner": "runtime planning",

@@ -282,6 +282,7 @@ class WorkforcePolicyLoader:
         meta_keys = {
             "route_defaults", "campaign_routing", "consumer_routing",
             "fast_bounded_implementation_fallback",
+            "independent_review_fallback",
             "blocked_or_disabled_models_must_not_be_selected",
             "experiment_only_models_require_explicit_authorization",
             "free_remote_candidate_pool", "mandatory_escalation_conditions",
