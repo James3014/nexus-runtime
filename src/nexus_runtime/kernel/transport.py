@@ -76,6 +76,94 @@ def agy_permission_mode(argv: tuple[str, ...] | list[str], *, print_flag: str = 
     return AGY_PERMISSION_MODE_UNVERIFIED
 
 
+# Cline permission posture (#211, Nexus-new #2195/#2244).  cline 3.0.69
+# auto-approves by default, so the runtime-owned argv must carry exactly one
+# explicit ``--auto-approve false`` and no yolo flag.  A refused tool is
+# reported as ``execution-denied`` / "Tool execution denied by user."; a run
+# with a denied tool, no ``run_result`` or an error finish reason is
+# non-delivery.  Flag spellings are named once here.
+CLINE_AUTO_APPROVE_FLAG = "--auto-approve"
+CLINE_YOLO_FLAGS: frozenset[str] = frozenset({"--yolo", "-y"})
+CLINE_PERMISSION_MODE = "auto_approve_false"
+# Text markers are trusted on stderr only; stdout is parsed as JSON events and
+# only structural keys are inspected (model text quoting a marker is not a denial).
+_CLINE_DENIAL_MARKERS = ("execution-denied", "execution denied", "denied by user")
+_CLINE_DENIED_TYPES = frozenset({"execution-denied"})
+_CLINE_DENIED_DEFAULT_REASONS = ("tool execution denied", "tool call execution denied")
+# Model-authored tool arguments are never read as structure.
+_CLINE_MODEL_ARGUMENT_KEYS = frozenset({"input", "args", "arguments", "params", "parameters"})
+
+
+def cline_permission_bypass(argv: tuple[str, ...] | list[str]) -> bool:
+    """True unless a Cline argv has exactly one ``--auto-approve false`` and no yolo flag."""
+    options = [str(token) for token in argv[1:]]
+    if any(
+        token in CLINE_YOLO_FLAGS or token.startswith(CLINE_AUTO_APPROVE_FLAG + "=")
+        for token in options
+    ):
+        return True
+    approvals = [
+        options[index + 1] if index + 1 < len(options) else ""
+        for index, token in enumerate(options)
+        if token == CLINE_AUTO_APPROVE_FLAG
+    ]
+    return approvals != ["false"]
+
+
+def _cline_structured_denial(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(_cline_structured_denial(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    kind = value.get("type")
+    if kind in _CLINE_DENIED_TYPES:
+        return True
+    if kind == "tool-approval-response" and value.get("approved") is False:
+        return True
+    result = value.get("result")
+    if (
+        value.get("is_error") is True
+        and isinstance(result, str)
+        and result.strip().lower().startswith(_CLINE_DENIED_DEFAULT_REASONS)
+    ):
+        return True
+    return any(
+        _cline_structured_denial(item)
+        for key, item in value.items()
+        if key not in _CLINE_MODEL_ARGUMENT_KEYS
+    )
+
+
+def cline_delivery_failure(stdout: str, stderr: str) -> str | None:
+    """Typed non-delivery reason for a Cline run, else ``None``.
+
+    Delivery needs a JSON ``run_result`` event whose ``finishReason`` is set and
+    not ``error``; any denied tool makes the run non-delivery.
+    """
+    if any(marker in str(stderr or "").lower() for marker in _CLINE_DENIAL_MARKERS):
+        return "cline_permission_denied"
+    results: list[dict[str, Any]] = []
+    denied = False
+    for line in str(stdout or "").splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        denied = denied or _cline_structured_denial(value)
+        if value.get("type") == "run_result":
+            results.append(value)
+    if denied:
+        return "cline_permission_denied"
+    if not results:
+        return "cline_output_unparseable"
+    finish = str(results[-1].get("finishReason") or "").lower()
+    if not finish or finish == "error":
+        return "cline_status_not_success"
+    return None
+
+
 # Online A/B S18/S19: the with-Nexus Agy turn runs with the same print-mode argv as the bench's
 # bare arm (scripts/bench/agy_provider.py in Nexus-new): a fresh project, a log file outside the
 # working directory (observed-model witness), the JSON envelope (response + usage), and Agy's own
@@ -888,6 +976,24 @@ def build_subprocess_online_invoker(
             # (0700) directory so no other local user can pre-plant the log or a symlink there.
             agy_log_dir = tempfile.mkdtemp(prefix="nexus-agy-online-log-")
             agy_log_path = str(Path(agy_log_dir) / AGY_LOG_FILE_NAME)
+        def _cline_fail_closed(error: str) -> dict[str, Any]:
+            return ctx.normalize_online_invoker_payload(
+                provider=spec.provider,
+                task_id=task_id,
+                invoked=False,
+                output_delivered=False,
+                gate_passed=False,
+                provider_call_count=0,
+                response="",
+                raw_response="",
+                usage={},
+                error=error,
+                evidence_refs=[f"online:{spec.provider}:{task_id}:{error}"],
+                transport=TRANSPORT_REGISTERED_CLI,
+                selection_source=SELECTION_EXPLICIT_REQUEST,
+                extra={"live_provider_claim": False, "provider_permission_mode": "unverified"},
+            )
+
         try:
             stdin_input: str | None = None
             prompt_transport = "stdin"
@@ -1002,7 +1108,22 @@ def build_subprocess_online_invoker(
                 prompt_transport = "argv"
             elif spec.provider == "cline" and len(argv) == 1:
                 model = admitted_model or str(meta.get("default_model", "glm-5.2") or "glm-5.2").strip()
-                argv = [argv[0], "--json", "--yolo", "--model", model, stdin]
+                # Cline auto-approves unless told otherwise (#211): say so explicitly,
+                # and bind --cwd to the caller's working directory when there is one.
+                # A prompt starting with "-" could be parsed as a flag: refuse it.
+                if stdin.startswith("-"):
+                    return _cline_fail_closed("cline_prompt_shape_unsupported")
+                cline_cwd = str(spec.working_directory or "")
+                argv = [
+                    argv[0],
+                    "--json",
+                    CLINE_AUTO_APPROVE_FLAG,
+                    "false",
+                    *(["--cwd", cline_cwd] if cline_cwd else []),
+                    "--model",
+                    model,
+                    stdin,
+                ]
                 stdin_input = ""
                 prompt_transport = "argv"
             elif spec.provider in {"mimo", "ollama"} and len(argv) == 1:
@@ -1049,6 +1170,10 @@ def build_subprocess_online_invoker(
                 prompt_transport = "stdin"
 
             permission_mode = "provider_default"
+            if spec.provider == "cline":
+                if cline_permission_bypass(argv):
+                    return _cline_fail_closed("cline_command_shape_unsupported")
+                permission_mode = CLINE_PERMISSION_MODE
             if spec.provider == "agy":
                 permission_mode = agy_permission_mode(argv, print_flag=print_flag)
                 if permission_mode != AGY_PERMISSION_MODE_PLAN:
@@ -1255,7 +1380,11 @@ def build_subprocess_online_invoker(
             if agy_json_mode and envelope is None:
                 response_text = ""
             delivered = bool(response_text.strip()) and not permission_denied
-            if permission_denied:
+            cline_failure = cline_delivery_failure(stdout, stderr) if spec.provider == "cline" else None
+            if cline_failure:
+                delivered = False
+                failure_error = f"provider_{cline_failure}"
+            elif permission_denied:
                 delivered = False
                 failure_error = "provider_headless_permission_denied"
             elif agy_identity_failure:
