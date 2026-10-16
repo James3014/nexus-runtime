@@ -635,6 +635,20 @@ def derive_receipt_child_hashes(receipt: Mapping[str, Any]) -> list[str]:
     return children
 
 
+def effect_journal_bindings_hash(bindings: Any) -> str:
+    """Hash of a receipt's ``effect_journal_bindings`` ("" when absent/empty).
+
+    Bindings carry per-effect journal state (COMPLETED/UNKNOWN...). They are part of the
+    receipt_hash lineage so stripping or editing them invalidates the receipt. Empty or
+    missing bindings yield "" and are NOT added to the hashed payload, which keeps
+    receipt_hash of receipts without effects (and of pre-existing persisted receipts)
+    byte-for-byte unchanged.
+    """
+    if not isinstance(bindings, (list, tuple)) or not bindings:
+        return ""
+    return canonical_json_hash([dict(b) if isinstance(b, Mapping) else b for b in bindings])
+
+
 def compute_receipt_hash(
     *,
     run_anchor_hash: str,
@@ -649,6 +663,7 @@ def compute_receipt_hash(
     consumption_chain: Sequence[Mapping[str, Any]] = (),
     execution_attempt_hash: str = "",
     execution_replan_request_hash: str = "",
+    effect_journal_bindings_hash: str = "",
 ) -> str:
     """Aggregate hash for a receipt node. Does not include the resulting hash itself."""
     payload = {
@@ -665,6 +680,9 @@ def compute_receipt_hash(
         "execution_attempt_hash": str(execution_attempt_hash or ""),
         "execution_replan_request_hash": str(execution_replan_request_hash or ""),
     }
+    if effect_journal_bindings_hash:
+        # Only present when the receipt has effect bindings (backward compatible).
+        payload["effect_journal_bindings_hash"] = str(effect_journal_bindings_hash)
     return canonical_json_hash(payload)
 
 
@@ -941,6 +959,8 @@ def attach_r3_receipt_base(
     replan_req_obj = receipt.get("execution_replan_request") if isinstance(receipt.get("execution_replan_request"), Mapping) else None
     execution_replan_request_hash = canonical_json_hash(replan_req_obj) if replan_req_obj is not None else ""
 
+    bindings_hash = effect_journal_bindings_hash(receipt.get("effect_journal_bindings"))
+
     r_hash = compute_receipt_hash(
         run_anchor_hash=run_anchor,
         ordered_child_hashes=children,
@@ -954,6 +974,7 @@ def attach_r3_receipt_base(
         consumption_chain=chain,
         execution_attempt_hash=execution_attempt_hash,
         execution_replan_request_hash=execution_replan_request_hash,
+        effect_journal_bindings_hash=bindings_hash,
     )
 
     # Final R3 parents = typed run_anchor only (not self, not circular child binding)
@@ -987,6 +1008,8 @@ def attach_r3_receipt_base(
     # Typed parent semantics (legacy parent_receipt_hashes retained as hash list)
     base["parent_refs"] = [{"type": "run_anchor", "hash": run_anchor}]
     base["ordered_child_hashes"] = list(children)
+    if bindings_hash:
+        base["effect_journal_bindings_hash"] = bindings_hash
     base["shared_bundle_verified"] = shared_bundle_verified
     base["shared_bundle_hash_status"] = str(bundle_res.get("status") or "UNAVAILABLE")
     base["computed_bundle_content_hash"] = computed_bundle_content_hash
@@ -1590,6 +1613,21 @@ def validate_receipt_base(
                 children = [stage_h]
             cb_map = base.get("claim_boundary") if isinstance(base.get("claim_boundary"), Mapping) else {}
             claim_for_hash = claim_boundary_projection(dict(cb_map) if cb_map else None)
+            if base is not payload:
+                # Envelope: bindings live on the envelope, so recompute from them. A stripped
+                # or edited list no longer matches the hashed lineage.
+                # Legacy receipts (no base field) were hashed without bindings: validate them
+                # that way; run_replan still checks their bindings against the journal. A NEW
+                # receipt with the field stripped fails because its stored receipt_hash
+                # included the field.
+                if "effect_journal_bindings_hash" in base:
+                    bindings_h = effect_journal_bindings_hash(payload.get("effect_journal_bindings"))
+                    if bindings_h != str(base.get("effect_journal_bindings_hash") or ""):
+                        blockers.append("effect_journal_bindings_hash_mismatch")
+                else:
+                    bindings_h = ""
+            else:
+                bindings_h = str(base.get("effect_journal_bindings_hash") or "")
             expected_receipt = compute_receipt_hash(
                 run_anchor_hash=ra,
                 ordered_child_hashes=[str(h) for h in children if str(h).strip()],
@@ -1603,6 +1641,7 @@ def validate_receipt_base(
                 consumption_chain=list(base.get("consumption_chain") or ()),
                 execution_attempt_hash=str(base.get("execution_attempt_hash") or ""),
                 execution_replan_request_hash=str(base.get("execution_replan_request_hash") or ""),
+                effect_journal_bindings_hash=bindings_h,
             )
             if rh != expected_receipt:
                 blockers.append("receipt_hash_tamper")
