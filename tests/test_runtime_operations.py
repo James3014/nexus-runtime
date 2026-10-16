@@ -619,3 +619,71 @@ def test_new_receipt_with_bindings_and_base_field_stripped_is_rejected(tmp_path:
     forged["receipt_base"].pop("effect_journal_bindings_hash")
     res = validate_receipt_base(forged, mode="strict")
     assert res["ok"] is False and "receipt_hash_tamper" in res["blockers"]
+
+
+def test_unknown_local_effect_is_bound_and_blocks_replan(tmp_path: Path) -> None:
+    from nexus_runtime.kernel.events.effect_journal import (
+        EffectDispatchPort,
+        EffectJournal,
+        EffectReconcilePort,
+    )
+    from nexus_runtime.kernel.events.writer_generation import (
+        EventWriterGeneration,
+        install_generation,
+    )
+
+    exports = build_runtime_exports()
+    request = exports.UnifiedRuntimeRequest(
+        task_id="unk-local",
+        workspace_revision="rev-1",
+        task_statement="execute a bounded runtime operation",
+        task_type="repair",
+        route={
+            "recommended_flow": "direct",
+            "online_policy": "deny",
+            "local_enabled": True,
+            "workforce_admission_enabled": True,
+            "workforce_bindings": {
+                "local": {
+                    "worker_id": "local_coder_7b",
+                    "controls": ["small_scope", "parser", "compile", "focused_tests", "reversible_application"],
+                },
+            },
+        },
+        online_enabled=False,
+        local_enabled=True,
+        local_request={"task_id": "unk-local", "action": "candidate"},
+    )
+    root = tmp_path / "root"
+    root.mkdir()
+    journal = EffectJournal(root, install_generation(root, EventWriterGeneration(1, "writer-a")))
+    dispatches: list[int] = []
+
+    def dispatch(op):
+        dispatches.append(1)
+        if len(dispatches) == 1:
+            raise TimeoutError("connection lost after send: outcome unknown")
+        return op()
+
+    class LocalService:
+        def handle(self, context):
+            return {"schema": "nexus.local_assist.response.v1", "task_id": context["task_id"], "action": "candidate"}
+
+    def failed_verifier(ctx):
+        return {"task_id": ctx["task_id"], "invoked": True, "status": "FAILED", "gate_passed": False,
+                "evidence_present": True, "evidence_refs": ["fixture:failed-verifier"]}
+
+    kw = dict(
+        capability_invokers=_failure_invokers(exports, request),
+        verifier=failed_verifier,
+        effect_journal=journal,
+        effect_dispatch=EffectDispatchPort(dispatch),
+        effect_reconcile=EffectReconcilePort(lambda record: None),
+    )
+    runtime = exports.UnifiedRuntime(local_service=LocalService())
+    first = runtime.run(request, **kw)
+    local_bindings = [b for b in first.get("effect_journal_bindings", []) if b["action"] == "local_model_invocation"]
+    assert local_bindings and all(b.get("state") != "COMPLETED" for b in local_bindings), first.get("effect_journal_bindings")
+    with pytest.raises(ValueError, match="replan_effect_binding_incomplete"):
+        runtime.run_replan(first, request, **kw)
+    assert dispatches == [1]
