@@ -266,6 +266,48 @@ def agy_print_mode_options(*, log_path: str, print_timeout_sec: int) -> list[str
     ]
 
 
+AGY_PRIVATE_LOG_FILE_TOKEN = "<private-log-file>"
+
+
+def redact_private_log_file_argv(argv: list[str]) -> list[str]:
+    """argv with the value after each ``--log-file`` replaced by a fixed token (random per call)."""
+
+    redacted = list(argv)
+    for index, token in enumerate(argv[:-1]):
+        if token == "--log-file":
+            redacted[index + 1] = AGY_PRIVATE_LOG_FILE_TOKEN
+    return redacted
+
+
+def file_sha256_or_none(path: str) -> str | None:
+    """sha256 of a regular file's bytes (symlinks followed), or None when it cannot be read.
+
+    Only regular files are hashed, so a FIFO or a device such as /dev/zero can
+    neither block nor loop forever before the timed provider call starts.
+    """
+
+    try:
+        # O_NONBLOCK: opening a FIFO never waits for a writer; the type check is
+        # on the opened descriptor, so a swap after a path check cannot hang us.
+        fd = os.open(os.path.realpath(path), os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        digest = hashlib.sha256()
+        with os.fdopen(fd, "rb", closefd=True) as handle:
+            fd = -1
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def parse_agy_envelope(stdout: str) -> dict[str, Any] | None:
     """The Agy ``--output-format json`` envelope, or None when stdout carries none.
 
@@ -1249,6 +1291,10 @@ def build_subprocess_online_invoker(
             cmd_fp = hashlib.sha256(json.dumps(argv, ensure_ascii=False).encode("utf-8")).hexdigest()
             exec_path = str(shutil.which(argv[0]) or argv[0])
             exec_hash = hashlib.sha256(exec_path.encode("utf-8")).hexdigest()
+            redacted_cmd_fp = hashlib.sha256(
+                json.dumps(redact_private_log_file_argv(argv), ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
+            exec_sha256 = file_sha256_or_none(exec_path)
             agy_isolated_working_directory = ""
             effective_working_directory = str(spec.working_directory or "")
             # Agy always runs in a runtime-owned ephemeral directory (#181); a
@@ -1293,6 +1339,9 @@ def build_subprocess_online_invoker(
                     "prompt_transport": prompt_transport,
                     "command_fingerprint": cmd_fp,
                     "executable_path_hash": exec_hash,
+                    "redacted_command_fingerprint": redacted_cmd_fp,
+                    "executable_sha256": exec_sha256,
+                    "provider_print_timeout_sec": agy_print_timeout if spec.provider == "agy" else None,
                     "working_directory_hash": cwd_hash,
                     "sandboxed_working_directory": bool(effective_working_directory),
                     "working_directory_isolation": (

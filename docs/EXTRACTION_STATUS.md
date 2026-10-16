@@ -7,7 +7,7 @@ current repository revision. Historical donor provenance remains preserved per
 file.
 
 The current Python source-ownership snapshot is revision
-`a955ba373d495b0d27d2c20fdeadd6b3fd5645a3`. This is a source-scope anchor for
+`5e6e41d2b02fddf6939b6e0d83eb8bbca59eaa87`. This is a source-scope anchor for
 the `src/**/*.py` hashes in `docs/current-source-ownership.json`, not a claim
 that the live repository HEAD will remain at that SHA. Later non-`src` commits
 do not invalidate this snapshot; any `src` mutation requires refreshing the
