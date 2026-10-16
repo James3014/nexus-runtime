@@ -163,7 +163,14 @@ authorization plus projection to the worker adapter.
 The projection is explicitly `DERIVED_PROJECTION_ONLY`: it is evidence of how an
 external ceiling was narrowed for one provider/backend, not a second Planner or
 permission authority. Missing, expired, tampered, substituted, or widening
-authorization/projection data fails closed. After execution may have started, a
+authorization/projection data fails closed. The hash is an unkeyed self-hash and
+`authority_id`/`authority_ref` are caller-asserted, so by default the check is
+integrity-only; pass `effect_authority=EffectAuthorityPort(verify)` (and
+`require_effect_authority=True` to require an authorization and a port on
+every effectful path, failing closed without them) so the host's
+canonical authority verifies the requested authorization once per attempt entry
+(the durable copy must hash-match it), including for custom runners, before any lease, worker or runner. The verifier must
+return exactly `True`; `None`, `False`, anything else or an exception rejects. After execution may have started, a
 missing durable authorization or projection cannot be freshly minted during
 restart/reconciliation.
 
