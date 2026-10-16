@@ -362,7 +362,7 @@ workers:
     model: gemini-3.8-flash-high
     state: REGISTERED_CONDITIONAL
     availability: AVAILABLE
-    autonomy: L2
+    autonomy: L2+
     roles: [independent_review, evidence_audit, hidden_defect_hunting]
     preferred_context: nexus_bounded
     default_route: true
@@ -434,6 +434,7 @@ workers:
     state: PROVEN_MAINCHAIN
     availability: UNAVAILABLE
     reason: retired_from_frontier_priority_2026-10-15
+    default_route: false
     autonomy: L2+
     roles: [independent_review, hidden_defect_hunting, evidence_audit, bounded_engineering_candidate]
     benchmark_ref: grok_45

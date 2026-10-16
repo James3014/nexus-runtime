@@ -124,3 +124,53 @@ def test_routing_independent_review_to_unavailable_worker_is_rejected(
         WorkforcePolicyValidationError, match="not available|unavailable"
     ):
         WorkforcePolicyLoader(path).load()
+
+
+def _admit(loader: WorkforcePolicyLoader, worker_id: str):
+    from nexus_runtime.planning.contracts.workforce_admission import (
+        WorkforceAdmissionRequest,
+    )
+
+    return loader.admit(
+        WorkforceAdmissionRequest(
+            requested_worker_id=worker_id,
+            role=ROLE,
+            autonomy="L2+",  # what CapabilityPlanner demands for every review/audit task
+            context="nexus_bounded",
+            route_authorized=True,
+            provided_controls=[
+                "bounded_scope",
+                "schema_validation",
+                "independent_verification",
+            ],
+        )
+    )
+
+
+def test_independent_review_worker_is_admitted_at_the_planner_autonomy_demand() -> None:
+    from nexus_runtime.planning.contracts.workforce_admission import AdmissionDecision
+
+    loader = WorkforcePolicyLoader()
+    assert (
+        _admit(loader, loader.resolve_route(ROLE)).decision == AdmissionDecision.ALLOW
+    )
+
+
+def test_retired_grok_review_is_never_admitted() -> None:
+    from nexus_runtime.planning.contracts.workforce_admission import AdmissionDecision
+
+    decision = _admit(WorkforcePolicyLoader(), "grok_review")
+    assert decision.decision != AdmissionDecision.ALLOW
+
+
+@pytest.mark.parametrize("fallback", ["grok_review", "agy_flash_38_high"])
+def test_independent_review_fallback_must_stay_null_or_available(
+    raw, tmp_path: Path, fallback
+) -> None:
+    bad = copy.deepcopy(raw)
+    bad["routing"]["online"]["independent_review_fallback"] = fallback
+    bad["routing"]["online"]["route_defaults"][ROLE]["fallback"] = fallback
+    path = tmp_path / "policy.yaml"
+    path.write_text(yaml.safe_dump(bad))
+    with pytest.raises(WorkforcePolicyValidationError):
+        WorkforcePolicyLoader(path).load()
