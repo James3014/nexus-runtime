@@ -26,6 +26,7 @@ from .coordinator import (
 from .effect_authorization import (
     EFFECT_AUTHORIZATION_SCHEMA,
     TOOL_PROJECTION_SCHEMA,
+    EffectAuthorityPort,
     EffectAuthorization,
     EffectAuthorizationError,
     ToolProjectionManifest,
@@ -75,6 +76,7 @@ __all__ = [
     "BoundedDecisionError",
     "BoundedDecisionPacket",
     "BoundedDecisionResponse",
+    "EffectAuthorityPort",
     "EffectAuthorization",
     "EffectAuthorizationError",
     "EscalationDecision",

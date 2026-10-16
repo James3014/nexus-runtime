@@ -5,7 +5,9 @@ from dataclasses import dataclass
 import pytest
 
 from nexus_runtime.execution_coordination import (
+    EffectAuthorityPort,
     EffectAuthorization,
+    EffectAuthorizationError,
     ExecutionCoordinator,
     MissingExecutionBindingError,
     ToolProjectionManifest,
@@ -1146,3 +1148,255 @@ def test_restart_with_missing_durable_tool_projection_fails_closed():
         coordinator.execute_attempt("task", "att")
 
     assert worker.invocations == []
+
+
+def _with_authority(coordinator, **kwargs):
+    return type(coordinator)(
+        coordinator.state,
+        coordinator.contract,
+        coordinator.worker,
+        coordinator.target,
+        coordinator.processes,
+        coordinator.finalization,
+        **kwargs,
+    )
+
+
+def _wider_self_minted_request():
+    request = _effect_authorized_request()
+    original = EffectAuthorization.from_mapping(request["effect_authorization"])
+    wide = EffectAuthorization.build(
+        authority_id="anyone",
+        authority_ref="nothing#0",
+        operation_id=original.operation_id,
+        attempt_id=original.attempt_id,
+        repository=original.repository,
+        source_revision=original.source_revision,
+        base_revision=original.base_revision,
+        workspace_id=original.workspace_id,
+        target_id=original.target_id,
+        effects={
+            **dict(original.effects),
+            "filesystem": {"write_paths": ["src/a.py", "/"]},
+            "network": {"hosts": ["*"]},
+        },
+    )
+    request["effect_authorization"] = wide.to_dict()
+    return request
+
+
+def _known_authority_port():
+    canonical = EffectAuthorization.from_mapping(
+        _effect_authorized_request()["effect_authorization"]
+    )
+
+    def verify(authorization):
+        if authorization.authority_id != canonical.authority_id:
+            raise EffectAuthorizationError("unknown authority")
+        if authorization.authorization_hash != canonical.authorization_hash:
+            raise EffectAuthorizationError("not the granted authorization")
+        return True
+
+    return EffectAuthorityPort(verify)
+
+
+def test_self_minted_wider_authorization_accepted_without_authority_port():
+    # Documents the integrity-only default: a fresh self-hash passes.
+    coordinator, state, worker, _target, _fin = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    state.snapshot["request"] = _wider_self_minted_request()
+    coordinator.execute_attempt("task", "att")
+    assert worker.invocations == ["codex"]
+
+
+def test_authority_port_rejects_self_minted_wider_authorization():
+    coordinator, state, worker, target, _fin = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    coordinator = _with_authority(coordinator, effect_authority=_known_authority_port())
+    state.snapshot["request"] = _wider_self_minted_request()
+
+    with pytest.raises(MissingExecutionBindingError, match="authority not verified"):
+        coordinator.execute_attempt("task", "att")
+
+    assert worker.invocations == []
+    assert target.initial_leases == 0
+    assert "effect_authorization" not in state.snapshot
+
+
+def test_authority_port_rejects_self_minted_authorization_for_custom_runner():
+    coordinator, state, worker, target, finalization = build([])
+    coordinator = _with_authority(coordinator, effect_authority=_known_authority_port())
+    state.snapshot["request"] = _wider_self_minted_request()
+    ran = []
+
+    coordinator.run_owned_attempt(
+        "task", "att", lambda c, r, u: ran.append(1) or {"promotion_status": "X"}
+    )
+
+    assert ran == []
+    assert worker.invocations == []
+    assert target.initial_leases == 0
+    assert len(finalization.failures) == 1
+
+
+def test_authority_port_rejects_via_launch_custom_runner():
+    coordinator, state, _worker, _target, finalization = build([])
+    coordinator = _with_authority(coordinator, effect_authority=_known_authority_port())
+    state.snapshot["request"] = _wider_self_minted_request()
+    ran = []
+    coordinator.processes.create_thread = lambda target, args: (target, args)
+    coordinator.processes.start_thread = lambda thread: thread[0](*thread[1])
+
+    coordinator.launch(
+        "task",
+        "att",
+        state_dir="/unused",
+        source_root="/unused",
+        custom_runner=lambda c, r, u: ran.append(1) or {},
+    )
+
+    assert ran == []
+    assert len(finalization.failures) == 1
+
+
+def test_authority_port_accepts_genuine_authorization():
+    coordinator, state, worker, _target, _fin = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    coordinator = _with_authority(coordinator, effect_authority=_known_authority_port())
+    state.snapshot["request"] = _effect_authorized_request()
+    coordinator.execute_attempt("task", "att")
+    assert worker.invocations == ["codex"]
+
+
+def test_authority_port_false_return_and_exception_reject():
+    for verifier in (lambda a: False, lambda a: 1 / 0):
+        coordinator, state, worker, _target, _fin = build(
+            [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+        )
+        coordinator = _with_authority(coordinator, effect_authority=EffectAuthorityPort(verifier))
+        state.snapshot["request"] = _effect_authorized_request()
+        with pytest.raises(MissingExecutionBindingError, match="authority not verified"):
+            coordinator.execute_attempt("task", "att")
+        assert worker.invocations == []
+
+
+def test_authority_verifier_called_once_per_attempt_entry():
+    calls = []
+
+    def verifier(authorization):
+        calls.append(authorization.authorization_hash)
+        return True
+
+    coordinator, state, worker, _target, _fin = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    coordinator = _with_authority(
+        coordinator, effect_authority=EffectAuthorityPort(verifier)
+    )
+    state.snapshot["request"] = _effect_authorized_request()
+    coordinator.execute_attempt("task", "att")
+    assert worker.invocations == ["codex"]
+    assert len(calls) == 1
+
+    calls.clear()
+    coordinator, state, _worker, _target, _fin = build([])
+    coordinator = _with_authority(
+        coordinator, effect_authority=EffectAuthorityPort(verifier)
+    )
+    state.snapshot["request"] = _effect_authorized_request()
+    ran = []
+    coordinator.run_owned_attempt(
+        "task", "att", lambda c, r, u: ran.append(1) or {}
+    )
+    assert ran == [1]
+    assert len(calls) == 1
+
+
+def test_resume_with_substituted_durable_authorization_is_rejected():
+    coordinator, state, worker, target, _fin = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    coordinator = _with_authority(
+        coordinator, effect_authority=EffectAuthorityPort(lambda a: True)
+    )
+    state.snapshot["request"] = _effect_authorized_request()
+    wide = _wider_self_minted_request()["effect_authorization"]
+    state.snapshot["effect_authorization"] = wide
+    state.snapshot["effect_authorization_hash"] = wide["authorization_hash"]
+    with pytest.raises(MissingExecutionBindingError, match="substitution or widening"):
+        coordinator.execute_attempt("task", "att")
+    assert worker.invocations == []
+    assert target.initial_leases == 0
+
+
+def test_require_effect_authority_without_port_fails_closed():
+    coordinator, state, worker, target, _fin = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    coordinator = _with_authority(coordinator, require_effect_authority=True)
+    state.snapshot["request"] = _effect_authorized_request()
+    with pytest.raises(MissingExecutionBindingError, match="authority not verified"):
+        coordinator.execute_attempt("task", "att")
+    assert worker.invocations == []
+    assert target.initial_leases == 0
+
+
+def test_authority_verifier_returning_none_rejects():
+    coordinator, state, worker, target, _fin = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    coordinator = _with_authority(
+        coordinator, effect_authority=EffectAuthorityPort(lambda a: None)
+    )
+    state.snapshot["request"] = _effect_authorized_request()
+    with pytest.raises(MissingExecutionBindingError, match="authority not verified"):
+        coordinator.execute_attempt("task", "att")
+    assert worker.invocations == []
+    assert target.initial_leases == 0
+
+
+@pytest.mark.parametrize("result", [False, None])
+def test_raw_port_not_returning_true_rejects(result):
+    class RawPort:
+        def verify(self, authorization):
+            return result
+
+    coordinator, state, worker, target, _fin = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    coordinator = _with_authority(coordinator, effect_authority=RawPort())
+    state.snapshot["request"] = _effect_authorized_request()
+    with pytest.raises(MissingExecutionBindingError, match="authority not verified"):
+        coordinator.execute_attempt("task", "att")
+    assert worker.invocations == []
+    assert target.initial_leases == 0
+
+
+def test_strict_mode_rejects_request_without_authorization():
+    coordinator, state, worker, target, finalization = build(
+        [Receipt("codex", WorkerOutcome.EXECUTION_COMPLETED.value, True)]
+    )
+    coordinator = _with_authority(
+        coordinator,
+        effect_authority=_known_authority_port(),
+        require_effect_authority=True,
+    )
+    state.snapshot["request"] = {
+        "timeout_seconds": 10,
+        "operation_id": "op-wave1",
+        "repository": "James3014/nexus-runtime",
+    }
+    with pytest.raises(MissingExecutionBindingError, match="effect authorization"):
+        coordinator.execute_attempt("task", "att")
+    assert worker.invocations == []
+    assert target.initial_leases == 0
+
+    ran = []
+    coordinator.run_owned_attempt(
+        "task", "att", lambda c, r, u: ran.append(1) or {}
+    )
+    assert ran == []
+    assert len(finalization.failures) == 1

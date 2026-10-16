@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -141,6 +141,33 @@ def _parse_expiry(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise EffectAuthorizationError("expires_at must include timezone")
     return parsed.astimezone(UTC)
+
+
+class EffectAuthorityPort:
+    """Host-supplied check that an authorization really came from its authority.
+
+    ``authorization_hash`` is an unkeyed self-hash (integrity only), and
+    ``authority_id`` / ``authority_ref`` are caller-asserted. The port receives
+    the full parsed ``EffectAuthorization`` so the host can compare authority,
+    ref, effects and hash against its own canonical record. The verifier raises
+    ``EffectAuthorizationError`` or returns anything other than exactly ``True``
+    (``False``, ``None``, any other value) to reject; only ``True`` accepts.
+    Runtime never decides what the authority granted.
+    """
+
+    def __init__(
+        self, verifier: Callable[[EffectAuthorization], bool]
+    ) -> None:
+        if not callable(verifier):
+            raise TypeError("effect authority verifier must be callable")
+        self._verifier = verifier
+
+    def verify(self, authorization: EffectAuthorization) -> bool:
+        if self._verifier(authorization) is not True:
+            raise EffectAuthorizationError(
+                "effect authorization authority rejected the authorization"
+            )
+        return True
 
 
 @dataclass(frozen=True)

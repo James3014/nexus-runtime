@@ -334,6 +334,8 @@ class ExecutionCoordinator(_BaseExecutionCoordinator):
         model_call_gate: Any = None,
         repository_query_evidence_validator: Callable[[Mapping[str, Any]], Any]
         | None = None,
+        effect_authority: Any = None,
+        require_effect_authority: bool = False,
     ) -> None:
         tracker = _ConsumptionTracker()
         state_port = _ContextAwareStatePort(state, tracker)
@@ -352,6 +354,8 @@ class ExecutionCoordinator(_BaseExecutionCoordinator):
             finalization,
             preparation,
             model_call_gate,
+            effect_authority,
+            require_effect_authority,
         )
 
     def execute_attempt(

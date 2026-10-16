@@ -26,6 +26,7 @@ from .bounded_decision import (
     classify_bounded_decision,
 )
 from .effect_authorization import (
+    EffectAuthorityPort,
     EffectAuthorization,
     EffectAuthorizationError,
     ToolProjectionManifest,
@@ -167,6 +168,8 @@ class ExecutionCoordinator:
     finalization: ExecutionFinalizationPort
     preparation: ExecutionPreparationPort | None = None
     model_call_gate: Any | None = None
+    effect_authority: EffectAuthorityPort | None = None
+    require_effect_authority: bool = False
 
     def __post_init__(self) -> None:
         for name in (
@@ -682,6 +685,27 @@ class ExecutionCoordinator:
         value = request.get(key)
         return str(value).strip() if isinstance(value, str) and value.strip() else None
 
+    def _verify_effect_authority(self, authorization: EffectAuthorization) -> None:
+        port = self.effect_authority
+        if port is None:
+            if self.require_effect_authority:
+                raise MissingExecutionBindingError(
+                    "effect authorization authority not verified: "
+                    "no effect authority port configured"
+                )
+            return
+        try:
+            accepted = port.verify(authorization)
+        except Exception as exc:
+            raise MissingExecutionBindingError(
+                f"effect authorization authority not verified: {exc}"
+            ) from exc
+        if accepted is not True:
+            raise MissingExecutionBindingError(
+                "effect authorization authority not verified: "
+                "port did not return True"
+            )
+
     def _ensure_effect_authorization(
         self,
         *,
@@ -691,7 +715,20 @@ class ExecutionCoordinator:
         state: Mapping[str, Any],
         allow_create: bool,
     ) -> tuple[Mapping[str, Any], EffectAuthorization | None]:
-        if not self._effect_authorization_requested(request, state):
+        """Gate every effectful path (execute_attempt and custom runners).
+
+        Without ``effect_authority`` the check is integrity-only: the unkeyed
+        ``authorization_hash`` and caller-asserted ``authority_id`` /
+        ``authority_ref`` are not authority. Configure ``effect_authority``
+        (and ``require_effect_authority=True`` to fail closed when it is
+        absent) so an external canonical authority verifies the requested
+        authorization once per attempt entry (the durable copy must hash-match
+        it) before any lease, worker or runner.
+        """
+        if not (
+            self.require_effect_authority
+            or self._effect_authorization_requested(request, state)
+        ):
             return state, None
         raw_request = request.get("effect_authorization")
         if not isinstance(raw_request, Mapping):
@@ -720,6 +757,7 @@ class ExecutionCoordinator:
             )
         except EffectAuthorizationError as exc:
             raise MissingExecutionBindingError(str(exc)) from exc
+        self._verify_effect_authority(requested)
 
         raw_durable = state.get("effect_authorization")
         if raw_durable is None:
