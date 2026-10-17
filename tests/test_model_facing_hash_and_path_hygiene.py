@@ -306,3 +306,35 @@ def test_visible_hash_hashes_the_path_stripped_entries():
                 e["consumer_payload"]["fields"]["resolved_run_root"] = root
     assert compute_bundle_hash(a) != compute_bundle_hash(b)
     assert compute_visible_bundle_hash(a) == compute_visible_bundle_hash(b)
+
+
+@pytest.mark.parametrize("text,expected", [
+    # legitimate model-visible text: unchanged
+    ("GET /api/v1/users returns 200", "GET /api/v1/users returns 200"),
+    ("path('/health')", "path('/health')"),
+    ("see [rel](/docs/x.md) for more", "see [rel](/docs/x.md) for more"),
+    ("tools in (/usr/bin) only", "tools in (<host-path>) only"),
+    ("<td>x</td>", "<td>x</td>"),
+    ("a // b", "a // b"),
+    ("1 /len(y)", "1 /len(y)"),
+    ("regex /\\d+/g here", "regex /\\d+/g here"),
+    ("/* comment */", "/* comment */"),
+    ("50%/day", "50%/day"),
+    ("ref #/definitions/x", "ref #/definitions/x"),
+    ("https://a.example/home/b", "https://a.example/home/b"),
+    # true positives: known roots, closing punctuation kept
+    ("wrote /Users/x/y/z.py, then", "wrote <host-path>, then"),
+    ("(see /home/u/a)", "(see <host-path>)"),
+    ("[/tmp/x/y]", "[<host-path>]"),
+    ("`/private/var/x`", "`<host-path>`"),
+    ("in /Volumes/Disk/a; ok", "in <host-path>; ok"),
+    ("at /github/workspace/x.", "at <host-path>"),
+    ("run /__w/repo/repo/a", "run <host-path>"),
+    ("open file:///Users/x/a.py)", "open <host-path>)"),
+    ("at C:\\Users\\x\\a, and", "at <host-path>, and"),
+    ("share \\\\srv\\share\\a) ok", "share <host-path>) ok"),
+])
+def test_embedded_redaction_is_precise(text, expected):
+    from nexus_runtime.planning.services.capability_evidence_bundle import strip_host_paths
+
+    assert strip_host_paths(text) == expected

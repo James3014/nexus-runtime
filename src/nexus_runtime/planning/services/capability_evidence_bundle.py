@@ -173,13 +173,21 @@ _HOST_PATH_KEYS = frozenset({"resolved_run_root", "run_root", "output_paths", "c
 _HOST_PATH_KEY_SUFFIXES = ("_path", "_paths", "_dir", "_dirs", "_root", "_roots")
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 HOST_PATH_PLACEHOLDER = "<host-path>"
-# Embedded host paths inside longer strings. A POSIX/``~/`` token must not be preceded by a
-# word char, ``:``, ``/`` or ``.`` (so ``https://a/b`` and relative ``a/b`` are untouched).
+# Embedded host paths inside longer strings: only tokens that start with a known host root,
+# ``~/``, ``file://``, a Windows drive or a UNC share. Generic ``/word`` text (API routes,
+# markdown links, regexes, ``a // b``) is left alone. A token never ends in closing
+# punctuation (``)]}>,;:'"`` or a backtick) and is not preceded by a word char, ``:``, ``/``
+# or ``.`` (so ``https://a/home/b`` is untouched).
+_HOST_ROOTS = (
+    "Users", "home", "private", "tmp", "var", "opt", "Volumes", "mnt", "root", "etc", "usr",
+    "Library", "System", "srv", "workspace", "github", "runner", "__w",
+)
+_PATH_CHARS = "[^\\s\"'<>`)\\]},;:]"
 _EMBEDDED_PATH_RE = re.compile(
-    r"file://[^\s\"'<>]*"
-    r"|(?<![\w:/.~\\])\\\\[^\s\\\"'<>]+\\[^\s\"'<>]*"
-    r"|(?<![\w:/\\])[A-Za-z]:[\\/][^\s\"'<>]*"
-    r"|(?<![\w:/.~])(?:~/|/)[^\s\"'<>]+"
+    rf"file://{_PATH_CHARS}*"
+    rf"|(?<![\w:/.~\\])\\\\[^\s\\\"'<>`)\]}},;:]+\\{_PATH_CHARS}*"
+    rf"|(?<![\w:/\\])[A-Za-z]:[\\/]{_PATH_CHARS}*"
+    rf"|(?<![\w:/.~])(?:~/|/(?:{'|'.join(_HOST_ROOTS)})/){_PATH_CHARS}*"
 )
 
 
