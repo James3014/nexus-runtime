@@ -124,14 +124,26 @@ def test_visible_hash_still_tracks_visible_entries():
     assert compute_visible_bundle_hash(a) != compute_visible_bundle_hash(b)
 
 
-def test_bundle_without_receipt_only_entries_is_unchanged():
-    bundle = build_capability_evidence_bundle(
+def test_zero_vs_one_receipt_only_entry_give_the_same_model_facing_hash():
+    """The visible hash is always over the projection: a hidden entry's presence, its
+    name in ``selected_capabilities`` and its outcome never change it."""
+    zero = build_capability_evidence_bundle(
         task_id="online-1", workspace_revision=REV, task_statement=STATEMENT,
-        plan_payload={"selected_capabilities": NAMES}, plan_hash=P, planner_decision_id=D,
-        capability_results=_records("passed"), selected_capabilities=NAMES,
+        plan_payload={"selected_capabilities": ["codeintel"]}, plan_hash=P, planner_decision_id=D,
+        capability_results=_records("passed"), selected_capabilities=["codeintel"],
     )
-    assert compute_visible_bundle_hash(bundle) == bundle["bundle_hash"]
-    assert compact_capability_evidence_for_prompt(bundle)["bundle_hash"] == bundle["bundle_hash"]
+    one = _bundle("passed")
+    assert one["selected_capabilities"] == NAMES and zero["selected_capabilities"] == ["codeintel"]
+    assert compute_bundle_hash(zero) != compute_bundle_hash(one)
+    assert compute_visible_bundle_hash(zero) == compute_visible_bundle_hash(one)
+    assert compact_capability_evidence_for_prompt(zero)["bundle_hash"] == compute_visible_bundle_hash(one)
+
+
+def test_selected_capabilities_receipt_only_name_does_not_change_visible_hash():
+    a, b = _bundle("passed"), _bundle("passed")
+    b["selected_capabilities"] = ["memory", "codeintel", "extra_hidden"]
+    b["entries"].append({"name": "extra_hidden", "consumer_visibility": "receipt_only", "status": "X"})
+    assert compute_visible_bundle_hash(a) == compute_visible_bundle_hash(b)
 
 
 def test_non_mapping_bundle_has_empty_visible_hash():
@@ -216,3 +228,70 @@ def test_host_path_key_rule(key, expected):
 ])
 def test_host_path_value_rule(value, expected):
     assert is_host_path_value(value) is expected
+
+
+# --- review round 1 ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("wrote /Users/x/y done", "wrote <host-path> done"),
+    ("see ~/work/a.txt.", "see <host-path>"),
+    ("open file:///Users/x/a.py now", "open <host-path> now"),
+    ("at C:\\Users\\x\\a and more", "at <host-path> and more"),
+    ("share \\\\srv\\share\\a ok", "share <host-path> ok"),
+    ("https://a.example/b/c", "https://a.example/b/c"),
+    ("relative a/b/c.py", "relative a/b/c.py"),
+    ("ratio 1/2", "ratio 1/2"),
+    ("pkg.mod:fn", "pkg.mod:fn"),
+])
+def test_embedded_host_paths_are_redacted_inside_strings(text, expected):
+    from nexus_runtime.planning.services.capability_evidence_bundle import strip_host_paths
+
+    assert strip_host_paths(text) == expected
+    assert strip_host_paths({"summary": text})["summary"] == expected
+
+
+def test_deep_dict_cannot_carry_a_path_into_the_model_as_text():
+    deep = {"a": {"b": {"c": {"d": {"e": {"note": "x /Users/james/s/main y", "k": 1}}}}}}
+    outcome = {"summary": "ok", "action": "learn", "findings": [deep]}
+    payload = extract_bounded_consumer_payload(capability="codeintel", stage=_stage(outcome), success=True)
+    assert payload
+    text = json.dumps(payload)
+    assert "/Users/james" not in text and "scratch" not in text
+
+
+@pytest.mark.parametrize("key", ["x_dirs", "run_roots", "task_root", "cwd", "workdir"])
+def test_extra_path_key_suffixes(key):
+    assert is_host_path_key(key) is True
+
+
+def test_unc_and_file_uri_values_are_paths():
+    assert is_host_path_value("\\\\srv\\share\\x") and is_host_path_value("file:///a/b")
+
+
+def test_model_context_renders_stripped_copy_of_a_sealed_payload_with_paths():
+    """``[NEXUS MODEL CONTEXT]``: verify the sealed payload first, render a stripped copy."""
+    from nexus_runtime.planning.services.capability_evidence_bundle import (
+        MAX_CONSUMER_PAYLOAD_CHARS,
+    )
+
+    bundle = _bundle("passed")
+    sealed_entry = next(e for e in bundle["entries"] if e["name"] == "codeintel")
+    fields = sealed_entry["consumer_payload"]["fields"]
+    fields["resolved_run_root"] = "/Users/james/scratch/main"
+    fields["note"] = "wrote /Users/james/scratch/main/x"
+    payload = sealed_entry["consumer_payload"]
+    body = {k: v for k, v in payload.items() if k not in {"payload_hash", "payload_chars"}}
+    encoded = json.dumps(body, sort_keys=True, ensure_ascii=False, allow_nan=False)
+    assert len(encoded) <= MAX_CONSUMER_PAYLOAD_CHARS
+    import hashlib
+
+    payload["payload_chars"] = len(encoded)
+    payload["payload_hash"] = hashlib.sha256(encoded.encode()).hexdigest()
+    # Re-seal the bundle around the edited entry so the sealed-bundle check passes.
+    bundle["bundle_hash"] = compute_bundle_hash(bundle)
+    sealed_before = copy.deepcopy(bundle)
+    text = serialize_model_context_package(build_online_context_package(_context(bundle)))
+    assert "resolved_run_root" not in text and "/Users/james" not in text
+    assert "<host-path>" in text and "bounded codeintel result" in text
+    assert bundle == sealed_before  # the sealed record is not mutated

@@ -204,10 +204,12 @@ def test_receipt_only_entry_still_attests_real_via_2212_contract():
 
 # --- (c) bundles without flagged entries are byte-identical to main ---------------------
 
-# Digests computed on nexus-runtime main fc03f60 (before this change) for the same inputs.
+# _MAIN_BUNDLE_HASH is the sealed hash on main fc03f60 (unchanged). The compact / package
+# digests were re-pinned in #220: the only change is the rendered bundle hash, now the visible-
+# projection hash (always computed over the projection, never the full bundle_hash).
 _MAIN_BUNDLE_HASH = "69598226071eba1f5398cae5f2d51761747a6659a2178495722ad7759bfd5505"
-_MAIN_COMPACT_SHA = "f8a1f2d27759d1b9f8c600913d040813c72a62c8b58d080d27715dd5d97ebef2"
-_MAIN_PACKAGE_SHA = "d6a4d8e90071e94eb0a249aa76d49f41743d8fdfaccc11633fd549e9d60c31ca"
+_MAIN_COMPACT_SHA = "096d0e377b20ca6572a8f94c2e2b88ec17ec540d1cf047afd084da7330aecdcc"
+_MAIN_PACKAGE_SHA = "743df3d5e4724447aa789d9a9ed8e5020d87a7a4a231ac948ebcf6852ba7952b"
 
 
 def test_unflagged_bundle_and_projections_are_byte_identical_to_main():
@@ -501,8 +503,8 @@ def test_route_list_with_invalid_items_keeps_valid_names_plus_default(tmp_path):
 # outcome-bearing refs, postflight entries pending) -- digests computed on main fc03f60.
 _MAIN_REP = {
     "bundle_hash": "af69ee5ed16fd278a4de885b7998e49677ad4db19a69e05e7e82ec2c34847501",
-    "compact": "9d6c87df65b2a50331fcd3c2f7f239d639c529f390d99c061c74a0f5a76bdca6",
-    "package": "27488b83c4887cdb06b919dd2eebe6e8af91629f899fee467ddd4af8aa7e8947",
+    "compact": "c4320a791247e3540f1ed92a8aeb8dcc255f24fc2130221d36621a327af05605",
+    "package": "2ea2cb56709a0373916f2c2588b4495112a51cc6389fae403c233d134157133c",
 }
 
 

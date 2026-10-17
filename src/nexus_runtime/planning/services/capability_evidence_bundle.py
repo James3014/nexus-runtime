@@ -169,9 +169,18 @@ def _bound_str(value: Any, *, limit: int = MAX_PAYLOAD_STRING_FIELD) -> str:
     return text[: max(0, limit - 3)] + "..."
 
 
-_HOST_PATH_KEYS = frozenset({"resolved_run_root", "run_root", "output_paths"})
-_HOST_PATH_KEY_SUFFIXES = ("_path", "_paths", "_dir")
+_HOST_PATH_KEYS = frozenset({"resolved_run_root", "run_root", "output_paths", "cwd", "workdir"})
+_HOST_PATH_KEY_SUFFIXES = ("_path", "_paths", "_dir", "_dirs", "_root", "_roots")
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+HOST_PATH_PLACEHOLDER = "<host-path>"
+# Embedded host paths inside longer strings. A POSIX/``~/`` token must not be preceded by a
+# word char, ``:``, ``/`` or ``.`` (so ``https://a/b`` and relative ``a/b`` are untouched).
+_EMBEDDED_PATH_RE = re.compile(
+    r"file://[^\s\"'<>]*"
+    r"|(?<![\w:/.~\\])\\\\[^\s\\\"'<>]+\\[^\s\"'<>]*"
+    r"|(?<![\w:/\\])[A-Za-z]:[\\/][^\s\"'<>]*"
+    r"|(?<![\w:/.~])(?:~/|/)[^\s\"'<>]+"
+)
 
 
 def is_host_path_key(key: Any) -> bool:
@@ -181,15 +190,23 @@ def is_host_path_key(key: Any) -> bool:
 
 
 def is_host_path_value(value: Any) -> bool:
-    """True for a string that is an absolute host path (POSIX, ``~/`` or Windows drive)."""
+    """True for a string that is an absolute host path (POSIX, ``~/``, drive, UNC, file URI)."""
     if not isinstance(value, str):
         return False
     text = value.strip()
-    return text.startswith(("/", "~/")) or bool(_WINDOWS_DRIVE_RE.match(text))
+    return (
+        text.startswith(("/", "~/", "\\\\", "file://"))
+        or bool(_WINDOWS_DRIVE_RE.match(text))
+    )
+
+
+def redact_host_paths(text: str) -> str:
+    """Replace absolute host paths embedded in a longer string with a placeholder."""
+    return _EMBEDDED_PATH_RE.sub(HOST_PATH_PLACEHOLDER, text)
 
 
 def strip_host_paths(value: Any) -> Any:
-    """Drop path-valued keys and absolute-path string values (recursively; no hashing).
+    """Drop path-valued keys / absolute-path values and redact embedded paths in strings.
 
     Model-facing projections only: receipts keep the full outcome unchanged (#218).
     """
@@ -201,12 +218,15 @@ def strip_host_paths(value: Any) -> Any:
         }
     if isinstance(value, (list, tuple)):
         return [strip_host_paths(v) for v in value if not is_host_path_value(v)]
+    if isinstance(value, str):
+        return redact_host_paths(value)
     return value
 
 
 def _scrub_payload_value(value: Any, *, depth: int = 0) -> Any:
     if depth > 4:
-        return _bound_str(value, limit=80)
+        # Stringified deep values must not carry a path into the model as text.
+        return _bound_str(redact_host_paths(str(value if value is not None else "")), limit=80)
     if isinstance(value, Mapping):
         out: dict[str, Any] = {}
         for k, v in value.items():
@@ -239,12 +259,16 @@ def _scrub_payload_value(value: Any, *, depth: int = 0) -> Any:
                 break
         return out
     if isinstance(value, (list, tuple)):
-        return [_scrub_payload_value(v, depth=depth + 1) for v in list(value)[:MAX_PAYLOAD_LIST_ITEMS]]
+        return [
+            _scrub_payload_value(v, depth=depth + 1)
+            for v in list(value)[:MAX_PAYLOAD_LIST_ITEMS]
+            if not is_host_path_value(v)
+        ]
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, (int, float)):
         return value
-    return _bound_str(value)
+    return _bound_str(redact_host_paths(str(value if value is not None else "")))
 
 
 def _is_schema_consumer_payload(value: Mapping[str, Any]) -> bool:
@@ -477,8 +501,6 @@ _VISIBLE_HASH_BASE_KEYS = (
     "source_hash",
     "plan_hash",
     "planner_decision_id",
-    "baseline_hash",
-    "selected_capabilities",
 )
 
 
@@ -487,25 +509,38 @@ def compute_visible_bundle_hash(bundle: Mapping[str, Any] | None) -> str:
 
     Every hash or id rendered to a model (``[NEXUS CAPABILITY EVIDENCE]``,
     ``capability-evidence:<h>``, and through it the ``[NEXUS MODEL CONTEXT]`` package /
-    consumer-projection hashes) uses this value, so it does not depend on receipt-only
-    entries. Without receipt-only entries it equals the full ``bundle_hash`` (rendered
-    values are unchanged for such bundles). Otherwise it hashes the identity fields plus the
-    prompt-visible entries and their evidence ids only; ``summary``, the postflight
-    ``preflight_bundle_hash`` and the full ``bundle_hash`` are excluded because they
-    reflect hidden outcomes.
+    consumer-projection hashes) uses this value. It is ALWAYS computed over the projection
+    (never short-circuited to ``bundle_hash``), so a bundle with no receipt-only entry and
+    the same bundle plus receipt-only entries give the same value. The projection is the
+    identity fields, ``selected_capabilities`` without receipt-only names, the
+    prompt-visible entries (host paths stripped, as rendered) and their evidence ids.
+    ``baseline_hash`` (covers the full selection), ``summary``, the postflight
+    ``preflight_bundle_hash`` and the full ``bundle_hash`` are excluded: they reflect
+    hidden entries or outcomes.
     """
     if not isinstance(bundle, Mapping):
         return ""
     entries = bundle.get("entries")
-    if isinstance(entries, (list, tuple)) and all(
-        entry_prompt_visible(e) for e in entries if isinstance(e, Mapping)
-    ):
-        return str(bundle.get("bundle_hash") or "")
-    visible_ids = prompt_visible_evidence_ids(bundle) or set()
+    hidden = {
+        str(e.get("name") or "")
+        for e in (entries if isinstance(entries, (list, tuple)) else ())
+        if isinstance(e, Mapping) and not entry_prompt_visible(e)
+    }
+    visible = [strip_host_paths(copy.deepcopy(dict(e))) for e in prompt_visible_entries(bundle)]
+    visible_ids = {
+        str(i).strip()
+        for e in prompt_visible_entries(bundle)
+        for key in ("evidence_ids", "evidence_refs")
+        for i in (e.get(key) or [])
+        if str(i).strip()
+    }
     projection: dict[str, Any] = {k: copy.deepcopy(bundle.get(k)) for k in _VISIBLE_HASH_BASE_KEYS}
-    projection["entries"] = copy.deepcopy(prompt_visible_entries(bundle))
+    projection["selected_capabilities"] = [
+        n for n in (bundle.get("selected_capabilities") or []) if str(n) not in hidden
+    ]
+    projection["entries"] = visible
     projection["evidence_ids"] = [
-        e for e in (bundle.get("evidence_ids") or []) if str(e).strip() in visible_ids
+        i for i in (bundle.get("evidence_ids") or []) if str(i).strip() in visible_ids
     ]
     return _hash_json(projection)
 
