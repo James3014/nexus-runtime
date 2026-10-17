@@ -614,7 +614,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/services/capability_evidence_bundle.py",
-      "sha256": "a3c044f5c719fb4d4372f53db348263be0d271500ad75f14168a0aaa4b618f06"
+      "sha256": "cade934c91c5901e348a65a609acdb1de5ef855d116faca24b33ffb637d61d37"
     },
     {
       "canonical_owner": "runtime planning",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "83879b8c2cd7cb6e1226d9103bd960e8e7a08a07",
-  "source_tree": "1faf6467f235a8331e54d2a63018cd063752e3e2",
+  "source_head": "a3c7f62b17ea2397eec4eba337750f11ff56fc4e",
+  "source_tree": "213cf0b204733e5df8f29d6aae0773393cea2e67",
   "unknown_lineage": []
 }
