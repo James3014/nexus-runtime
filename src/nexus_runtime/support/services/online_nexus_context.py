@@ -246,8 +246,10 @@ def compact_capability_evidence_for_prompt(
     from nexus_runtime.planning.services.capability_evidence_bundle import (
         consumer_payload_markers,
         hash_consumer_payloads,
+        compute_visible_bundle_hash,
         entry_prompt_visible,
         prompt_visible_evidence_ids,
+        strip_host_paths,
     )
 
     visible_ids = prompt_visible_evidence_ids(b)
@@ -267,7 +269,7 @@ def compact_capability_evidence_for_prompt(
         # Failed / non-success entries never forward payload.
         success = bool(entry.get("success") or entry.get("invoked_real"))
         cp = entry.get("consumer_payload") if success else None
-        cp_map = dict(cp) if isinstance(cp, Mapping) and cp else {}
+        cp_map = strip_host_paths(dict(cp)) if isinstance(cp, Mapping) and cp else {}
         row = {
             "name": str(entry.get("name") or ""),
             "status": str(entry.get("status") or ""),
@@ -288,7 +290,9 @@ def compact_capability_evidence_for_prompt(
         entries_out.append(row)
     return {
         "schema": str(b.get("schema") or ""),
-        "bundle_hash": str(b.get("bundle_hash") or ""),
+        # Model-facing: hash of the visible projection only (#220); the full bundle_hash
+        # stays in receipts / lineage.
+        "bundle_hash": compute_visible_bundle_hash(b),
         "baseline_hash": str(b.get("baseline_hash") or ""),
         "planner_decision_id": str(b.get("planner_decision_id") or ""),
         "task_id": str(b.get("task_id") or ""),
@@ -414,6 +418,9 @@ def build_online_nexus_context(
     profile_prompt = _json_prompt_block(profile_compact)
     flags_prompt = _json_prompt_block(flags_compact)
     evidence_prompt = _json_prompt_block(evidence_compact) if evidence_compact else ""
+    _full_bundle_hash = (
+        str(evidence_bundle.get("bundle_hash") or "") if isinstance(evidence_bundle, Mapping) else ""
+    )
     guidance_pack = build_guidance_pack(
         selected_capabilities=selected,
         task_type=task_type,
@@ -530,7 +537,7 @@ def build_online_nexus_context(
     provider_payload_hash = _hash_json(
         {
             "prompt_hash": assembled_prompt_hash,
-            "bundle_hash": str(evidence_compact.get("bundle_hash") or ""),
+            "bundle_hash": _full_bundle_hash,
             "consumed_evidence_ids": consumed_evidence_ids,
             "consumer_payload_hash": consumer_payload_hash,
         }
@@ -554,7 +561,10 @@ def build_online_nexus_context(
 
     lineage = {
         "armor": "with_nexus",
-        "bundle_hash": str(evidence_compact.get("bundle_hash") or ""),
+        # Receipt lineage: FULL sealed-bundle hash. The model sees only
+        # ``visible_bundle_hash`` (= evidence_compact["bundle_hash"]).
+        "bundle_hash": _full_bundle_hash,
+        "visible_bundle_hash": str(evidence_compact.get("bundle_hash") or ""),
         "consumed_evidence_ids": list(consumed_evidence_ids),
         "consumed_capability_payloads": list(final_payloads),
         "capability_payload_consumed": bool(payload_serialized and final_payloads),

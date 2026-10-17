@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from typing import Any, Mapping
 
 BUNDLE_SCHEMA = "nexus.capability_evidence_bundle.v1"
@@ -168,9 +169,72 @@ def _bound_str(value: Any, *, limit: int = MAX_PAYLOAD_STRING_FIELD) -> str:
     return text[: max(0, limit - 3)] + "..."
 
 
+_HOST_PATH_KEYS = frozenset({"resolved_run_root", "run_root", "output_paths", "cwd", "workdir"})
+_HOST_PATH_KEY_SUFFIXES = ("_path", "_paths", "_dir", "_dirs", "_root", "_roots")
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+HOST_PATH_PLACEHOLDER = "<host-path>"
+# Embedded host paths inside longer strings: only tokens that start with a known host root,
+# ``~/``, ``file://``, a Windows drive or a UNC share. Generic ``/word`` text (API routes,
+# markdown links, regexes, ``a // b``) is left alone. A token never ends in closing
+# punctuation (``)]}>,;:'"`` or a backtick) and is not preceded by a word char, ``:``, ``/``
+# or ``.`` (so ``https://a/home/b`` is untouched).
+_HOST_ROOTS = (
+    "Users", "home", "private", "tmp", "var", "opt", "Volumes", "mnt", "root", "etc", "usr",
+    "Library", "System", "srv", "workspace", "github", "runner", "__w",
+)
+_PATH_CHARS = "[^\\s\"'<>`)\\]},;:]"
+_EMBEDDED_PATH_RE = re.compile(
+    rf"file://{_PATH_CHARS}*"
+    rf"|(?<![\w:/.~\\])\\\\[^\s\\\"'<>`)\]}},;:]+\\{_PATH_CHARS}*"
+    rf"|(?<![\w:/\\])[A-Za-z]:[\\/]{_PATH_CHARS}*"
+    rf"|(?<![\w:/.~])(?:~/|/(?:{'|'.join(_HOST_ROOTS)})/){_PATH_CHARS}*"
+)
+
+
+def is_host_path_key(key: Any) -> bool:
+    """Keys that carry host filesystem locations (never forwarded to a model)."""
+    kl = str(key).lower()
+    return kl in _HOST_PATH_KEYS or kl.endswith(_HOST_PATH_KEY_SUFFIXES)
+
+
+def is_host_path_value(value: Any) -> bool:
+    """True for a string that is an absolute host path (POSIX, ``~/``, drive, UNC, file URI)."""
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return (
+        text.startswith(("/", "~/", "\\\\", "file://"))
+        or bool(_WINDOWS_DRIVE_RE.match(text))
+    )
+
+
+def redact_host_paths(text: str) -> str:
+    """Replace absolute host paths embedded in a longer string with a placeholder."""
+    return _EMBEDDED_PATH_RE.sub(HOST_PATH_PLACEHOLDER, text)
+
+
+def strip_host_paths(value: Any) -> Any:
+    """Drop path-valued keys / absolute-path values and redact embedded paths in strings.
+
+    Model-facing projections only: receipts keep the full outcome unchanged (#218).
+    """
+    if isinstance(value, Mapping):
+        return {
+            k: strip_host_paths(v)
+            for k, v in value.items()
+            if not is_host_path_key(k) and not is_host_path_value(v)
+        }
+    if isinstance(value, (list, tuple)):
+        return [strip_host_paths(v) for v in value if not is_host_path_value(v)]
+    if isinstance(value, str):
+        return redact_host_paths(value)
+    return value
+
+
 def _scrub_payload_value(value: Any, *, depth: int = 0) -> Any:
     if depth > 4:
-        return _bound_str(value, limit=80)
+        # Stringified deep values must not carry a path into the model as text.
+        return _bound_str(redact_host_paths(str(value if value is not None else "")), limit=80)
     if isinstance(value, Mapping):
         out: dict[str, Any] = {}
         for k, v in value.items():
@@ -178,6 +242,8 @@ def _scrub_payload_value(value: Any, *, depth: int = 0) -> Any:
             kl = key.lower()
             if key in _FORBIDDEN_PAYLOAD_KEYS or kl in _FORBIDDEN_PAYLOAD_KEYS:
                 continue
+            if is_host_path_key(key) or is_host_path_value(v):
+                continue  # host paths never reach a model-facing payload (#218)
             if any(bad in kl for bad in ("secret", "token", "password", "api_key", "reasoning", "patch", "cot")):
                 continue
             # Nested consumer_payload.fields: scrub recursively with allowlist.
@@ -201,12 +267,16 @@ def _scrub_payload_value(value: Any, *, depth: int = 0) -> Any:
                 break
         return out
     if isinstance(value, (list, tuple)):
-        return [_scrub_payload_value(v, depth=depth + 1) for v in list(value)[:MAX_PAYLOAD_LIST_ITEMS]]
+        return [
+            _scrub_payload_value(v, depth=depth + 1)
+            for v in list(value)[:MAX_PAYLOAD_LIST_ITEMS]
+            if not is_host_path_value(v)
+        ]
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, (int, float)):
         return value
-    return _bound_str(value)
+    return _bound_str(redact_host_paths(str(value if value is not None else "")))
 
 
 def _is_schema_consumer_payload(value: Mapping[str, Any]) -> bool:
@@ -347,6 +417,7 @@ def extract_bounded_consumer_payload(
         for k, v in body.items()
         if k not in {"schema", "payload_hash", "payload_chars", "public_claim_allowed"}
     }
+    body = strip_host_paths(body)
     body["markers"] = markers
     body["capability"] = name
 
@@ -420,8 +491,66 @@ def _canonical_payload_for_hash(bundle: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def compute_bundle_hash(bundle: Mapping[str, Any]) -> str:
-    """Re-canonicalize and hash the bundle body (consumer-side check)."""
+    """Re-canonicalize and hash the bundle body (consumer-side check).
+
+    This is the FULL-bundle hash (receipts, attestation, seal verification). It covers
+    receipt-only entries and must never be rendered to a model; see
+    ``compute_visible_bundle_hash``.
+    """
     return _hash_json(_canonical_payload_for_hash(bundle))
+
+
+_VISIBLE_HASH_BASE_KEYS = (
+    "schema",
+    "task_id",
+    "workspace_revision",
+    "task_statement_hash",
+    "source_hash_kind",
+    "source_hash",
+    "plan_hash",
+    "planner_decision_id",
+)
+
+
+def compute_visible_bundle_hash(bundle: Mapping[str, Any] | None) -> str:
+    """Hash of the model-visible projection of a bundle (#220).
+
+    Every hash or id rendered to a model (``[NEXUS CAPABILITY EVIDENCE]``,
+    ``capability-evidence:<h>``, and through it the ``[NEXUS MODEL CONTEXT]`` package /
+    consumer-projection hashes) uses this value. It is ALWAYS computed over the projection
+    (never short-circuited to ``bundle_hash``), so a bundle with no receipt-only entry and
+    the same bundle plus receipt-only entries give the same value. The projection is the
+    identity fields, ``selected_capabilities`` without receipt-only names, the
+    prompt-visible entries (host paths stripped, as rendered) and their evidence ids.
+    ``baseline_hash`` (covers the full selection), ``summary``, the postflight
+    ``preflight_bundle_hash`` and the full ``bundle_hash`` are excluded: they reflect
+    hidden entries or outcomes.
+    """
+    if not isinstance(bundle, Mapping):
+        return ""
+    entries = bundle.get("entries")
+    hidden = {
+        str(e.get("name") or "")
+        for e in (entries if isinstance(entries, (list, tuple)) else ())
+        if isinstance(e, Mapping) and not entry_prompt_visible(e)
+    }
+    visible = [strip_host_paths(copy.deepcopy(dict(e))) for e in prompt_visible_entries(bundle)]
+    visible_ids = {
+        str(i).strip()
+        for e in prompt_visible_entries(bundle)
+        for key in ("evidence_ids", "evidence_refs")
+        for i in (e.get(key) or [])
+        if str(i).strip()
+    }
+    projection: dict[str, Any] = {k: copy.deepcopy(bundle.get(k)) for k in _VISIBLE_HASH_BASE_KEYS}
+    projection["selected_capabilities"] = [
+        n for n in (bundle.get("selected_capabilities") or []) if str(n) not in hidden
+    ]
+    projection["entries"] = visible
+    projection["evidence_ids"] = [
+        i for i in (bundle.get("evidence_ids") or []) if str(i).strip() in visible_ids
+    ]
+    return _hash_json(projection)
 
 
 EVALUATED_REJECTED_STATUS = "EVALUATED_REJECTED"

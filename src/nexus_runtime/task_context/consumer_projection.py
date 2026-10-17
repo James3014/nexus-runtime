@@ -12,6 +12,8 @@ from nexus_runtime.planning.services.capability_evidence_bundle import (
     MAX_CONSUMER_PAYLOAD_CHARS,
     assert_consumer_bundle_intact,
     build_source_hash_subject,
+    compute_visible_bundle_hash,
+    strip_host_paths,
     entry_prompt_visible,
 )
 
@@ -310,10 +312,18 @@ def _evidence_projection(
         payload_evidence_values.extend(
             str(item).strip() for item in ids if str(item).strip()
         )
-        payloads.append(frozen_payload)
-        payload_records.append({"capability": name, "evidence_ids": list(ids), "payload": frozen_payload})
+        # The sealed payload is verified above; what the model sees is a path-stripped copy
+        # (host paths never reach the model, #218). The sealed record is never mutated.
+        rendered = _strict_json_copy(strip_host_paths(frozen_payload))
+        if rendered != frozen_payload:
+            rendered_hash, rendered_chars = _payload_hash_basis(rendered)
+            rendered["payload_chars"] = rendered_chars
+            rendered["payload_hash"] = rendered_hash
+        payloads.append(rendered)
+        payload_records.append({"capability": name, "evidence_ids": list(ids), "payload": rendered})
     materialized = _normalized_ids(tuple(materialized_values))
-    bundle_hash = str(bundle.get("bundle_hash") or "").strip()
+    # Rendered id = hash of the model-visible projection (#220); receipts keep bundle_hash.
+    bundle_hash = compute_visible_bundle_hash(bundle).strip()
     bundles = (f"capability-evidence:{bundle_hash}",) if bundle_hash else ()
     return materialized, bundles, tuple(sorted(payloads, key=lambda p: (str(p.get("capability")), str(p.get("payload_hash"))))), _normalized_ids(tuple(payload_evidence_values)), tuple(payload_records)
 

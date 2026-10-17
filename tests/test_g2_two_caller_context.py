@@ -10,6 +10,7 @@ import pytest
 
 from nexus_runtime.planning.services.capability_evidence_bundle import (
     build_capability_evidence_bundle,
+    compute_visible_bundle_hash,
 )
 from nexus_runtime import build_runtime_exports
 from nexus_runtime.execution_coordination import ExecutionCoordinator, WorkerOutcome
@@ -136,7 +137,8 @@ def test_online_projection_binds_planner_evidence_and_worker_identity() -> None:
         "evidence:memory",
     ]
     assert package["evidence_bundle_ids"] == [
-        f"capability-evidence:{_online_context()['capability_evidence_bundle']['bundle_hash']}"
+        "capability-evidence:"
+        + compute_visible_bundle_hash(_online_context()["capability_evidence_bundle"])
     ]
     assert package["serialized_capability_ids"] == ["codeintel", "memory"]
     assert package["serialized_evidence_ids"] == ["evidence:codeintel", "evidence:memory"]
@@ -899,8 +901,11 @@ def test_negative_7_local_online_worker_preserve_same_root_bundle_identity_while
 
     assert online_pkg["status"] == "PASS"
     assert worker_pkg["status"] == "PASS"
-    assert online_pkg["evidence_bundle_ids"] == [f"capability-evidence:{root_bundle_hash}"]
-    assert worker_pkg["evidence_bundle_ids"] == [f"capability-evidence:{root_bundle_hash}"]
+    # Rendered id = hash of the model-visible projection (#220); root_bundle_hash stays the
+    # full sealed hash used by the Local/Online match below.
+    visible_id = f"capability-evidence:{compute_visible_bundle_hash(bundle)}"
+    assert online_pkg["evidence_bundle_ids"] == [visible_id]
+    assert worker_pkg["evidence_bundle_ids"] == [visible_id]
 
     # Local/Online comparison preserves root hash
     match = assert_same_root_bundle_hash(local_bundle=bundle, online_bundle=bundle)
