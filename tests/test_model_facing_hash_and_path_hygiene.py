@@ -252,8 +252,9 @@ def test_embedded_host_paths_are_redacted_inside_strings(text, expected):
 
 
 def test_deep_dict_cannot_carry_a_path_into_the_model_as_text():
-    deep = {"a": {"b": {"c": {"d": {"e": {"note": "x /Users/james/s/main y", "k": 1}}}}}}
-    outcome = {"summary": "ok", "action": "learn", "findings": [deep]}
+    deep: dict[str, Any] = {"proof": {"proof": {"proof": {"proof": {"proof": {
+        "proof": {"note": "x /Users/james/s/main y", "k": 1}}}}}}}
+    outcome = {"summary": "ok", "action": "learn", "proof": deep}
     payload = extract_bounded_consumer_payload(capability="codeintel", stage=_stage(outcome), success=True)
     assert payload
     text = json.dumps(payload)
@@ -295,3 +296,13 @@ def test_model_context_renders_stripped_copy_of_a_sealed_payload_with_paths():
     assert "resolved_run_root" not in text and "/Users/james" not in text
     assert "<host-path>" in text and "bounded codeintel result" in text
     assert bundle == sealed_before  # the sealed record is not mutated
+
+
+def test_visible_hash_hashes_the_path_stripped_entries():
+    a, b = _bundle("passed"), _bundle("passed")
+    for bundle, root in ((a, "/Users/a/run"), (b, "/Users/b/other")):
+        for e in bundle["entries"]:
+            if e["name"] == "codeintel":
+                e["consumer_payload"]["fields"]["resolved_run_root"] = root
+    assert compute_bundle_hash(a) != compute_bundle_hash(b)
+    assert compute_visible_bundle_hash(a) == compute_visible_bundle_hash(b)
