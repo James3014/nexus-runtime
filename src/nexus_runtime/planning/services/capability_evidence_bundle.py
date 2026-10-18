@@ -625,9 +625,11 @@ def entry_did_real_work(entry: Mapping[str, Any]) -> bool:
     """
     if not bool(entry.get("success") or entry.get("invoked_real")):
         return False
-    if entry.get("invoked_stub") or entry.get("skipped"):
+    if entry.get("invoked_stub") or entry.get("skipped") or stage_is_stub(entry):
         return False
-    return str(entry.get("status") or "") not in {"STUB_INVOKED", "SKIPPED"}
+    status = str(entry.get("status") or "")
+    # Entries built by _bundle_entry always carry a status; only REAL_INVOKED is real.
+    return not status or status == "REAL_INVOKED"
 
 
 def real_work_evidence_ids(bundle: Mapping[str, Any] | None) -> set[str] | None:

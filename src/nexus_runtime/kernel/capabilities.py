@@ -730,7 +730,7 @@ def build_prompt_compression_capability_invoker(
             evidence_refs.append(f"compression:{task_id}:truncated")
         # The context already fit: nothing was compressed, so this is an explicit skip,
         # never SUCCEEDED, and the runtime keeps the original prompt (#232).
-        nothing_compressed = gate_passed and not truncated
+        nothing_compressed = gate_passed and compressed_chars >= original_chars
         semantic_status = (
             "SKIPPED" if nothing_compressed else ("SUCCEEDED" if gate_passed else "FAILED")
         )

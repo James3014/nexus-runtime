@@ -153,6 +153,40 @@ def test_record_consumption_does_not_consume_stub_evidence() -> None:
     assert record["capability_consumed"] is False
 
 
+def _real_codeintel(context: dict[str, Any]) -> dict[str, Any]:
+    out = _stub_codeintel(context)
+    out.pop("stub")
+    out["evidence_refs"] = [f"ev_codeintel_real_{context['task_id']}"]
+    out["physical_callable"] = "capability_executor_registry:codeintel:real"
+    out["response_task_id"] = context["task_id"]
+    return out
+
+
+def test_record_consumption_keeps_real_evidence_and_drops_stub_in_mixed_bundle() -> None:
+    real = _capability_stage("codeintel", TASK, _real_codeintel({"task_id": TASK}))
+    stub = _capability_stage("memory", TASK, {**_stub_codeintel({"task_id": TASK}),
+                                              "evidence_refs": ["ev_memory_stub"]})
+    bundle = build_capability_evidence_bundle(
+        task_id=TASK,
+        workspace_revision=seal.REV,
+        task_statement=seal.STATEMENT,
+        plan_payload={},
+        plan_hash="0" * 64,
+        planner_decision_id="d-232",
+        capability_results={"codeintel": real, "memory": stub},
+        selected_capabilities=["codeintel", "memory"],
+    )
+    statuses = {e["name"]: e["status"] for e in bundle["entries"]}
+    assert statuses == {"codeintel": "REAL_INVOKED", "memory": "STUB_INVOKED"}
+    record = record_consumption(
+        bundle=bundle,
+        consumer="online",
+        consumed_evidence_ids=[f"ev_codeintel_real_{TASK}", "ev_memory_stub"],
+    )
+    assert record["consumed_evidence_ids"] == [f"ev_codeintel_real_{TASK}"]
+    assert record["capability_consumed"] is True
+
+
 # 3. prompt_compression that compressed nothing ------------------------------------
 
 
@@ -184,3 +218,38 @@ def test_runtime_does_not_swap_prompt_for_uncompressed_context(tmp_path: Path) -
     rows = {row["name"]: row for row in receipt["capabilities"]}
     assert rows["prompt_compression"]["status"] != "SUCCEEDED", rows["prompt_compression"]
     assert receipt["context_trace"]["capability_context_compressed"] is False
+
+
+def _with_nexus_lineage(bundle: dict[str, Any], selected: list[str]) -> dict[str, Any]:
+    from nexus_runtime.support.services.online_nexus_context import build_online_nexus_context
+
+    ctx = build_online_nexus_context(
+        task_statement="x", task_id=TASK, task_type="repair", route={}, codeintel={},
+        plan={"capability_evidence_bundle": bundle, "selected_capabilities": selected},
+        profile={}, executor_flags={}, hidden_guidance="", source="", visible_tests="",
+        local_forward=None, capability_evidence_bundle=bundle, base_prompt="",
+    )
+    return ctx.lineage
+
+
+def test_with_nexus_lineage_does_not_claim_stub_evidence() -> None:
+    """Reviewer probe: the Online with_nexus lineage fell back to every top-level id."""
+    lineage = _with_nexus_lineage(_stub_only_bundle(), ["codeintel"])
+    assert lineage["consumed_evidence_ids"] == []
+    assert lineage["capability_consumed"] is False
+
+
+def test_with_nexus_lineage_keeps_real_evidence() -> None:
+    real = _capability_stage("codeintel", TASK, _real_codeintel({"task_id": TASK}))
+    bundle = build_capability_evidence_bundle(
+        task_id=TASK,
+        workspace_revision=seal.REV,
+        task_statement=seal.STATEMENT,
+        plan_payload={},
+        plan_hash="0" * 64,
+        planner_decision_id="d-232",
+        capability_results={"codeintel": real},
+        selected_capabilities=["codeintel"],
+    )
+    lineage = _with_nexus_lineage(bundle, ["codeintel"])
+    assert lineage["consumed_evidence_ids"] == [f"ev_codeintel_real_{TASK}"]
