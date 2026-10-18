@@ -19,11 +19,12 @@ from .capabilities import (
 )
 from nexus_runtime.planning.services.capability_evidence_bundle import (
     compute_bundle_hash as _compute_bundle_hash,
-    prompt_visible_entries,
     prompt_visible_evidence_ids,
+    real_work_evidence_ids,
     record_requests_receipt_only,
     resolve_receipt_only_capabilities,
     seal_postflight_capability_evidence,
+    stage_is_stub,
 )
 from .constants import GATEWAY_INVOCATION_AUTHORITY_SCHEMA, LOCAL_MODEL_INVOCATION_AUTHORITY_SCHEMA, ONLINE_DECISION_CONTEXT_KEY, RECEIPT_SCHEMA, REQUEST_SCHEMA, UNTRUSTED_ROUTE_AUTHORIZATION_KEYS
 from .identity import _hash_json, _mapping
@@ -1671,8 +1672,11 @@ class UnifiedRuntime:
             skipped_flag = bool(cap_stage.get("skipped")) or status == "SKIPPED"
             if not skipped_flag and isinstance(resp, Mapping):
                 skipped_flag = bool(resp.get("skipped")) or str(resp.get("status") or "").upper() == "SKIPPED"
-            stub_flag = bool(cap_stage.get("stub")) or (
-                isinstance(resp, Mapping) and bool(resp.get("stub"))
+            # A stub marker at any response / outcome layer (same rule as the bundle).
+            stub_flag = (
+                bool(cap_stage.get("stub"))
+                or (isinstance(resp, Mapping) and bool(resp.get("stub")))
+                or stage_is_stub(cap_stage)
             )
 
             if skipped_flag or status == "SKIPPED":
@@ -1681,8 +1685,14 @@ class UnifiedRuntime:
                     f"{cap_name}:SKIPPED:{reason or 'skipped'}"
                 )
                 continue
-            if status in _terminal_statuses or stub_flag:
-                label = status or ("STUB_INVOKED" if stub_flag else "incomplete")
+            if stub_flag:
+                # A stub never reads as success, whatever status it claims (#232).
+                closure_blockers.append(
+                    f"{cap_name}:STUB_INVOKED:{reason or 'stub_not_real_execution'}"
+                )
+                continue
+            if status in _terminal_statuses:
+                label = status or "incomplete"
                 closure_blockers.append(
                     f"{cap_name}:{label}:{reason or label}"
                 )
@@ -1758,21 +1768,12 @@ class UnifiedRuntime:
                 _append_consumed(lineage_top.get("consumed_evidence_ids"))
 
         # Traceability: keep only IDs that exist on successful bundle entries.
-        bundle_success_ids: set[str] = set()
-        # receipt_only entries were never in a prompt, so their ids are never "consumed".
+        # receipt_only entries were never in a prompt, so their ids are never "consumed";
+        # stub / skipped / failed entries did no real work, so theirs are never consumed
+        # either, even when no entry did real work (#232).
         visible_bundle_ids = prompt_visible_evidence_ids(preflight_bundle_snapshot)
-        for ent in prompt_visible_entries(preflight_bundle_snapshot):
-            if not bool(ent.get("success") or ent.get("invoked_real")):
-                continue
-            for eid in list(ent.get("evidence_ids") or []) + list(ent.get("evidence_refs") or []):
-                s = str(eid).strip()
-                if s:
-                    bundle_success_ids.add(s)
-        for eid in preflight_bundle_snapshot.get("evidence_ids") or []:
-            s = str(eid).strip()
-            if s and (visible_bundle_ids is None or s in visible_bundle_ids):
-                bundle_success_ids.add(s)
-        if bundle_success_ids:
+        bundle_success_ids = real_work_evidence_ids(preflight_bundle_snapshot)
+        if bundle_success_ids is not None:
             consumed_evidence_ids = [i for i in consumed_evidence_ids if i in bundle_success_ids]
         if visible_bundle_ids is not None:
             consumed_evidence_ids = [i for i in consumed_evidence_ids if i in visible_bundle_ids]
