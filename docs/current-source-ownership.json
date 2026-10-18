@@ -166,7 +166,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/capabilities.py",
-      "sha256": "2aa9825e2ac720a50ba71aad930790d87902b0931285a85fd548088af32a1ce8"
+      "sha256": "767dc5e3323d5fe831e2094d352886d31d3e0fd7ac1adc0a6bd574b0c98ac6b0"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -614,7 +614,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/services/capability_evidence_bundle.py",
-      "sha256": "57654e2e27af2633bc28e975e31e4fd591a738e9527a6db74756bdbdd98c0498"
+      "sha256": "b2b8506e71261e8d9ce764afda400762a3381950d8a5d0bfbe9afa063ef53788"
     },
     {
       "canonical_owner": "runtime planning",
@@ -768,7 +768,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/services/online_nexus_context.py",
-      "sha256": "557aa3ed7244a8a90d175d170bad94215687ab9ef7adc3fc42ac031d86e09b0b"
+      "sha256": "661a231bea185344db19b6dcfa7264a69c7b66d4d1c7871a8ea77113d26c2659"
     },
     {
       "canonical_owner": "runtime support",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "369cc9b6f56924401388aee258a1b01fc193d125",
-  "source_tree": "159d7ca70600e9a6d538f2d48f515b3c9ffdad1e",
+  "source_head": "d0dfefaa097421b6deb488568c00ccd1c1aee8dd",
+  "source_tree": "0ab95655203652ac500db9b63ed00885ec2a24a0",
   "unknown_lineage": []
 }
