@@ -613,6 +613,45 @@ def _stub_in_layers(stage: Mapping[str, Any]) -> bool:
     )
 
 
+def stage_is_stub(stage: Any) -> bool:
+    """True when any response / outcome layer of ``stage`` carries a stub marker (#232)."""
+    return isinstance(stage, Mapping) and _stub_in_layers(stage)
+
+
+def entry_did_real_work(entry: Mapping[str, Any]) -> bool:
+    """A bundle entry whose evidence may count as consumed: a real, successful run.
+
+    Stub, skipped and failed entries never qualify, whatever ``success`` says (#232).
+    """
+    if not bool(entry.get("success") or entry.get("invoked_real")):
+        return False
+    if entry.get("invoked_stub") or entry.get("skipped") or stage_is_stub(entry):
+        return False
+    status = str(entry.get("status") or "")
+    # Entries built by _bundle_entry always carry a status; only REAL_INVOKED is real.
+    return not status or status == "REAL_INVOKED"
+
+
+def real_work_evidence_ids(bundle: Mapping[str, Any] | None) -> set[str] | None:
+    """Ids of prompt-visible entries that did real work, or ``None`` without an entry list.
+
+    The bundle's top-level ``evidence_ids`` also lists stub / skipped / failed entries'
+    ids, so it is never a source of consumable ids (#232).
+    """
+    entries = bundle.get("entries") if isinstance(bundle, Mapping) else None
+    if not isinstance(entries, (list, tuple)):
+        return None
+    ids: set[str] = set()
+    for ent in prompt_visible_entries(bundle):
+        if not entry_did_real_work(ent):
+            continue
+        for eid in list(ent.get("evidence_ids") or []) + list(ent.get("evidence_refs") or []):
+            text = str(eid).strip()
+            if text:
+                ids.add(text)
+    return ids
+
+
 def invoked_failure_disposition(stage: Mapping[str, Any]) -> str:
     """Why an invoked, non-stub, non-successful stage did not succeed.
 
@@ -1602,22 +1641,16 @@ def record_consumption(
     visible_ids = prompt_visible_evidence_ids(bundle)
     if isinstance(entries, list):
         for ent in prompt_visible_entries(bundle):
-            if not bool(ent.get("success") or ent.get("invoked_real")):
+            if not entry_did_real_work(ent):
                 continue
-            for eid in list(ent.get("evidence_ids") or []) + list(ent.get("evidence_refs") or []):
-                s = str(eid).strip()
-                if s:
-                    entry_id_set.add(s)
             cp = ent.get("consumer_payload")
             ename = str(ent.get("name") or "")
             if ename and isinstance(cp, Mapping) and cp:
                 entry_payload_by_cap[ename] = cp
-        for eid in bundle.get("evidence_ids") or []:
-            s = str(eid).strip()
-            if s and (visible_ids is None or s in visible_ids):
-                entry_id_set.add(s)
-        if entry_id_set:
-            ids = [i for i in ids if i in entry_id_set]
+        # Only ids of entries that did real work count, even when none did (#232):
+        # an empty set consumes nothing instead of disabling the filter.
+        entry_id_set = real_work_evidence_ids(bundle) or set()
+        ids = [i for i in ids if i in entry_id_set]
         if visible_ids is not None:
             ids = [i for i in ids if i in visible_ids]
 

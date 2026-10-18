@@ -166,7 +166,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/capabilities.py",
-      "sha256": "8f18dda2d9841dfe21bce168fe398f97c06d90a244a3aed8bed5f98b1d142b0e"
+      "sha256": "767dc5e3323d5fe831e2094d352886d31d3e0fd7ac1adc0a6bd574b0c98ac6b0"
     },
     {
       "canonical_owner": "runtime kernel",
@@ -334,7 +334,7 @@
       "donor": "nexus_runtime.kernel.runtime generated function (Phase 5a unwrap)",
       "lineage_status": "known",
       "path": "nexus_runtime/kernel/unified_runtime.py",
-      "sha256": "9afdf1f6c4b9dd67d785d9d066caf05f9c4277dc42c9bc07382855d47aae7f23"
+      "sha256": "319092a21df6ebb32b7cd8f36ea0125e692cf0a483590c2c71ba0541c67ca0a1"
     },
     {
       "canonical_owner": "memory adapter",
@@ -614,7 +614,7 @@
       "donor": "accepted planning candidate; exact donor lineage recorded in package provenance",
       "lineage_status": "known",
       "path": "nexus_runtime/planning/services/capability_evidence_bundle.py",
-      "sha256": "cade934c91c5901e348a65a609acdb1de5ef855d116faca24b33ffb637d61d37"
+      "sha256": "b2b8506e71261e8d9ce764afda400762a3381950d8a5d0bfbe9afa063ef53788"
     },
     {
       "canonical_owner": "runtime planning",
@@ -768,7 +768,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/services/online_nexus_context.py",
-      "sha256": "557aa3ed7244a8a90d175d170bad94215687ab9ef7adc3fc42ac031d86e09b0b"
+      "sha256": "661a231bea185344db19b6dcfa7264a69c7b66d4d1c7871a8ea77113d26c2659"
     },
     {
       "canonical_owner": "runtime support",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "a3c7f62b17ea2397eec4eba337750f11ff56fc4e",
-  "source_tree": "213cf0b204733e5df8f29d6aae0773393cea2e67",
+  "source_head": "d0dfefaa097421b6deb488568c00ccd1c1aee8dd",
+  "source_tree": "0ab95655203652ac500db9b63ed00885ec2a24a0",
   "unknown_lineage": []
 }

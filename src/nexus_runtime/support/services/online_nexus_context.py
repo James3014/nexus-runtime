@@ -464,12 +464,17 @@ def build_online_nexus_context(
         sections.append(EVIDENCE_SECTION)
         # Only IDs actually present in successful entries may be recorded as consumed.
         # Never synthesize bundle:<hash> as a consumption proof.
-        raw_ids = [str(x) for x in (evidence_compact.get("evidence_ids") or []) if str(x).strip()]
+        # Stub / skipped / failed entries never count, and the top-level id list (which
+        # lists them too) is never a fallback (#232).
+        from nexus_runtime.planning.services.capability_evidence_bundle import (
+            entry_did_real_work as _did_real_work,
+        )
+
         entry_ids: list[str] = []
         for ent in evidence_compact.get("entries") or []:
             if not isinstance(ent, Mapping):
                 continue
-            if not bool(ent.get("success") or ent.get("invoked_real")):
+            if not _did_real_work(ent):
                 continue
             for eid in ent.get("evidence_ids") or []:
                 s = str(eid).strip()
@@ -478,7 +483,7 @@ def build_online_nexus_context(
             cp = ent.get("consumer_payload")
             if isinstance(cp, Mapping) and cp:
                 consumed_capability_payloads.append(dict(cp))
-        consumed_evidence_ids = entry_ids or [i for i in raw_ids if not i.startswith("bundle:")]
+        consumed_evidence_ids = entry_ids
         # receipt_only ids are never consumed by Online (defence in depth: the compact view
         # already carries none of them).
         from nexus_runtime.planning.services.capability_evidence_bundle import (

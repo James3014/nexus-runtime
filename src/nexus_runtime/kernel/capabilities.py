@@ -728,13 +728,24 @@ def build_prompt_compression_capability_invoker(
         evidence_refs = [f"compression:{task_id}:measured"]
         if truncated:
             evidence_refs.append(f"compression:{task_id}:truncated")
+        # The context already fit: nothing was compressed, so this is an explicit skip,
+        # never SUCCEEDED, and the runtime keeps the original prompt (#232).
+        nothing_compressed = gate_passed and compressed_chars >= original_chars
+        semantic_status = (
+            "SKIPPED" if nothing_compressed else ("SUCCEEDED" if gate_passed else "FAILED")
+        )
         return {
             "task_id": task_id,
             "invoked": True,
+            **(
+                {"skipped": True, "skip_reason": "context_within_budget"}
+                if nothing_compressed
+                else {}
+            ),
             "gate_passed": gate_passed,
             "action": "compress_context",
-            "semantic_status": "SUCCEEDED" if gate_passed else "FAILED",
-            "outcome_contributed": gate_passed,
+            "semantic_status": semantic_status,
+            "outcome_contributed": gate_passed and not nothing_compressed,
             "evidence": "bounded_json_context_compression",
             "evidence_refs": evidence_refs,
             "physical_callable": (
@@ -743,7 +754,7 @@ def build_prompt_compression_capability_invoker(
             ),
             "response": {
                 "action": "compress_context",
-                "semantic_status": "SUCCEEDED" if gate_passed else "FAILED",
+                "semantic_status": semantic_status,
                 "original_context_chars": original_chars,
                 "compressed_context_chars": compressed_chars,
                 "compression_ratio": round(1.0 - (compressed_chars / original_chars), 4)
