@@ -2376,11 +2376,15 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
             "status": status,
             "gate_passed": gate_passed,
             # Nexus-new#2772: a record-only (advisory) receipt, e.g. ultra_review since
-            # Nexus-new#2732, contributes to the outcome only when its review passed.
+            # Nexus-new#2732, contributes to the outcome only when its review passed:
+            # review_status PASS and the executor's own review_passed verdict True.
             "outcome_contributed": gate_passed
             and (
                 outcome_map.get("advisory_only") is not True
-                or outcome_map.get("review_status") == "PASS"
+                or (
+                    outcome_map.get("review_status") == "PASS"
+                    and outcome_map.get("review_passed") is True
+                )
             ),
             "evidence_refs": evidence_refs,
             "evidence_ids": list(evidence_refs),
