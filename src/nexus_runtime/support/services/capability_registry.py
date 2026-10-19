@@ -1734,6 +1734,25 @@ def _resolve_executor_registry_key(capability_name: str) -> str:
     return EXECUTOR_REGISTRY_ALIASES.get(key, key)
 
 
+# Mirrors Nexus-new ``nexus.core.capability_executor_registry.ADVISORY_ONLY_CAPABILITIES``
+# (record-only capabilities, Nexus-new#2732). Keep the two sets in step.
+_ADVISORY_ONLY_CAPABILITY_NAMES: frozenset[str] = frozenset({"ultra_review"})
+
+
+def _is_advisory_receipt(name: str, registry_key: str, outcome: Mapping[str, Any]) -> bool:
+    """Nexus-new#2772: advisory when the capability is record-only OR the receipt says so.
+
+    Either signal is enough, so a record-only capability whose receipt omits or clears
+    ``advisory_only`` cannot count a failed review as a contribution. A receipt from any
+    other capability that sets ``advisory_only=True`` can only lower its own contribution.
+    """
+    return (
+        outcome.get("advisory_only") is True
+        or name in _ADVISORY_ONLY_CAPABILITY_NAMES
+        or registry_key in _ADVISORY_ONLY_CAPABILITY_NAMES
+    )
+
+
 def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | None:
     """Wrap existing get_executor physical callable — never reimplement the capability."""
     name = str(capability_name)
@@ -2376,11 +2395,15 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
             "status": status,
             "gate_passed": gate_passed,
             # Nexus-new#2772: a record-only (advisory) receipt, e.g. ultra_review since
-            # Nexus-new#2732, contributes to the outcome only when its review passed.
+            # Nexus-new#2732, contributes to the outcome only when its review passed:
+            # review_status PASS and the executor's own review_passed verdict True.
             "outcome_contributed": gate_passed
             and (
-                outcome_map.get("advisory_only") is not True
-                or outcome_map.get("review_status") == "PASS"
+                not _is_advisory_receipt(name, registry_key, outcome_map)
+                or (
+                    outcome_map.get("review_status") == "PASS"
+                    and outcome_map.get("review_passed") is True
+                )
             ),
             "evidence_refs": evidence_refs,
             "evidence_ids": list(evidence_refs),
