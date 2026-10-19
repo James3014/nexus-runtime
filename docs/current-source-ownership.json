@@ -719,7 +719,7 @@
       "donor": "accepted support candidate",
       "lineage_status": "known",
       "path": "nexus_runtime/support/services/capability_registry.py",
-      "sha256": "ad218830f936a7c599056aab2be1767e16de2474234d84347751421f9655d139"
+      "sha256": "66e28ab15ad2d52ffe60373e6426c2d24111d5d84aca38bd3341bb9b8cb84cb7"
     },
     {
       "canonical_owner": "runtime support",
@@ -913,7 +913,7 @@
   ],
   "repository": "nexus-runtime",
   "schema": "nexus.runtime.source_ownership.v1",
-  "source_head": "979d49a0fa0d1803349682f223a07e96d0aad6e7",
-  "source_tree": "33b4855f032663d0a54192f1784066384e410435",
+  "source_head": "b4db8d4c65f290ba02c91afd2c7a5032cc8463a1",
+  "source_tree": "9bb6853118242f26b08833dabc5a541930568b40",
   "unknown_lineage": []
 }
