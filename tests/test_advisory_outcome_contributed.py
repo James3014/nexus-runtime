@@ -19,6 +19,10 @@ from nexus_runtime.support.services.executor_binding import (
 )
 
 
+# Any capability that is not record-only and has no planner execution contract.
+_NON_ADVISORY = "fake_non_advisory_capability"
+
+
 @pytest.fixture(autouse=True)
 def _isolated_resolver():
     clear_executor_resolver()
@@ -76,7 +80,8 @@ def test_non_advisory_receipt_keeps_gate_as_contribution():
         "evidence_refs": ["ev-advisory"],
         "review_status": "FAIL",
     }
-    out = _invoke("ultra_review", "ultra_review", outcome)
+    # A non-advisory capability (not ultra_review): no advisory_only flag, so the gate decides.
+    out = _invoke(_NON_ADVISORY, _NON_ADVISORY, outcome)
     assert out["gate_passed"] is True
     assert out["outcome_contributed"] is True
 
@@ -112,6 +117,49 @@ def test_non_advisory_receipt_contribution_follows_gate(gate_passed):
         "review_status": "FAIL",
         "review_passed": False,
     }
-    out = _invoke("ultra_review", "ultra_review", outcome, gate_passed=gate_passed)
+    out = _invoke(_NON_ADVISORY, _NON_ADVISORY, outcome, gate_passed=gate_passed)
     assert out["gate_passed"] is gate_passed
     assert out["outcome_contributed"] is gate_passed
+
+
+@pytest.mark.parametrize("flag", ["missing", False])
+def test_ultra_review_without_advisory_flag_is_still_advisory(flag):
+    """A record-only capability stays advisory even when its receipt omits/clears the flag."""
+    outcome = _advisory("FAIL")
+    if flag == "missing":
+        outcome.pop("advisory_only")
+    else:
+        outcome["advisory_only"] = flag
+    out = _invoke("ultra_review", "ultra_review", outcome)
+    assert out["gate_passed"] is True
+    assert out["outcome_contributed"] is False
+    # The complete PASS review without the flag still contributes.
+    passed = {**_advisory("PASS")}
+    passed.pop("advisory_only")
+    assert _invoke("ultra_review", "ultra_review", passed)["outcome_contributed"] is True
+
+
+def test_non_advisory_capability_with_advisory_flag_lowers_only_itself():
+    """Documented: advisory_only=True on any receipt makes it advisory (can only lower)."""
+    outcome = _advisory("FAIL")
+    out = _invoke(_NON_ADVISORY, _NON_ADVISORY, outcome)
+    assert out["gate_passed"] is True
+    assert out["outcome_contributed"] is False
+
+
+@pytest.mark.parametrize(
+    ("capability", "alias_target"),
+    [
+        ("ultra_review", "ultra_review_impl"),  # the capability name is record-only
+        ("review_alias", "ultra_review"),  # the registry key is record-only
+    ],
+)
+def test_record_only_name_or_registry_key_is_advisory(monkeypatch, capability, alias_target):
+    from nexus_runtime.support.services import capability_registry as cr
+
+    monkeypatch.setitem(cr.EXECUTOR_REGISTRY_ALIASES, capability, alias_target)
+    outcome = _advisory("FAIL")
+    outcome.pop("advisory_only")
+    out = _invoke(capability, alias_target, outcome)
+    assert out["gate_passed"] is True
+    assert out["outcome_contributed"] is False
