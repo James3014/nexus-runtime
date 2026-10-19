@@ -736,6 +736,17 @@ def _build_planner_execution_contracts() -> dict[str, dict[str, Any]]:
             executor_key="ultra_review",
             physical_callable=f"{reg}:ultra_review",
             consumer_effect=CONSUMER_EFFECT_PROMPT_EVIDENCE,
+            # Mirrors the Nexus-new ultra_review contract (nexus-runtime#238): the host
+            # executor writes ``lanes`` ({lane: {executed_checks, unavailable_checks}}) and
+            # the union ``executed_checks`` into the receipt outcome.
+            required_outcome_fields=(
+                "action",
+                "semantic_status",
+                "evidence_refs",
+                "executed_checks",
+                "lanes",
+            ),
+            success_predicate="ultra_review_lanes_executed",
         ),
         "bdd_acceptance_skill": _ec(
             "bdd_acceptance_skill",
@@ -1739,17 +1750,58 @@ def _resolve_executor_registry_key(capability_name: str) -> str:
 _ADVISORY_ONLY_CAPABILITY_NAMES: frozenset[str] = frozenset({"ultra_review"})
 
 
+# Advisory detection vs. the Nexus-new host (nexus-runtime#238 item 2), deliberate:
+# the host decides "record-only" for ``outcome_contributed`` from the capability name or
+# registry key alone (``_is_record_only_capability``); the ``advisory_only`` flag alone never
+# decides there. This runtime additionally treats ``advisory_only=True`` on ANY receipt as
+# advisory. That can only LOWER a receipt's own contribution (it then also needs a complete
+# PASS review), never raise it, and never changes status / gate_passed / blocking. So the
+# one divergent case (non-record-only capability + advisory_only=True + no passed review:
+# host True, runtime False) is the conservative side. The shared vectors in
+# tests/test_advisory_outcome_contributed.py pin every case, including this one.
+#
+# The non-blocking contract split (``_is_advisory_contract_split``) matches the host
+# exactly: record-only name AND ``advisory_only is True``.
+
+
 def _is_advisory_receipt(name: str, registry_key: str, outcome: Mapping[str, Any]) -> bool:
     """Nexus-new#2772: advisory when the capability is record-only OR the receipt says so.
 
     Either signal is enough, so a record-only capability whose receipt omits or clears
     ``advisory_only`` cannot count a failed review as a contribution. A receipt from any
-    other capability that sets ``advisory_only=True`` can only lower its own contribution.
+    other capability that sets ``advisory_only=True`` can only lower its own contribution
+    (deliberate divergence from the host, see the module comment above).
     """
     return (
         outcome.get("advisory_only") is True
         or name in _ADVISORY_ONLY_CAPABILITY_NAMES
         or registry_key in _ADVISORY_ONLY_CAPABILITY_NAMES
+    )
+
+
+def _is_advisory_contract_split(name: str, outcome: Mapping[str, Any]) -> bool:
+    """Mirror of host ``_is_advisory_only_outcome`` (Nexus-new#2732, nexus-runtime#238).
+
+    Only a record-only capability whose receipt carries ``advisory_only=True`` turns its
+    contract violations into non-blocking ``advisory_contract_violations``; every other
+    receipt keeps the BLOCKED execution-contract behaviour.
+    """
+    return name in _ADVISORY_ONLY_CAPABILITY_NAMES and outcome.get("advisory_only") is True
+
+
+def _advisory_review_passed(
+    outcome: Mapping[str, Any], advisory_contract_violations: list[str]
+) -> bool:
+    """Mirror of host ``_advisory_review_passed`` (Nexus-new#2772, nexus-runtime#238).
+
+    A record-only review counts as passed only when it fully ran and passed:
+    ``review_status == "PASS"``, the executor's own ``review_passed is True``, and no
+    ``advisory_contract_violations`` (e.g. a lane executed no checks).
+    """
+    return (
+        outcome.get("review_status") == "PASS"
+        and outcome.get("review_passed") is True
+        and not advisory_contract_violations
     )
 
 
@@ -2162,6 +2214,19 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
                 violations.append("repair_verifier_not_passed")
             if outcome.get("settlement_decision") != "receipt_complete":
                 violations.append("repair_receipt_not_complete")
+        if predicate == "ultra_review_lanes_executed":
+            # Mirrors the host predicate (Nexus-new capability_registry, nexus-runtime#238).
+            raw_lanes = outcome.get("lanes")
+            lanes: Mapping[str, Any] = raw_lanes if isinstance(raw_lanes, Mapping) else {}
+            for lane in ("security_sentry", "logic_breaker"):
+                raw_lane_row = lanes.get(lane)
+                lane_row: Mapping[str, Any] = (
+                    raw_lane_row if isinstance(raw_lane_row, Mapping) else {}
+                )
+                if not lane_row.get("executed_checks"):
+                    violations.append(f"ultra_review_{lane}_no_executed_checks")
+                if lane_row.get("unavailable_checks"):
+                    violations.append(f"ultra_review_{lane}_check_unavailable")
         if predicate == "plan_quality_real_inputs_evaluated":
             if outcome.get("passed") is not True:
                 violations.append("plan_quality_not_passed")
@@ -2344,6 +2409,12 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
                 },
             }
         contract_violations = _execution_contract_violations(outcome_map) if gate_passed else []
+        # Nexus-new#2732 / nexus-runtime#238: a record-only capability (ultra_review) never
+        # blocks; a contract shortfall (e.g. a lane executed no checks) is reported next to
+        # the record instead and stops the review from counting as a contribution.
+        advisory_contract_violations: list[str] = []
+        if contract_violations and _is_advisory_contract_split(name, outcome_map):
+            advisory_contract_violations, contract_violations = contract_violations, []
         if contract_violations:
             return {
                 "task_id": task_id,
@@ -2395,15 +2466,13 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
             "status": status,
             "gate_passed": gate_passed,
             # Nexus-new#2772: a record-only (advisory) receipt, e.g. ultra_review since
-            # Nexus-new#2732, contributes to the outcome only when its review passed:
-            # review_status PASS and the executor's own review_passed verdict True.
+            # Nexus-new#2732, contributes to the outcome only when its review passed
+            # completely: review_status PASS, the executor's own review_passed verdict True,
+            # and no advisory contract violation (lane shortfall, nexus-runtime#238).
             "outcome_contributed": gate_passed
             and (
                 not _is_advisory_receipt(name, registry_key, outcome_map)
-                or (
-                    outcome_map.get("review_status") == "PASS"
-                    and outcome_map.get("review_passed") is True
-                )
+                or _advisory_review_passed(outcome_map, advisory_contract_violations)
             ),
             "evidence_refs": evidence_refs,
             "evidence_ids": list(evidence_refs),
@@ -2418,6 +2487,11 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
                 "outcome": outcome_map,
                 "consumer_payload": consumer_payload,
                 "stub": False,
+                **(
+                    {"advisory_contract_violations": advisory_contract_violations}
+                    if advisory_contract_violations
+                    else {}
+                ),
             },
         }
 

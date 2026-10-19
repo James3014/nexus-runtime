@@ -55,6 +55,16 @@ def _advisory(review_status: str) -> dict:
         "review_status": review_status,
         # The host executor sets review_passed = payload.gate_passed and status == "PASS".
         "review_passed": review_status == "PASS",
+        # Both lanes ran checks (host contract predicate ultra_review_lanes_executed).
+        "lanes": _full_lanes(),
+        "executed_checks": ["bandit", "py_compile", "ruff"],
+    }
+
+
+def _full_lanes() -> dict:
+    return {
+        "security_sentry": {"status": "PASS", "executed_checks": ["bandit", "ruff"], "unavailable_checks": []},
+        "logic_breaker": {"status": "PASS", "executed_checks": ["py_compile"], "unavailable_checks": []},
     }
 
 
@@ -140,7 +150,8 @@ def test_ultra_review_without_advisory_flag_is_still_advisory(flag):
 
 
 def test_non_advisory_capability_with_advisory_flag_lowers_only_itself():
-    """Documented: advisory_only=True on any receipt makes it advisory (can only lower)."""
+    """Deliberate (nexus-runtime#238 item 2): advisory_only=True on any receipt makes it
+    advisory here, while the host ignores the flag alone. It can only lower contribution."""
     outcome = _advisory("FAIL")
     out = _invoke(_NON_ADVISORY, _NON_ADVISORY, outcome)
     assert out["gate_passed"] is True
@@ -163,3 +174,109 @@ def test_record_only_name_or_registry_key_is_advisory(monkeypatch, capability, a
     out = _invoke(capability, alias_target, outcome)
     assert out["gate_passed"] is True
     assert out["outcome_contributed"] is False
+
+
+# ---------------------------------------------------------------------------
+# nexus-runtime#238: shared vectors, input -> expected outcome_contributed on runtime AND host.
+#
+# ``host`` is what Nexus-new origin/main (nexus/services/capability_registry.py,
+# build_real_executor_invoker) returns for the same receipt; it was checked by running the
+# host invoker on these vectors. ``runtime`` differs from ``host`` only in the one deliberate
+# case (non-record-only capability + advisory_only=True), see the module comment above
+# ``_is_advisory_receipt``.
+# ---------------------------------------------------------------------------
+
+
+def _with(base: dict, **changes) -> dict:
+    out = {**base, **changes}
+    return {k: v for k, v in out.items() if v is not _DROP}
+
+
+_DROP = object()
+
+
+def _lanes_with(lane: str, **row) -> dict:
+    lanes = _full_lanes()
+    lanes[lane] = {**lanes[lane], **row}
+    return lanes
+
+
+_UR = "ultra_review"
+_PASS = _advisory("PASS")
+_NOFLAG_PASS = _with(_PASS, advisory_only=_DROP)
+
+# (case id, capability, gate_passed, outcome, expected status, runtime, host)
+SHARED_VECTORS: list[tuple[str, str, bool, dict, str, bool, bool]] = [
+    ("ur_pass_complete", _UR, True, _PASS, "SUCCEEDED", True, True),
+    ("ur_fail_complete", _UR, True, _advisory("FAIL"), "SUCCEEDED", False, False),
+    ("ur_pass_review_passed_false", _UR, True, _with(_PASS, review_passed=False), "SUCCEEDED", False, False),
+    ("ur_pass_gate_false", _UR, False, _PASS, "FAILED", False, False),
+    (
+        "ur_pass_logic_breaker_no_checks",
+        _UR, True, _with(_PASS, lanes=_lanes_with("logic_breaker", executed_checks=[])),
+        "SUCCEEDED", False, False,
+    ),
+    (
+        "ur_pass_security_sentry_check_unavailable",
+        _UR, True, _with(_PASS, lanes=_lanes_with("security_sentry", unavailable_checks=["bandit"])),
+        "SUCCEEDED", False, False,
+    ),
+    (
+        "ur_pass_security_sentry_lane_missing",
+        _UR, True, _with(_PASS, lanes={"logic_breaker": _full_lanes()["logic_breaker"]}),
+        "SUCCEEDED", False, False,
+    ),
+    ("ur_pass_no_lane_fields", _UR, True, _with(_PASS, lanes=_DROP, executed_checks=_DROP), "SUCCEEDED", False, False),
+    ("ur_pass_empty_executed_checks", _UR, True, _with(_PASS, executed_checks=[]), "SUCCEEDED", False, False),
+    # Without advisory_only the contract split does not apply: a shortfall blocks (both sides).
+    ("ur_noflag_pass_complete", _UR, True, _NOFLAG_PASS, "SUCCEEDED", True, True),
+    ("ur_noflag_fail_complete", _UR, True, _with(_NOFLAG_PASS, review_status="FAIL", review_passed=False), "SUCCEEDED", False, False),
+    (
+        "ur_noflag_pass_lane_shortfall",
+        _UR, True, _with(_NOFLAG_PASS, lanes=_lanes_with("logic_breaker", executed_checks=[])),
+        "BLOCKED", False, False,
+    ),
+    # Non-record-only capability: the gate decides on the host.
+    ("other_noflag_fail", _NON_ADVISORY, True, _with(_advisory("FAIL"), advisory_only=_DROP), "SUCCEEDED", True, True),
+    ("other_noflag_gate_false", _NON_ADVISORY, False, _with(_advisory("FAIL"), advisory_only=_DROP), "FAILED", False, False),
+    ("other_flag_pass_complete", _NON_ADVISORY, True, _PASS, "SUCCEEDED", True, True),
+    ("other_flag_pass_no_lane_fields", _NON_ADVISORY, True, _with(_PASS, lanes=_DROP, executed_checks=_DROP), "SUCCEEDED", True, True),
+    # Deliberate divergence (item 2): the flag alone lowers contribution on the runtime only.
+    ("other_flag_fail_DIVERGENT", _NON_ADVISORY, True, _advisory("FAIL"), "SUCCEEDED", False, True),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "capability", "gate_passed", "outcome", "status", "runtime", "host"),
+    SHARED_VECTORS,
+    ids=[v[0] for v in SHARED_VECTORS],
+)
+def test_shared_vector_outcome_contributed(case, capability, gate_passed, outcome, status, runtime, host):
+    out = _invoke(capability, capability, dict(outcome), gate_passed=gate_passed)
+    assert out["status"] == status
+    assert out["outcome_contributed"] is runtime
+    if case.endswith("_DIVERGENT"):
+        assert runtime is False and host is True  # runtime is only ever stricter
+    else:
+        assert runtime is host
+
+
+def test_lane_shortfall_is_reported_as_advisory_contract_violation():
+    outcome = _with(_PASS, lanes=_lanes_with("logic_breaker", executed_checks=[], unavailable_checks=["ruff"]))
+    out = _invoke(_UR, _UR, outcome)
+    assert out["gate_passed"] is True
+    assert out["outcome_contributed"] is False
+    assert sorted(out["response"]["advisory_contract_violations"]) == [
+        "ultra_review_logic_breaker_check_unavailable",
+        "ultra_review_logic_breaker_no_executed_checks",
+    ]
+    assert "advisory_contract_violations" not in _invoke(_UR, _UR, dict(_PASS))["response"]
+
+
+def test_non_advisory_contract_violation_still_blocks():
+    """The split is only for record-only + advisory_only; other contracts keep BLOCKED."""
+    outcome = _with(_NOFLAG_PASS, lanes=_DROP)
+    out = _invoke(_UR, _UR, outcome)
+    assert out["status"] == "BLOCKED"
+    assert out["reason"] == "execution_contract_violation"
+    assert "missing_outcome_field:lanes" in out["response"]["contract_violations"]
