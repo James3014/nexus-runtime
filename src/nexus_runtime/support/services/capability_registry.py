@@ -1890,7 +1890,10 @@ def build_real_executor_invoker(capability_name: str) -> CapabilityInvoker | Non
     _SANDBOX_CONSTRAINT_KEYS = frozenset(
         {"workspace_root", "sandbox_command", "sandbox_timeout_sec"}
     )
-    _SCHEDULER_CONSTRAINT_KEYS = frozenset({"workspace_root"})
+    # learn_scheduler gates on slo_readiness from its learn store, which comes from the
+    # process, never from request context (Nexus-new #2829/#2858; learn_mode and
+    # learn_phase_slo already get no constraints).
+    _SCHEDULER_CONSTRAINT_KEYS: frozenset[str] = frozenset()
     _METABOLISM_CONSTRAINT_KEYS = frozenset(
         {"workspace_root", "metabolism_token_usage", "metabolism_token_limit"}
     )
