@@ -50,6 +50,7 @@ def main() -> int:
     env.pop("PYTHONPATH", None)
     env["PYTHONNOUSERSITE"] = "1"
     env["NEXUS_RUNTIME_STANDALONE"] = "1"
+    env["NEXUS_RUNTIME_SOURCE_ROOT"] = str(Path(__file__).resolve().parents[2])
 
     probe = """
 import importlib.util
