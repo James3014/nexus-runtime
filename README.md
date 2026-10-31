@@ -207,10 +207,16 @@ Run it with the owner wheels installed:
 .venv/bin/python -I -m pytest -q tests/integration/test_owner_workflow.py
 ```
 
-The test is skipped when optional owner packages are absent. Acceptance requires
-the command to run unskipped in the intended owner-package environment; a skip
-must not be reported as owner-integration PASS. Provider-backed execution and
-loaded-host acceptance remain separate gates.
+By default the test is skipped when optional owner packages are absent, so local
+development without the owner wheels still works. Set `NEXUS_OWNER_REQUIRED=1` and
+a missing owner package fails with `OWNER_DEPENDENCY_MISSING` instead of skipping.
+The `Required canonical owner integration` job in
+`.github/workflows/owner-integration.yml` sets that flag, installs Core, Learning,
+Open SWE and Repository Intelligence at exact pinned commits, and runs this test on
+pull requests and on pushes to `main` (and the `codex/repo-split` compatibility ref).
+A skip must not be reported as owner-integration PASS. Provider-backed execution and
+loaded-host acceptance remain separate gates. Whether this job is a required status
+check in the ruleset is an Owner decision and is not changed here.
 
 ## Historical delivery evidence
 

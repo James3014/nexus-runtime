@@ -27,14 +27,24 @@ a source-tree import, a broken installed export, a failed test, or a failed
 mandatory dependency check exits nonzero. Every top-level test module is
 collected with no deselections, including the retry status-set assertion.
 
-Owner integration is controlled separately with a concrete preflight in a
-separate environment. The reviewed source pins are nexus-core
-`e0e04fc78b48a5c1c7fa539fe014202c7ce1788e`, repository-intelligence
-`a8b9a00a6f3ea3e9ade0c6ef494d0fa88a2d73b2`, nexus-open-swe-runtime
-`7f834e24365988c90c4e3e6b0d0f164a5e8c897c`, and Learning
-`1eb7229366b2856d6691c76236a50c5380dcf7d3`. After a reviewed transitive pin
-manifest is installed, run
-`python -c 'import nexus_open_swe_runtime, repository_intelligence, product, nexus_learning'`,
-then `pytest --strict-markers --junitxml=owner.xml tests/integration/test_owner_workflow.py`
-and reject any owner result with failures, errors, or skips. A failed preflight
-is blocked or skipped and cannot report integration PASS.
+Owner integration is controlled separately by `owner-integration.yml` (job
+`Required canonical owner integration`), which runs on pull requests and on pushes
+to `main` and `codex/repo-split`. It checks out each owner at an exact commit and
+records expected versus actual revisions and import locations. The pins are:
+nexus-core `ffe4392e964d2838fa6e4a069d4810f4436c4870` (same as
+`nexus-core-issue-completion.yml`), nexus-learning
+`1eb7229366b2856d6691c76236a50c5380dcf7d3` (same as `tests.yml`,
+`standalone-wheel.yml` and `.nexus-core/config.toml`), repository-intelligence-engine
+`77a937b67c3da4756f535a41b59cdf5555a25e31` (v0.1.5, same as
+`repository-intelligence.yml`), and nexus-open-swe-runtime
+`5da224b0c63d2b754c2fc639e26a21dc41e86d6a` (owner `main` at the time of writing; the
+repository had no other pin). When any of these pins is bumped elsewhere, bump it here
+and in `tests/test_owner_integration_workflow.py` (`OWNER_REFS`).
+
+The job sets `NEXUS_OWNER_REQUIRED=1` so a missing owner dependency fails with
+`OWNER_DEPENDENCY_MISSING` instead of skipping, and a contract test
+(`tests/test_owner_integration_workflow.py`) asserts the pins, the flag and the
+test count. Known gap: Core and Open SWE install with their transitive
+dependencies unpinned (no reviewed transitive pin manifest yet), so upstream
+releases can change the result. Whether the job is a required status check is an
+Owner decision.
