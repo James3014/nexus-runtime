@@ -146,6 +146,16 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/owner-integration"
           python -m pytest -q tests/integration/test_owner_workflow.py --junitxml="$RUNNER_TEMP/owner-integration/junit.xml"
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "owner-integration", "junit.xml")).getroot()
+          suites = [root] if root.tag == "testsuite" else list(root)
+          totals = {key: sum(int(suite.get(key, 0)) for suite in suites) for key in ("tests", "failures", "errors", "skipped")}
+          print(f"owner_integration_junit={totals}")
+          assert totals["tests"] == 4 and totals["failures"] == 0 and totals["errors"] == 0 and totals["skipped"] == 0, totals
+          PY
 
       - name: Upload owner integration evidence
         if: ${{ always() }}

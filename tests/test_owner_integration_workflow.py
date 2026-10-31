@@ -45,6 +45,17 @@ def _step(name: str) -> dict[str, Any]:
     raise AssertionError(f"owner-integration step {name!r} not found")
 
 
+def test_workflow_triggers_and_permissions_are_fail_closed() -> None:
+    workflow = _load_workflow()
+    triggers = workflow.get("on", workflow.get(True))
+    for event in ("pull_request", "push"):
+        assert triggers[event]["branches"] == ["main", "codex/repo-split"]
+    assert "pull_request_target" not in triggers
+    assert workflow["permissions"] == {"contents": "read"}
+    assert all(step.get("continue-on-error") is not True for step in _job()["steps"])
+    assert "secrets." not in WORKFLOW.read_text(encoding="utf-8")
+
+
 def test_required_job_uses_exact_runtime_head_and_canonical_owner_pins() -> None:
     job = _job()
     assert "if" not in job
@@ -101,6 +112,13 @@ def test_required_entrypoint_runs_all_four_owner_integration_tests() -> None:
     assert run["env"]["NEXUS_OWNER_REQUIRED"] == "1"
     assert "python -m pytest -q tests/integration/test_owner_workflow.py" in run["run"]
     assert "--junitxml" in run["run"]
+    assert 'totals["skipped"] == 0' in run["run"]
+    assert 'totals["tests"] == 4' in run["run"]
+    assert "set -euo pipefail" in run["run"]
+
+    identity = _step("Record actual revisions and import locations")["run"]
+    assert identity.count('test "$actual" = "$expected"') == 1
+    assert 'test "$runtime_actual" = "$RUNTIME_REF"' in identity
 
     tree = ast.parse(OWNER_WORKFLOW_TESTS.read_text(encoding="utf-8"))
     test_functions = {
