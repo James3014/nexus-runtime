@@ -31,8 +31,8 @@ Owner integration is controlled separately by `owner-integration.yml` (job
 `Required canonical owner integration`), which runs on pull requests and on pushes
 to `main` and `codex/repo-split`. It checks out each owner at an exact commit and
 records expected versus actual revisions and import locations. The pins are:
-nexus-core `ffe4392e964d2838fa6e4a069d4810f4436c4870` (same as
-`nexus-core-issue-completion.yml`), nexus-learning
+nexus-core `ffe4392e964d2838fa6e4a069d4810f4436c4870` (the Core gate in
+`nexus-core-issue-completion.yml` is pinned separately), nexus-learning
 `1eb7229366b2856d6691c76236a50c5380dcf7d3` (same as `tests.yml`,
 `standalone-wheel.yml` and `.nexus-core/config.toml`), repository-intelligence-engine
 `77a937b67c3da4756f535a41b59cdf5555a25e31` (v0.1.5, same as
